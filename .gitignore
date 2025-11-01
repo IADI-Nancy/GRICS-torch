@@ -1,0 +1,19 @@
+# Ignore LaTeX build and auxiliary files
+*.aux
+*.log
+*.toc
+*.out
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.bcf
+*.run.xml
+*.lol
+*-SAVE-ERROR
+*.pyc
+*.DS_Store
+*.pt
+__pycache__/
+data/app_data/

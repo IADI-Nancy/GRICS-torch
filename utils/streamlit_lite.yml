@@ -1,0 +1,12 @@
+name: streamlit-lite
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy=2.3
+  - pytorch
+  - sigpy
+  - matplotlib
+  - streamlit
+  - h5py
+  - cupy
