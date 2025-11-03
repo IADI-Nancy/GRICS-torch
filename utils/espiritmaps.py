@@ -4,7 +4,10 @@ import os
 import numpy as np
 import sigpy.mri as spmri
 import sigpy as sp
-import cupy as cp
+try:
+    import cupy as cp
+except ImportError:
+    pass
 
 def calc_espirit_maps(kspace, acs = 48, kernel_width = 6, sp_device = sp.Device(-1)):
     nCha, nX, nY, nSlices = kspace.shape

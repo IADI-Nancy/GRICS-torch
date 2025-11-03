@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 def translate(img_cplx,
              t=(0.0, 0.0, 0.0),   # shift in *pixels*: (tz, ty, tx) or (dz, dy, dx)
-             order=1,             # 0=nearest, 1=trilinear; 3 maps to trilinear for 3D
+             order=1,             # 0=nearest, 1=bilinear
              device=None):
     """ do no use this function the kspace version does work better"""
     # Ensure device consistency

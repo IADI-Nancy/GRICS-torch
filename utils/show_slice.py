@@ -1,5 +1,5 @@
-# this function shows a slice of the image,
-# converting it to a numpy complex value and moving it to CPU
+# 3 utility functions for displaying slices, k-space data and reading ISMRMRD headers
+# Both display functions work with torch tensors. They detach, move it to the CPU and convert to numpy internally.
 
 import math
 from matplotlib.colors import LogNorm
