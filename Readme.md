@@ -7,3 +7,4 @@ conda env create -f internship_grics.yml
 ```bash
 conda activate internship_grics
 ```
+This project relies on cupy for now. It only works for Linux/Windows.
