@@ -7,6 +7,4 @@ dependencies:
   - pytorch
   - sigpy
   - matplotlib
-  - streamlit
-  - h5py
   - ipykernel
