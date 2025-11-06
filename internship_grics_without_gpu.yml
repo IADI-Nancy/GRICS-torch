@@ -1,4 +1,4 @@
-name: internship_grics
+name: internship_grics_without_gpu
 channels:
   - conda-forge
 dependencies:
@@ -9,5 +9,4 @@ dependencies:
   - matplotlib
   - streamlit
   - h5py
-  - cupy
   - ipykernel

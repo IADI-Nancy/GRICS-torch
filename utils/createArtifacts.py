@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from utils.affinemotion import translate, translate_cplximg
 from utils.fftnc import ifftnc, fftnc
 
-# helper functions for randomTranslation_3D 
 def gen_masks(n_movements, locs, grid_size, device):
     masks = []
     # first element
@@ -33,24 +32,15 @@ def randomTranslation_3D(
     sigma: float = 1.0,
     iterations: int = 5,
     seed: int = 42,
-    is_2D: bool = False
+    is_2D: bool = False,
     ):
-    '''
-    This function applies random translations to a 3D or 2D (+ coils) image.
-    img : torch.Tensor 3D or 2D (nX, nY, nZ, nCha) dims with nZ = 1 for 2D images
-    alpha : float, controls the draw back to the original position (Ornsteil-Uhlenbeck process)
-    sigma : float, standard deviation of the random translations
-    iterations : int, number of random translations to apply
-    seed : int, random seed for reproducibility
-    is_2D : bool, if True, only apply translations in x and y directions
-    '''
-    # setting up the seed and device
     device = img.device
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     if not img.ndim == 4:
         return ValueError("Image dimensions are not 4.")
+    img = img.to(device)
     
     nX, nY, nZ, nCha = img.shape
     corrupted_img = torch.zeros_like(img, device=device)
@@ -74,13 +64,13 @@ def randomTranslation_3D(
         t_n[i] = offset
     
     # Fourier transform as if the image was in 3D
-    kspace = fftnc(img)  # Centered FFT
 
     # Apply the translations only for x and y dimensions over all coils
     for i in range(iterations):
-        kspace_movement = torch.zeros_like(kspace, device=device, dtype=kspace.dtype)
+        img_movement = torch.zeros_like(img, device=device, dtype=img.dtype)
         for j in range(nCha):
-            kspace_movement[:,:,:,j] = translate_cplximg(kspace[:,:,:,j], [t_n[i, 0], t_n[i, 1], t_n[i,2]])
+            img_movement[:,:,:,j] = translate(img[:,:,:,j], [t_n[i, 0], t_n[i, 1], t_n[i,2]])
+        kspace_movement = fftnc(img_movement, dims=(-4, -3, -2))  # Centered FFT
         mask = create_mask(masks[i], grid_size, device=device)
         corrupted_img = corrupted_img + kspace_movement * mask.unsqueeze(-1).unsqueeze(-1)  # Apply the mask to the k-space
     # Inverse Fourier transform to get the corrupted image
