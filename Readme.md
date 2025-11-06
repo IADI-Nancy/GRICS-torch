@@ -6,7 +6,6 @@ Windows/Linux with GPU
 ```bash
 conda env create -f internship_grics.yml
 ```
-This project relies on cupy for now. It only works for Linux/Windows.
 
 MacOS/no GPU
 ```bash
