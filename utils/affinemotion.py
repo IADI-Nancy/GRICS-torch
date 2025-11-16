@@ -5,14 +5,24 @@ import torch.nn.functional as F
 import torch
 import torch.nn.functional as F
 
+def motion_model(img_cplx,
+                t,
+                model = 0 # 0: translation 1: rotation 
+                ):
+    """ Select motion model"""
+    if model == 0:
+        return translate(img_cplx, t=t)
+    elif model == 1:
+        return rotate(img_cplx, p=t)
+    else:
+        raise ValueError("Unknown motion model", model)
+    
 def translate(img_cplx,
              t=(0.0, 0.0, 0.0),   # shift in *pixels*: (tz, ty, tx) or (dz, dy, dx)
-             order=1,             # 0=nearest, 1=bilinear
-             device=None):
+             order=1):
     """ do no use this function the kspace version does work better"""
-    # Ensure device consistency
-    if device is None:
-        device = img_cplx.device
+
+    device = img_cplx.device
 
     # Pack real/imag as channels -> (1, 2, D, H, W)
     img_ri = img_cplx.real.unsqueeze(0).unsqueeze(0)
@@ -34,7 +44,7 @@ def translate(img_cplx,
     theta[0, 2, 3] = tz_n
 
     # Grid & sample
-    grid = F.affine_grid(theta, img_ri.shape, align_corners=False)
+    grid = F.affine_grid(theta, img_ri.shape, align_corners=True)
 
     # 3D supports 'nearest' and 'bilinear' (trilinear). Map order accordingly.
     if order == 0:
@@ -43,37 +53,17 @@ def translate(img_cplx,
         mode = "bilinear"   # use trilinear for 3D; 'bicubic' is not supported for 5D
 
     img_warp_ri = F.grid_sample(
-        img_ri, grid, mode=mode, padding_mode="reflection", align_corners=False
+        img_ri, grid, mode=mode, padding_mode="zeros", align_corners=True
     ).squeeze(0).squeeze(0)
     img_warp_imag = F.grid_sample(
-        img_imag, grid, mode=mode, padding_mode="reflection", align_corners=False
+        img_imag, grid, mode=mode, padding_mode="zeros", align_corners=True
     ).squeeze(0).squeeze(0)
     # Back to complex (D, H, W)
     img_warp = torch.complex(img_warp_ri, img_warp_imag).to(img_cplx.dtype)
     return img_warp  # (D, H, W) complex
 
-################## Matrix helper functions ##################
 
-def translate_cplximg(
-        img_cplx: torch.Tensor,
-        t):
-    """ t : tuple of 3 floats (tz, ty, tx) in pixels"""
-    device = img_cplx.device
-    *_, D, H, W = img_cplx.shape[-3:]
-    tz, ty, tx = torch.as_tensor(t, dtype=torch.complex64, device=device)
-    
-    # --- calculate the phase shift factor ---
-    kz = torch.fft.fftfreq(D, d=1.0, device=device).view(D,1,1)   # cycles/voxel
-    ky = torch.fft.fftfreq(H, d=1.0, device=device).view(1,H,1)
-    kx = torch.fft.fftfreq(W, d=1.0, device=device).view(1,1,W)
-
-    phase = torch.exp(-2j * torch.pi * (tx*kx + ty*ky + tz*kz))
-
-    shifted_cplximg = img_cplx * phase
-    return shifted_cplximg
-
-
-def rotate_cplximg(img_cplx, p,
+def rotate(img_cplx, p,
                order=1,    # 0=nearest, 1=bilinear, 3=bicubic
                device="cuda" if torch.cuda.is_available() else "cpu"):
     """
@@ -111,6 +101,30 @@ def rotate_cplximg(img_cplx, p,
     img_warp = torch.complex(img_warp[0], img_warp[1])  
 
     return img_warp  # shape: (C, D, H, W)
+
+################## NOT USED ANYMORE ##################
+
+def translate_cplximg(
+        img_cplx: torch.Tensor,
+        t):
+    """ t : tuple of 3 floats (tz, ty, tx) in pixels"""
+    device = img_cplx.device
+
+
+    *_, D, H, W = img_cplx.shape[-3:]
+    tz, ty, tx = torch.as_tensor(t, dtype=torch.float32, device=device)
+    tz, ty, tx = tz, ty, tx
+    # --- calculate the phase shift factor ---
+    kz = torch.fft.fftfreq(D, d=1.0, device=device).view(D,1,1)   # cycles/voxel
+    ky = torch.fft.fftfreq(H, d=1.0, device=device).view(1,H,1)
+    kx = torch.fft.fftfreq(W, d=1.0, device=device).view(1,1,W)
+    
+    phase = torch.exp(2j * torch.pi * (tx*kx + ty*ky + tz*kz))
+
+    shifted_cplximg = img_cplx * phase
+
+    return shifted_cplximg
+
 
 
 ################## Matrix helper functions ##################

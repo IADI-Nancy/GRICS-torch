@@ -48,15 +48,15 @@ show_slice_and_save(image_corrupted, 'img_corrupted')
 
 # Prepare for reconstruction
 image_shape = data.Nx, data.Ny, data.Nsli, data.Ncha
-b = EH(kspace_corrupted, t_n = t_n, iterations = params.iterations, masks=masks, sigmas = data.smaps, image_shape = image_shape)
-# EHEp = EHE(p_true, t_n = t_n, iterations = params.iterations, masks= masks, sigmas = params.smaps, image_shape = image_shape)
+b = EH(kspace_corrupted, t_n = t_n, iterations = params.iterations, masks=masks, sigmas = data.smaps, image_shape = image_shape, model=0)
+# EHEp = EHE(p_true, t_n = t_n, iterations = params.iterations, masks= masks, sigmas = params.smaps, image_shape = image_shape, model=0)
 
 lambda_scaled = params.lambda_r * torch.norm(b, p=2)
 
 x0 = torch.zeros_like(b, device=t_device, dtype=torch.complex64)
 eye = torch.ones_like(b, device=t_device, dtype=torch.complex64)
 
-A = EHE(eye, t_n=t_n, iterations=params.iterations, masks=masks, sigmas=data.smaps, image_shape=image_shape) + eye * lambda_scaled
+A = EHE(eye, t_n=t_n, iterations=params.iterations, masks=masks, sigmas=data.smaps, image_shape=image_shape, model=0) + eye * lambda_scaled
 
 with torch.no_grad():
     image_rec, info = cg(A, b, x0, max_iter=params.max_iter, tol=params.tol, regularisation=lambda_scaled)
