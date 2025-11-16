@@ -23,10 +23,10 @@ class Data:
         
 
     def simulate_rigid_motion(self, params):
-        self.img_cplx, t_n, masks = randomTranslation_3D(
+        self.kspace, t_n, masks = randomTranslation_3D(
             self.img_cplx, is_2D=True, sigma=params.max_motion, seed=params.seed
         )
-        self.kspace = fftnc(self.img_cplx, dims=(-4, -3, -2)).to(self.t_device)
+        self.img_cplx = ifftnc(self.kspace, dims=(-4, -3, -2)).to(self.t_device)
         self.smaps = calc_espirit_maps(to_espirit_dims(self.kspace), params.acs, params.kernel_width, sp_device = self.sp_device)
         self.smaps = from_espirit_dims(self.smaps)
 
