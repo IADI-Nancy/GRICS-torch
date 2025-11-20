@@ -3,7 +3,6 @@ import torch
 from utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 
 from utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
-from utils.createArtifacts import randomTranslation_3D
 from iadi.Helpers import create_sparse_motion_operator, from_espirit_to_grics_dims, from_grics_to_espirit_dims
 from iadi.EncodingOperator import EncodingOperator
 
@@ -27,21 +26,13 @@ class Data:
     def create_motion_corrupted_dataset(self, params):
         self.Nshots = Nshots = params.NshotsPerNex * params.Nex
         self.simulate_kspace_sampling(params)
-        # self.smaps = calc_espirit_maps(to_espirit_dims(self.kspace), params.acs, params.kernel_width, sp_device = self.sp_device)
-        # self.smaps = from_espirit_dims(self.smaps)
-    
-        # ----- Copy scalar attributes -----
-        # Data["N"] = N
-        # Data["Nex"] = Nex
-        # Data["Nshots"] = Nshots
-        # Data["NshotsPerNex"] = NshotsPerNex
 
         X_trans = 4 * torch.randn(Nshots, device=self.t_device)
         Y_trans = 2 * torch.randn(Nshots, device=self.t_device)
         Rot      = 3 * torch.randn(Nshots, device=self.t_device)
         self.simulate_rigid_motion_fields(X_trans, Y_trans, Rot, rotation_center=[10, 30])
 
-        E = EncodingOperator(self.smaps, self.KspaceSamplingOperator, self.TotalKspaceSamples, self.KspaceSampleOffset, self.NbKspaceSamplesPerShot, self.t_device)
+        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.t_device) #self.KspaceSamplingOperator, 
         kspace_corruped = E.forward(self.image_no_moco, self.MotionOperator)
         self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
         self.img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
@@ -51,15 +42,11 @@ class Data:
     
     def simulate_kspace_sampling(self, params):
         Nshots = self.Nshots
-        self.KspaceSamplingMask      = []
-        self.KspaceSamplingOperator  = []
-        self.NbKspaceSamplesPerShot  = []
-        self.KspaceSampleOffset      = []
+        # self.KspaceSamplingOperator  = []
         self.TotalKspaceSamples = 0
+        self.SamplingIndices = []
         # Loop over all shots
         for shot in range(Nshots):
-
-            # MATLAB: shot_in_nex = mod(shot-1, NshotsPerNex) + 1;
             shot_in_nex = (shot % params.NshotsPerNex)
 
             # ----- Build sampling mask (N x N) -----
@@ -75,37 +62,26 @@ class Data:
                 # Interleaved sampling
                 KspaceSamplingMask[:, shot_in_nex::params.NshotsPerNex] = 1.0
 
-            self.KspaceSamplingMask.append(KspaceSamplingMask)
-
             # ----- Build sparse sampling operator -----
-            # MATLAB: nnz_idx = find(KspaceSamplingMask(:))
             nnz_idx = torch.nonzero(KspaceSamplingMask.flatten(), as_tuple=True)[0]
             Nsamp   = nnz_idx.numel()
 
-            # MATLAB: sparse(1:N^2, 1:N^2, KspaceSamplingMask(:), N^2, N^2)
-            # PyTorch equivalent: sparse diagonal matrix with mask values
-            N2 = self.Nx * self.Ny
-            diag_indices = torch.arange(N2, device=self.t_device)
+            # N2 = self.Nx * self.Ny
+            # diag_indices = torch.arange(N2, device=self.t_device)
 
-            SamplingOp = torch.sparse_coo_tensor(
-                indices=torch.vstack([diag_indices, diag_indices]),
-                values=KspaceSamplingMask.flatten(),
-                size=(N2, N2),
-                device=self.t_device,
-                dtype=torch.complex64
-            ).coalesce()
+            # SamplingOp = torch.sparse_coo_tensor(
+            #     indices=torch.vstack([diag_indices, diag_indices]),
+            #     values=KspaceSamplingMask.flatten(),
+            #     size=(N2, N2),
+            #     device=self.t_device,
+            #     dtype=torch.complex64
+            # ).coalesce()
 
             # MATLAB: select only sampled rows → operator of size Nsamp × N²
-            # In PyTorch, we filter rows by multiplying with a gather-like mask
-            # More efficient: slice via indexing of rows
-            # => Extract only rows corresponding to nnz_idx
-            SamplingOp = SamplingOp.index_select(0, nnz_idx)
+            # SamplingOp = SamplingOp.index_select(0, nnz_idx)
 
-            self.KspaceSamplingOperator.append(SamplingOp)
-            self.NbKspaceSamplesPerShot.append(Nsamp)
-
-            # ----- Update shot offsets -----
-            self.KspaceSampleOffset.append(self.TotalKspaceSamples)
+            # self.KspaceSamplingOperator.append(SamplingOp)
+            self.SamplingIndices.append(nnz_idx)
             self.TotalKspaceSamples += Nsamp
 
     def simulate_rigid_motion_fields(
@@ -116,8 +92,7 @@ class Data:
         rotation_center=None
     ):
         """
-        Replicates the MATLAB code: creates 2D rigid-motion displacement fields
-        Ux, Uy for each shot.
+        Creates sparse 2D rigid motion operators for each shot.
         """
 
         Nshots = X_translations.shape[0]
@@ -140,11 +115,9 @@ class Data:
 
         # Same as MATLAB: X varies along columns, Y along rows
         Y, X = torch.meshgrid(coords_y, coords_x, indexing="xy")   # (Nx, Ny)
-        print(X.shape, Y.shape)
-        #   Note: PyTorch returns shape (Nx, Ny)
 
-        self.MotionOperator = []          # like Data.MotionOperator{shot}
-        self.Ux_list = []                 # if you want to store fields
+        self.MotionOperator = []          
+        self.Ux_list = []
         self.Uy_list = []
 
         for shot in range(Nshots):

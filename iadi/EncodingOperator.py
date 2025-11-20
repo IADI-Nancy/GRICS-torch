@@ -19,12 +19,11 @@ class EncodingOperator:
     - Eh(y)  : adjoint operator (k-space -> image)
     """
 
-    def __init__(self, smaps, KspaceSamplingOperator, Nsamples, KspaceSampleOffsets, NbKspaceSamplesPerShot, device=None):
+    def __init__(self, smaps, Nsamples, SamplingIndices, device=None): #KspaceSamplingOperator, 
         self.smaps = smaps
-        self.KspaceSamplingOperator = KspaceSamplingOperator
+        # self.KspaceSamplingOperator = KspaceSamplingOperator
         self.Nsamples = Nsamples
-        self.KspaceSampleOffsets = KspaceSampleOffsets
-        self.NbKspaceSamplesPerShot = NbKspaceSamplesPerShot
+        self.SamplingIndices = SamplingIndices
         self.device = device
 
     def forward(self, image, motionOperator):
@@ -37,14 +36,12 @@ class EncodingOperator:
         """
          # ---- Sizes ----
         Nx, Ny, Nsli, Ncoils = self.smaps.shape
-        Nshots         = len(self.KspaceSamplingOperator)
+        Nshots         = len(self.SamplingIndices)
         KspaceData = torch.zeros((self.Nsamples, Ncoils), dtype=torch.complex64, device=self.device)
 
         # ---- Loop over shots ----
         for shot in range(Nshots):
-            KspaceSampleOffset = self.KspaceSampleOffsets[shot]
-            Nsamples_in_shot   = self.NbKspaceSamplesPerShot[shot]
-
+            SamplingIndices = self.SamplingIndices[shot]
             MotionOp = motionOperator[shot]
 
             # Apply motion operator -> reshape to image
@@ -61,14 +58,10 @@ class EncodingOperator:
                 WarpedImageFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
 
                 # Sampling operator (sparse matrix)
-                Sampler = self.KspaceSamplingOperator[shot]
-                SampledKspaceData = Sampler @ WarpedImageFT.flatten()
+                SampledKspaceData = WarpedImageFT.flatten()[SamplingIndices]
 
                 # Insert into output
-                #inds = KspaceSampleOffset + torch.arange(0, Nsamples_in_shot, device=self.device)
-                Sampler = Sampler.coalesce()
-                row_idx, col_idx = Sampler.indices()
-                KspaceData[col_idx, coil] = SampledKspaceData #
+                KspaceData[SamplingIndices, coil] = SampledKspaceData
 
         return KspaceData.flatten()
 

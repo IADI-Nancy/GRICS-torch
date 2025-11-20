@@ -8,6 +8,7 @@ from utils.conjugate_gradient import cg
 
 from iadi.Data import Data
 from iadi.Parameters import Parameters
+from iadi.EncodingOperator import EncodingOperator
 
 def show_slice_and_save(image, image_name):
     if params.debug_flag:
@@ -47,6 +48,9 @@ kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
 # Prepare for reconstruction
+E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.t_device)
+
+
 image_shape = data.Nx, data.Ny, data.Nsli, data.Ncha
 b = EH(kspace_corrupted, t_n = t_n, iterations = params.iterations, masks=masks, sigmas = data.smaps, image_shape = image_shape, model=0)
 # EHEp = EHE(p_true, t_n = t_n, iterations = params.iterations, masks= masks, sigmas = params.smaps, image_shape = image_shape, model=0)
