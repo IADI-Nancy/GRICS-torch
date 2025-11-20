@@ -48,7 +48,9 @@ kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
 # Prepare for reconstruction
-E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.t_device)
+E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.t_device)
+s = E.forward(image_corrupted, data.MotionOperator)
+img = E.backward(s, data.MotionOperator)
 
 
 image_shape = data.Nx, data.Ny, data.Nsli, data.Ncha

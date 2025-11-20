@@ -32,7 +32,7 @@ class Data:
         Rot      = 3 * torch.randn(Nshots, device=self.t_device)
         self.simulate_rigid_motion_fields(X_trans, Y_trans, Rot, rotation_center=[10, 30])
 
-        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.t_device) #self.KspaceSamplingOperator, 
+        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.t_device) #self.KspaceSamplingOperator, 
         kspace_corruped = E.forward(self.image_no_moco, self.MotionOperator)
         self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
         self.img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
@@ -42,12 +42,13 @@ class Data:
     
     def simulate_kspace_sampling(self, params):
         Nshots = self.Nshots
-        # self.KspaceSamplingOperator  = []
+        self.KspaceOffset  = []
         self.TotalKspaceSamples = 0
         self.SamplingIndices = []
         # Loop over all shots
         for shot in range(Nshots):
             shot_in_nex = (shot % params.NshotsPerNex)
+            Nex_idx = shot // params.NshotsPerNex
 
             # ----- Build sampling mask (N x N) -----
             KspaceSamplingMask = torch.zeros((self.Nx, self.Ny), dtype=torch.float32, device=self.t_device)
@@ -82,6 +83,7 @@ class Data:
 
             # self.KspaceSamplingOperator.append(SamplingOp)
             self.SamplingIndices.append(nnz_idx)
+            self.KspaceOffset.append(Nex_idx*Nsamp)
             self.TotalKspaceSamples += Nsamp
 
     def simulate_rigid_motion_fields(
