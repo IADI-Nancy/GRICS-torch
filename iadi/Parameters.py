@@ -6,7 +6,7 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 8
-    Nex = 2
+    Nex = 1
     kspace_sampling_type = 'interleaved' # can be also 'linear'
 
     # Motion simulation parameters

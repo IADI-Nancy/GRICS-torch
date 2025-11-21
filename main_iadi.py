@@ -3,9 +3,6 @@ import sigpy as sp
 from utils.show_slice import show_slice
 import matplotlib.pyplot as plt
 
-from utils.EHE import EH, EHE
-from utils.conjugate_gradient import cg
-
 from iadi.Data import Data
 from iadi.Parameters import Parameters
 from iadi.EncodingOperator import EncodingOperator
@@ -47,23 +44,19 @@ image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
-# Prepare for reconstruction
 E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.t_device)
-s = E.forward(image_corrupted, data.MotionOperator)
-img = E.backward(s, data.MotionOperator)
 
+# Test
+EHs = E.normal(image_ground_truth, data.MotionOperator)
+show_slice_and_save(EHs.reshape(data.Nx, data.Ny, data.Nsli), 'EHs')
 
-image_shape = data.Nx, data.Ny, data.Nsli, data.Ncha
-b = EH(kspace_corrupted, t_n = t_n, iterations = params.iterations, masks=masks, sigmas = data.smaps, image_shape = image_shape, model=0)
-# EHEp = EHE(p_true, t_n = t_n, iterations = params.iterations, masks= masks, sigmas = params.smaps, image_shape = image_shape, model=0)
+# Ax = b
+# EH E x = Eh s
 
+# Prepare for reconstruction
+b = E.backward(kspace_corrupted, data.MotionOperator)
 lambda_scaled = params.lambda_r * torch.norm(b, p=2)
+x0 = image_corrupted.flatten()
 
-x0 = torch.zeros_like(b, device=t_device, dtype=torch.complex64)
-eye = torch.ones_like(b, device=t_device, dtype=torch.complex64)
-
-A = EHE(eye, t_n=t_n, iterations=params.iterations, masks=masks, sigmas=data.smaps, image_shape=image_shape, model=0) + eye * lambda_scaled
-
-with torch.no_grad():
-    image_rec, info = cg(A, b, x0, max_iter=params.max_iter, tol=params.tol, regularisation=lambda_scaled)
-show_slice_and_save(image_rec.view(640,320,1), 'img_reconstructed')
+def A(x):
+    return E.normal(x, data.MotionOperator) +  lambda_scaled * x

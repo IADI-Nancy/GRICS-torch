@@ -30,9 +30,9 @@ class Data:
         X_trans = 4 * torch.randn(Nshots, device=self.t_device)
         Y_trans = 2 * torch.randn(Nshots, device=self.t_device)
         Rot      = 3 * torch.randn(Nshots, device=self.t_device)
-        self.simulate_rigid_motion_fields(X_trans, Y_trans, Rot, rotation_center=[10, 30])
+        self.simulate_rigid_motion_fields(X_trans, Y_trans, Rot) #, rotation_center=[0, 160]
 
-        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.t_device) #self.KspaceSamplingOperator, 
+        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.t_device)
         kspace_corruped = E.forward(self.image_no_moco, self.MotionOperator)
         self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
         self.img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
@@ -66,20 +66,6 @@ class Data:
             # ----- Build sparse sampling operator -----
             nnz_idx = torch.nonzero(KspaceSamplingMask.flatten(), as_tuple=True)[0]
             Nsamp   = nnz_idx.numel()
-
-            # N2 = self.Nx * self.Ny
-            # diag_indices = torch.arange(N2, device=self.t_device)
-
-            # SamplingOp = torch.sparse_coo_tensor(
-            #     indices=torch.vstack([diag_indices, diag_indices]),
-            #     values=KspaceSamplingMask.flatten(),
-            #     size=(N2, N2),
-            #     device=self.t_device,
-            #     dtype=torch.complex64
-            # ).coalesce()
-
-            # MATLAB: select only sampled rows → operator of size Nsamp × N²
-            # SamplingOp = SamplingOp.index_select(0, nnz_idx)
 
             # self.KspaceSamplingOperator.append(SamplingOp)
             self.SamplingIndices.append(nnz_idx)
@@ -118,7 +104,7 @@ class Data:
         # Same as MATLAB: X varies along columns, Y along rows
         Y, X = torch.meshgrid(coords_y, coords_x, indexing="xy")   # (Nx, Ny)
 
-        self.MotionOperator = []          
+        self.MotionOperator = []                 
         self.Ux_list = []
         self.Uy_list = []
 
