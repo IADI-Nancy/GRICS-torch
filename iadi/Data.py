@@ -32,8 +32,8 @@ class Data:
         Rot      = 3 * torch.randn(Nshots, device=self.t_device)
         self.simulate_rigid_motion_fields(X_trans, Y_trans, Rot) #, rotation_center=[0, 160]
 
-        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.t_device)
-        kspace_corruped = E.forward(self.image_no_moco, self.MotionOperator)
+        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.MotionOperator)
+        kspace_corruped = E.forward(self.image_no_moco)
         self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
         self.img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
 
@@ -69,7 +69,7 @@ class Data:
 
             # self.KspaceSamplingOperator.append(SamplingOp)
             self.SamplingIndices.append(nnz_idx)
-            self.KspaceOffset.append(Nex_idx*Nsamp)
+            self.KspaceOffset.append(Nex_idx* self.Nx* self.Ny)
             self.TotalKspaceSamples += Nsamp
 
     def simulate_rigid_motion_fields(

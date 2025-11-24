@@ -9,19 +9,39 @@ class EncodingOperator:
     MRI encoding operator.
 
     Methods:
-    - __init__(sigmas, masks=None, image_shape=None, device=None)
-    - forward(x, M)   : forward operator (image -> k-space), M - motion operator
-    - backward(y, M)  : adjoint operator (k-space -> image), M - motion operator
+    - __init__(smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None)
+    - forward(x)   : forward operator (image -> k-space)
+    - backward(y)  : adjoint operator (k-space -> image)
     """
 
-    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, device=None):
+    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None):
+        self.device = smaps.device
         self.smaps = smaps
         self.KspaceOffset = KspaceOffset
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
-        self.device = device
+        if motionOperator is None:
+            Nshots = len(SamplingIndices)
+            Nx, Ny, Nsli, _ = smaps.shape
+            Npix = Nx * Ny
 
-    def forward(self, image, motionOperator):
+            # build a sparse identity (Nx*Ny x Nx*Ny) and reuse for each shot
+            idx = torch.arange(Npix, device=self.device)
+            indices = torch.stack([idx, idx], dim=0)            # shape (2, Npix)
+            vals = torch.ones(Npix, dtype=torch.complex64, device=self.device)
+            I_sparse = torch.sparse_coo_tensor(indices, vals, (Npix, Npix),
+                                               dtype=torch.complex64,
+                                               device=self.device).coalesce()
+
+            self.motionOperator = [I_sparse for _ in range(Nshots)]
+        else:
+            self.motionOperator = motionOperator
+        
+
+    def set_motion_operator(self, motionOperator):
+        self.motionOperator = motionOperator
+
+    def forward(self, image):
          # ---- Sizes ----
         Nx, Ny, Nsli, Ncoils = self.smaps.shape
         Nshots         = len(self.SamplingIndices)
@@ -31,7 +51,7 @@ class EncodingOperator:
         for shot in range(Nshots):
             SamplingIndices = self.SamplingIndices[shot]
             KspaceOffset = self.KspaceOffset[shot]
-            MotionOp = motionOperator[shot]
+            MotionOp = self.motionOperator[shot]
 
             # Apply motion operator -> reshape to image
             WarpedImage = (MotionOp @ image.flatten()).reshape(Nx, Ny)
@@ -51,7 +71,7 @@ class EncodingOperator:
 
         
 
-    def backward(self, KspaceData, motionOperator):
+    def adjoint(self, KspaceData):
         device = self.device
         Nx, Ny, Nsli, Ncoils = self.smaps.shape
         Nshots = len(self.SamplingIndices)
@@ -64,19 +84,19 @@ class EncodingOperator:
             KspaceOffset = self.KspaceOffset[shot]
 
             for coil in range(Ncoils):
-                # 1) Sampling operator
+                # Sampling operator
                 FullKspaceDataCoil = torch.zeros(Nx*Ny, dtype=KspaceData.dtype, device=self.device)
                 FullKspaceDataCoil[SamplingIndices] = KspaceData[KspaceOffset + SamplingIndices, coil]
                 FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
-                # 2) Adjoint FFT: fftshift → ifft2 → ifftshift
+                # Adjoint FFT: fftshift → ifft2 → ifftshift
                 image_coil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
 
-                # 3) Adjoint coil sensitivity: multiply by conj(smap)
+                # Adjoint coil sensitivity: multiply by conj(smap)
                 smap = self.smaps[:, :, :, coil].squeeze()
                 WarpedImage += image_coil * torch.conj(smap)
 
-            # 4) Adjoint motion operator
-            MotionOp = motionOperator[shot].transpose(0, 1)
+            # Adjoint motion operator
+            MotionOp = self.motionOperator[shot].transpose(0, 1)
             Unwarped = MotionOp @ WarpedImage.reshape(-1)
             Unwarped = Unwarped.reshape(Nx, Ny)
 
@@ -85,6 +105,6 @@ class EncodingOperator:
 
         return Image.flatten()
     
-    def normal(self, image, motionOperator):
-        return self.backward(self.forward(image, motionOperator), motionOperator)
+    def normal(self, image):
+        return self.adjoint(self.forward(image))
         

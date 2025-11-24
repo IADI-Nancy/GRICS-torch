@@ -44,19 +44,19 @@ image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
-E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.t_device)
+E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.MotionOperator)
 
 # Test
-EHs = E.normal(image_ground_truth, data.MotionOperator)
+EHs = E.normal(image_ground_truth)
 show_slice_and_save(EHs.reshape(data.Nx, data.Ny, data.Nsli), 'EHs')
 
 # Ax = b
 # EH E x = Eh s
 
 # Prepare for reconstruction
-b = E.backward(kspace_corrupted, data.MotionOperator)
+b = E.adjoint(kspace_corrupted)
 lambda_scaled = params.lambda_r * torch.norm(b, p=2)
 x0 = image_corrupted.flatten()
 
 def A(x):
-    return E.normal(x, data.MotionOperator) +  lambda_scaled * x
+    return E.normal(x) +  lambda_scaled * x
