@@ -6,13 +6,13 @@ import matplotlib.pyplot as plt
 from iadi.Data import Data
 from iadi.Parameters import Parameters
 from iadi.EncodingOperator import EncodingOperator
+from iadi.ReconstructionSolver import ReconstructionSolver
+import time
 
 def show_slice_and_save(image, image_name):
     if params.debug_flag:
         show_slice(image, max_images=1, headline=image_name)
         plt.savefig(params.debug_folder + image_name + '.png')
-
-    
 
 # --- Optional CuPy import + capability check ---
 try:
@@ -26,6 +26,8 @@ try:
 except Exception:
     cp = None
     _cupy_ok = False
+
+torch.cuda.empty_cache()
 # --- End optional CuPy import + capability check ---
 
 # Set parameters
@@ -55,8 +57,11 @@ show_slice_and_save(EHs.reshape(data.Nx, data.Ny, data.Nsli), 'EHs')
 
 # Prepare for reconstruction
 b = E.adjoint(kspace_corrupted)
-lambda_scaled = params.lambda_r * torch.norm(b, p=2)
 x0 = image_corrupted.flatten()
 
-def A(x):
-    return E.normal(x) +  lambda_scaled * x
+solver = ReconstructionSolver(E, reg_lambda=params.lambda_r, verbose=True)
+start = time.time()
+image_recon = solver.solve_cg(b.flatten(), x0=x0, max_iter=params.max_iter_recon, tol=params.tol) #
+end = time.time()
+print(f"Elapsed time: {end - start:.2f} s")
+show_slice_and_save(image_recon.reshape(data.Nx, data.Ny, data.Nsli), 'reconstructed_image')

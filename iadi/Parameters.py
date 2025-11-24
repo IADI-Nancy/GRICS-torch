@@ -6,7 +6,7 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 8
-    Nex = 2
+    Nex = 1
     kspace_sampling_type = 'interleaved' # can be also 'linear'
 
     # Motion simulation parameters
@@ -21,8 +21,8 @@ class Parameters:
     iterations = 5  # Number of motion states for reconstruction
     # the regularization term
     lambda_r = 1e-3
-    max_iter = 300
-    tol = 1e-4
+    max_iter_recon = 20
+    tol = 1e-3
 
     def __init__(self):
         if self.debug_flag and not os.path.exists(self.debug_folder):

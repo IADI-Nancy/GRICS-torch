@@ -1,7 +1,4 @@
 import torch
-import numpy as np
-from utils.show_slice import show_slice
-import matplotlib.pyplot as plt
 from  utils.fftnc import fftnc, ifftnc
 
 class EncodingOperator:
@@ -11,7 +8,7 @@ class EncodingOperator:
     Methods:
     - __init__(smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None)
     - forward(x)   : forward operator (image -> k-space)
-    - backward(y)  : adjoint operator (k-space -> image)
+    - adjoint(y)  : adjoint operator (k-space -> image)
     """
 
     def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None):
@@ -96,7 +93,8 @@ class EncodingOperator:
                 WarpedImage += image_coil * torch.conj(smap)
 
             # Adjoint motion operator
-            MotionOp = self.motionOperator[shot].transpose(0, 1)
+            MotionOp = self.motionOperator[shot].coalesce().transpose(0, 1)
+            # print("Memory allocated on CUDA device: ",torch.cuda.memory.memory_allocated(device=self.device))
             Unwarped = MotionOp @ WarpedImage.reshape(-1)
             Unwarped = Unwarped.reshape(Nx, Ny)
 
