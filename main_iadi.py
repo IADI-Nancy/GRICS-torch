@@ -7,6 +7,7 @@ from iadi.Data import Data
 from iadi.Parameters import Parameters
 from iadi.EncodingOperator import EncodingOperator
 from iadi.ReconstructionSolver import ReconstructionSolver
+from iadi.JointReconstructor import JointReconstructor
 import time
 
 def show_slice_and_save(image, image_name):
@@ -28,6 +29,8 @@ except Exception:
     _cupy_ok = False
 
 torch.cuda.empty_cache()
+total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3  # in GB
+print(f"Total GPU memory: {total_mem:.2f} GB")
 # --- End optional CuPy import + capability check ---
 
 # Set parameters
@@ -45,6 +48,9 @@ data.create_motion_corrupted_dataset(params=params)
 image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
+
+jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, params)
+jointReconstructor.run()
 
 E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.MotionOperator)
 

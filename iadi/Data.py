@@ -3,8 +3,9 @@ import torch
 from utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 
 from utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
-from iadi.Helpers import create_sparse_motion_operator, from_espirit_to_grics_dims, from_grics_to_espirit_dims
+from iadi.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
 from iadi.EncodingOperator import EncodingOperator
+from iadi.MotionOperator import MotionOperator
 
 
 class Data:
@@ -27,17 +28,22 @@ class Data:
         self.Nshots = Nshots = params.NshotsPerNex * params.Nex
         self.simulate_kspace_sampling(params)
 
-        X_trans = 4 * torch.randn(Nshots, device=self.t_device)
-        Y_trans = 2 * torch.randn(Nshots, device=self.t_device)
-        Rot      = 3 * torch.randn(Nshots, device=self.t_device)
-        self.simulate_rigid_motion_fields(X_trans, Y_trans, Rot) #, rotation_center=[0, 160]
+        t_x = 0 * torch.randn(Nshots, device=self.t_device)
+        t_y = 0 * torch.randn(Nshots, device=self.t_device)
+        s = torch.stack([t_x, t_y], dim=-1)
+        phi_rot      = 0 * torch.randn(Nshots, device=self.t_device)
+        alpha_x = torch.ones_like(self.image_no_moco, device=self.t_device)
+        alpha_y = torch.ones_like(self.image_no_moco, device=self.t_device)
+        alpha = torch.stack([alpha_x, alpha_y], dim=-1)
 
+        self.simulate_rigid_motion_fields(t_x, t_y, phi_rot) #, rotation_center=[0, 160]
         E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.MotionOperator)
         kspace_corruped = E.forward(self.image_no_moco)
         self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
         self.img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
 
         self.image_no_moco = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1)
+        return s, alpha
 
     
     def simulate_kspace_sampling(self, params):
@@ -153,7 +159,7 @@ class Data:
             self.Uy_list.append(Uy)
 
              # Create motion operator (your custom function)
-            M = create_sparse_motion_operator(Ux, Uy)
+            M = MotionOperator.create_sparse_motion_operator(Ux, Uy)
             self.MotionOperator.append(M)
 
 
