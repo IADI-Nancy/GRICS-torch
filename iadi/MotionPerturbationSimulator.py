@@ -4,15 +4,16 @@ from  utils.fftnc import fftnc, ifftnc
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
 Performes the simulation of motion perturbation effects in k-space data.
-J·δu = δkspace, where δkspace is the residual from the image reconstruction step - is the equation to solve.
+(∇_u(E)·δu) = δkspace, where δkspace is the residual from the image reconstruction step - is the equation to solve.
 
-J·δu = E(image, MotionOperator + MotionModelPerturbation)·image - E(image, MotionOperator)·image = 
-= Sampling · F · smaps · ((MotionOperator + MotionModelPerturbation) · image) - Sampling · F · smaps · (MotionOperator · image) = 
+(∇_u(E)·δu) = E(image, MotionOperator(u+δu)) - E(image, MotionOperator(u)) = 
+= (Sampling · F · smaps · MotionOperator(u+δu) · image) - (Sampling · F · smaps · MotionOperator(u) · image) = 
+= Sampling · F · smaps · (MotionOperator(u+δu) - MotionOperator(u))· image = 
             <optical flow first-order approximation>
-= Sampling · F · smaps · (∇(MotionOperator · image)) · δu
+= Sampling · F · smaps · MotionOperator(u) · (∇image · δu)
 """
 
-class JacobianEncodingOperator:
+class MotionPerturbationSimulator:
     def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, image, motionOperator=None):
         self.device = smaps.device
         self.SensitivityMaps = smaps

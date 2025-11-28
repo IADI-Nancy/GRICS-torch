@@ -59,7 +59,7 @@ x0 = image_corrupted.flatten()
 
 solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=True)
 start = time.time()
-image_recon = solver.solve_cg(b.flatten(), x0=x0, max_iter=params.max_iter_recon, tol=params.tol_recon) #
+image_recon = solver.solve_cg(b.flatten(), x0=x0, max_iter=params.max_iter_recon, tol=params.tol_recon)
 end = time.time()
 print(f"Elapsed time image only reconstruction: {end - start:.2f} s")
 show_slice_and_save(image_recon.reshape(data.Nx, data.Ny, data.Nsli), 'reconstructed_image')

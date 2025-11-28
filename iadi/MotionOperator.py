@@ -1,5 +1,24 @@
 import torch
 
+"""
+Translational and rotational motion derivatives:
+∂u_x/∂t_x = 1
+∂u_y/∂t_x = 0
+
+∂u_x/∂t_y = 0
+∂u_y/∂t_y = 1
+
+∂u_x/∂θ =-(x-c_x)sinθ-(y-c_y)cosθ
+∂u_y/∂θ = (x-c_x)cosθ-(y-c_y)sinθ
+
+∂u_x/∂c_x = 1 - cosθ
+∂u_y/∂c_x = sinθ
+
+∂u_x/∂c_y = -sinθ
+∂u_y/∂c_y = 1 - cosθ
+
+"""
+
 
 class MotionOperator:
     def __init__(self, alpha, s, motion_type='translation'):
@@ -7,27 +26,94 @@ class MotionOperator:
         self.s = s
         self.motion_type = motion_type
 
-    # def get_operator(self, s, alpha):
-    #     Nshots = s.shape[0]
-    #     if self.motion_type == 'translation':
-    #         t_x = s[:, 0]
-    #         t_y = s[:, 1]   
-    #         self.MotionOperator = []                 
-    #         self.Ux_list = []
-    #         self.Uy_list = []
+    def theta_derivative(self, theta, center):
+        """
+        Compute dX/dθ and dY/dθ fields for all pixels given theta and center (cx,cy).
+        Returns tensors shape (Nx,Ny) of floats (same device).
+        """
+        Nx, Ny = self.Nx, self.Ny
+        device = self.device
+        dtype = torch.float32
 
-    #         for shot in range(Nshots):
-    #             # ----------------------------
-    #             # Expand translations
-    #             # MATLAB uses inverse displacement: tx = -XTranslation(shot)
-    #             # ----------------------------
-    #             tx = -t_x[shot].to(self.t_device)
-    #             ty = -t_y[shot].to(self.t_device)
-    #     else:
-    #         raise NotImplementedError(f"Motion type {self.motion_type} not implemented.")
+        # i = row index [0..Nx-1], j = col index [0..Ny-1]
+        coords_x = torch.arange(Nx, device=device, dtype=dtype)
+        coords_y = torch.arange(Ny, device=device, dtype=dtype)
+        Y, X = torch.meshgrid(coords_y, coords_x, indexing='ij')
 
-    #     M = self.create_sparse_motion_operator(Ux, Uy)
-    #     return M
+        cx, cy = center
+        xmc = X - cx   # (x - cx): note x as row index
+        ymc = Y - cy   # (y - cy): note y as col index
+
+        st = torch.sin(theta)
+        ct = torch.cos(theta)
+
+        dX_dtheta = -st * xmc - ct * ymc
+        dY_dtheta =  ct * xmc - st * ymc
+
+        return dX_dtheta.to(self.device), dY_dtheta.to(self.device)
+    
+    def cx_derivative(self, theta):
+        """
+        Compute dX/dc_x and dY/dc_x fields for all pixels given theta.
+        Returns tensors shape (Nx,Ny) of floats (same device).
+        """
+        Nx, Ny = self.Nx, self.Ny
+        device = self.device
+        dtype = torch.float32
+
+        # i = row index [0..Nx-1], j = col index [0..Ny-1]
+        coords_x = torch.arange(Nx, device=device, dtype=dtype)
+        coords_y = torch.arange(Ny, device=device, dtype=dtype)
+        Y, X = torch.meshgrid(coords_y, coords_x, indexing='ij')
+
+        st = torch.sin(theta)
+        ct = torch.cos(theta)
+
+        dX_dc_x = 1 - ct
+        dY_dc_x = st
+
+        return dX_dc_x.to(self.device), dY_dc_x.to(self.device)
+    
+    def cy_derivative(self, theta):
+        """
+        Compute dX/dc_y and dY/dc_y fields for all pixels given theta.
+        Returns tensors shape (Nx,Ny) of floats (same device).
+        """
+        Nx, Ny = self.Nx, self.Ny
+        device = self.device
+        dtype = torch.float32
+
+        # i = row index [0..Nx-1], j = col index [0..Ny-1]
+        coords_x = torch.arange(Nx, device=device, dtype=dtype)
+        coords_y = torch.arange(Ny, device=device, dtype=dtype)
+        Y, X = torch.meshgrid(coords_y, coords_x, indexing='ij')
+
+        st = torch.sin(theta)
+        ct = torch.cos(theta)
+
+        dX_dc_y = -st
+        dY_dc_y = 1 - ct
+
+        return dX_dc_y.to(self.device), dY_dc_y.to(self.device)
+
+    #  # translations (constant)
+    #         dux = d[0, shot] * torch.ones((Nx, Ny), device=self.device)
+    #         duy = d[1, shot] * torch.ones((Nx, Ny), device=self.device)
+
+    #         # rotation component
+    #         dtheta = d[2, shot]
+    #         if dtheta != 0:
+    #             # decide center for this shot
+    #             if self.centers is not None:
+    #                 center = (float(self.centers[shot, 0]), float(self.centers[shot, 1]))
+    #             else:
+    #                 center = self.center_global
+    #             # use current rotation angle if available (otherwise 0)
+    #             theta0 = float(self.rotations[shot]) if (self.rotations is not None) else 0.0
+    #             # dX_dtheta/dY_dtheta fields evaluated at theta0
+    #             dX_dtheta, dY_dtheta = self._rotation_fields(theta0, center)
+    #             dux = dux + dX_dtheta * dtheta
+    #             duy = duy + dY_dtheta * dtheta
 
     @staticmethod
     def create_sparse_motion_operator(Ux, Uy):

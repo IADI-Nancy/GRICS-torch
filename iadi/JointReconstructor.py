@@ -3,7 +3,7 @@ import torch
 from iadi.ConjugateGadientSolver import ConjugateGradientSolver
 from iadi.MotionOperator import MotionOperator
 from iadi.EncodingOperator import EncodingOperator
-from iadi.JacobianEncodingOperator import JacobianEncodingOperator
+from iadi.MotionPerturbationSimulator import MotionPerturbationSimulator
 from iadi.Helpers import resize_img_2D
 
 from utils.show_slice import show_slice
@@ -130,8 +130,8 @@ class JointReconstructor:
         )
         return E
     
-    def build_Jacobian_encoding_operator(self, Data_res):
-        J = JacobianEncodingOperator(
+    def build_motion_perturbation_simulator(self, Data_res):
+        J = MotionPerturbationSimulator(
             Data_res["SensitivityMaps"],
             Data_res["Nsamples"],
             Data_res["SamplingIndices"],
@@ -223,18 +223,20 @@ class JointReconstructor:
                 img = self.solve_image(Data_res)
                 Data_res["ReconstructedImage"] = img
 
+                if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
+                    break
+
                 # 3) Compute residual
                 x = img.flatten()
                 y = Data_res["E"].forward(x)
                 residual = Data_res["KspaceData"].flatten() - y
 
-                # 4) Build Jacobian encoding operator
-                Data_res["J"] = self.build_Jacobian_encoding_operator(Data_res)
+                # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
+                Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
 
                 # 4) Solve for motion update
                 dm = self.solve_motion(Data_res, residual)
                 Data_res["MotionModel"] += dm
-                Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
 
                 Data_prev = Data_res
 
