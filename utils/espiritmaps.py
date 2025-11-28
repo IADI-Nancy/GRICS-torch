@@ -34,7 +34,8 @@ try:
                     device=sp_device
                 ).run()
                 maps_cp = maps_cp.astype(cp.complex64, copy=False)
-                maps_t = sp.to_pytorch(maps_cp).to(device)
+                maps_cp = cp.ascontiguousarray(maps_cp)
+                maps_t = sp.to_pytorch(maps_cp)
 
             # ---- CPU path ----
             else:
