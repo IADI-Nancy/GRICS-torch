@@ -28,8 +28,8 @@ class Data:
         self.Nshots = Nshots = params.NshotsPerNex * params.Nex
         self.simulate_kspace_sampling(params)
 
-        t_x = 0 * torch.randn(Nshots, device=self.t_device)
-        t_y = 0 * torch.randn(Nshots, device=self.t_device)
+        t_x = 4 * torch.randn(Nshots, device=self.t_device)
+        t_y = 6 * torch.randn(Nshots, device=self.t_device)
         s = torch.stack([t_x, t_y], dim=-1)
         phi_rot      = 0 * torch.randn(Nshots, device=self.t_device)
         alpha_x = torch.ones_like(self.image_no_moco, device=self.t_device)

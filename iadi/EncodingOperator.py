@@ -94,7 +94,6 @@ class EncodingOperator:
 
             # Adjoint motion operator
             MotionOp = self.motionOperator[shot].coalesce().transpose(0, 1)
-            print("Memory allocated on CUDA device: ",torch.cuda.memory.memory_allocated(device=self.device) / 1024**3, " GB")
             Unwarped = MotionOp @ WarpedImage.reshape(-1)
             Unwarped = Unwarped.reshape(Nx, Ny)
 

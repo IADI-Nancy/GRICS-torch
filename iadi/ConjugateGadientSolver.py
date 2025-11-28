@@ -3,7 +3,7 @@ import torch
 """
 Source: ChatGPT + Wikipedia
 """
-class ReconstructionSolver:
+class ConjugateGradientSolver:
     """
     CG and PCG solver for equations of the form:
         A(x) = b

@@ -5,8 +5,8 @@ class Parameters:
     debug_folder = "debug_outputs/"
 
     # Sampling simulation parameters
-    NshotsPerNex = 8
-    Nex = 2
+    NshotsPerNex = 4
+    Nex = 1
     kspace_sampling_type = 'interleaved' # can be also 'linear'
 
     # Motion simulation parameters
@@ -19,11 +19,16 @@ class Parameters:
 
     # Reconstruction parameters
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
-    GN_iterations_per_level = 2 #8
-    # the regularization term
+    GN_iterations_per_level = 8
+
+    # Image reconstruction parameters
     lambda_r = 1e-3
     max_iter_recon = 20
-    tol = 1e-3
+    tol_recon = 1e-3
+    # Motion model parameters
+    lambda_m = 1e-3
+    max_iter_motion = 20
+    tol_motion = 1e-3
 
     def __init__(self):
         if self.debug_flag and not os.path.exists(self.debug_folder):

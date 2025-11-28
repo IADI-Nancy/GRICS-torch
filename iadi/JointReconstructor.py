@@ -1,8 +1,9 @@
 import torch
 
-from iadi.ReconstructionSolver import ReconstructionSolver
+from iadi.ConjugateGadientSolver import ConjugateGradientSolver
 from iadi.MotionOperator import MotionOperator
 from iadi.EncodingOperator import EncodingOperator
+from iadi.JacobianEncodingOperator import JacobianEncodingOperator
 from iadi.Helpers import resize_img_2D
 
 from utils.show_slice import show_slice
@@ -11,13 +12,6 @@ import matplotlib.pyplot as plt
 def show_slice_and_save(image, image_name):
     show_slice(image, max_images=1, headline=image_name)
     plt.savefig('debug_outputs/' + image_name + '.png')
-
-
-# --------------------------------------------------------------------------
-# Utility functions
-# --------------------------------------------------------------------------
-import torch
-import torch.nn.functional as F
 
 # --------------------------------------------------------------------------
 # Class that performs joint image–motion reconstruction
@@ -70,7 +64,6 @@ class JointReconstructor:
 
         return Sampling_res
 
-
     def downsample_kspace(self, Nx_res, Ny_res):
         Nx_full, Ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
         kspace_full = self.Data_full["KspaceData"]
@@ -112,33 +105,41 @@ class JointReconstructor:
     # ----------------------------------------------------------------------
     # Build Ux, Uy fields and Motion Operators
     # ----------------------------------------------------------------------
-    def build_motion_operators(self, Data_res):
+    def build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
-        # Mflag = Data_res["motion_type_flag"]
-
-        Data_res["MotionOperator"] = []
-
+        motionOperator = []
         for shot in range(self.params.Nshots):
-
-            # if Mflag == 0:   # translations only
             tx = Data_res["MotionModel"][0, shot]
             ty = Data_res["MotionModel"][1, shot]
             Ux = torch.full((Nx,Ny), tx, device=self.device)
             Uy = torch.full((Nx,Ny), ty, device=self.device)
 
-            # elif Mflag == 2:   # constrained nonrigid
-            #     S = self.Data.XTranslationVector[shot]
-            #     Ux = Data_res["MotionModel"][:,:,0] * S
-            #     Uy = Data_res["MotionModel"][:,:,1] * S
-
-            # else:
-            #     raise NotImplementedError("Only motion types 0 and 2 supported")
-
             # user-supplied function:
             MotionOp = MotionOperator.create_sparse_motion_operator(Ux, Uy)
-            Data_res["MotionOperator"].append(MotionOp)
+            motionOperator.append(MotionOp)
 
-        return Data_res
+        return motionOperator
+    
+    def build_encoding_operator(self, Data_res):
+        E = EncodingOperator(
+            Data_res["SensitivityMaps"],
+            Data_res["Nsamples"],
+            Data_res["SamplingIndices"],
+            Data_res["KspaceOffset"],
+            Data_res["MotionOperator"]
+        )
+        return E
+    
+    def build_Jacobian_encoding_operator(self, Data_res):
+        J = JacobianEncodingOperator(
+            Data_res["SensitivityMaps"],
+            Data_res["Nsamples"],
+            Data_res["SamplingIndices"],
+            Data_res["KspaceOffset"],
+            Data_res["ReconstructedImage"],
+            Data_res["MotionOperator"]
+        )
+        return J
 
     # ----------------------------------------------------------------------
     # Solve linear system for image
@@ -146,22 +147,16 @@ class JointReconstructor:
     def solve_image(self, Data_res):
         x0 = Data_res["ReconstructedImage"].flatten()
         x0 = x0.to(self.device)
+        E = Data_res["E"]
 
-        E = EncodingOperator(
-            Data_res["SensitivityMaps"],
-            Data_res["Nsamples"],
-            Data_res["SamplingIndices"],
-            Data_res["KspaceOffset"],
-            Data_res["MotionOperator"],
-        )
         b = E.adjoint(Data_res["KspaceData"])
-        solver = ReconstructionSolver(E, reg_lambda=self.params.lambda_r, verbose=True)
+        solver = ConjugateGradientSolver(E, reg_lambda=self.params.lambda_r, verbose=True)
 
         img_vec = solver.solve_cg(
             b.flatten(),
             x0=x0,
             max_iter=self.params.max_iter_recon,
-            tol=self.params.tol,
+            tol=self.params.tol_recon,
         )
 
         img = img_vec.reshape(Data_res["Nx"], Data_res["Ny"])
@@ -170,45 +165,22 @@ class JointReconstructor:
     # # ----------------------------------------------------------------------
     # # Solve for motion model update
     # # ----------------------------------------------------------------------
-    # def solve_motion(self, Data_res, residual):
+    def solve_motion(self, Data_res, residual):
+        x0 = torch.zeros(2 * self.params.Nshots , dtype=torch.float32, device=residual.device)
+        J = Data_res["J"]
+        b = J.adjoint(residual)
+        
+        solver = ConjugateGradientSolver(J, reg_lambda=self.params.lambda_m, verbose=True)
 
-    #     b = motion_perturbation_simulator_transpose(residual, Data_res)
-    #     mu_scaled = self.Params.mu * torch.linalg.norm(b)
+        mot_pert_vec = solver.solve_cg(
+            b.flatten(),
+            x0=x0,
+            max_iter=self.params.max_iter_motion,
+            tol=self.params.tol_motion,
+        )
 
-    #     flag = Data_res["motion_type_flag"]
-
-    #     if flag == 0:
-    #         A = lambda x: (
-    #             motion_perturbation_simulator(x, Data_res)
-    #             .to(self.device)
-    #             + mu_scaled * x
-    #         )
-
-    #     elif flag == 2:
-    #         # add Laplacian regularizer G'G
-    #         def laplace_maps(vec):
-    #             Nx, Ny = Data_res["Nx"], Data_res["Ny"]
-    #             v = vec.reshape(Nx, Ny, 2)
-    #             Lx = -torch.linalg.laplacian(v[:,:,0])
-    #             Ly = -torch.linalg.laplacian(v[:,:,1])
-    #             return torch.stack([Lx, Ly], dim=-1).reshape(-1)
-
-    #         A = lambda x: (
-    #             motion_perturbation_simulator(x, Data_res)
-    #             + mu_scaled * laplace_maps(x)
-    #         )
-
-    #     solver = ReconstructionSolver(encoding_operator=None)
-    #     dm = solver.cg(b, max_iter=128, tol=1e-3, M=None)
-
-    #     if flag == 0:
-    #         return dm.reshape(2, Data_res["Nshots"])
-
-    #     elif flag == 2:
-    #         return dm.reshape(Data_res["Nx"], Data_res["Ny"], 2)
-
-
-
+        motion_perturb = mot_pert_vec.reshape(2, self.params.Nshots)
+        return motion_perturb
 
 
     # ----------------------------------------------------------------------
@@ -218,52 +190,54 @@ class JointReconstructor:
         ResLevels = self.params.ResolutionLevels
         GN_iter = self.params.GN_iterations_per_level
 
-        # Data_res = None
-
         for idx_res, r in enumerate(ResLevels):
-
             print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
-            # ---------------------------------------------------------
             # Prepare low-resolution dataset
-            # ---------------------------------------------------------
             Data_res = self.downsample_data(r)
 
             # Initialize image and motion model
-            # if idx_res == 0:
-            Data_res["ReconstructedImage"] = torch.zeros(
-                (Data_res["Nx"], Data_res["Ny"]),
-                dtype=torch.complex64, device=self.device)
+            if idx_res == 0:
+                Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
+                Data_res["MotionModel"] = torch.zeros((2, self.params.Nshots), device=self.device)
+            else:
+                # Upsample from previous resolution
+                img_prev = Data_prev["ReconstructedImage"]
+                img_res = resize_img_2D(img_prev.unsqueeze(-1), (Data_res["Nx"], Data_res["Ny"])).squeeze(-1)
+                Data_res["ReconstructedImage"] = img_res
 
-            # if Data_res["motion_type_flag"] == 0:
-            Data_res["MotionModel"] = torch.zeros((2, self.params.Nshots), device=self.device)
+                mot_prev = Data_prev["MotionModel"]
+                Data_res["MotionModel"] = torch.zeros((2, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
+                Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
 
-                # elif Data_res["motion_type_flag"] == 2:
-                #     Data_res["MotionModel"] = torch.zeros(
-                #         (Data_res["Nx"], Data_res["Ny"], 2),
-                #         device=self.device)
-
-            # ---------------------------------------------------------
             # Gauss–Newton iterations
-            # ---------------------------------------------------------
             for it in range(GN_iter):
                 print(f"  GN iteration {it+1}/{GN_iter}")
 
-                # 1) Build motion operators
-                self.build_motion_operators(Data_res)
+                # 1) Build motion and encoding operators
+                Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
+                Data_res["E"] = self.build_encoding_operator(Data_res)
 
                 # 2) Solve for image
                 img = self.solve_image(Data_res)
                 Data_res["ReconstructedImage"] = img
 
                 # 3) Compute residual
-                # x_vec = img.flatten()
-                # y = self.E_forward(x_vec, Data_res)
-                # residual = Data_res["KspaceData"] - y
+                x = img.flatten()
+                y = Data_res["E"].forward(x)
+                residual = Data_res["KspaceData"].flatten() - y
 
-                # # 4) Solve for motion update
-                # dm = self.solve_motion(Data_res, residual)
-                # Data_res["MotionModel"] += dm
+                # 4) Build Jacobian encoding operator
+                Data_res["J"] = self.build_Jacobian_encoding_operator(Data_res)
+
+                # 4) Solve for motion update
+                dm = self.solve_motion(Data_res, residual)
+                Data_res["MotionModel"] += dm
+                Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
+
+                Data_prev = Data_res
+
             show_slice_and_save(Data_res["ReconstructedImage"].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]

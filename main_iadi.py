@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from iadi.Data import Data
 from iadi.Parameters import Parameters
 from iadi.EncodingOperator import EncodingOperator
-from iadi.ReconstructionSolver import ReconstructionSolver
+from iadi.ConjugateGadientSolver import ConjugateGradientSolver
 from iadi.JointReconstructor import JointReconstructor
 import time
 
@@ -49,25 +49,29 @@ image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
-jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, params)
-jointReconstructor.run()
-
-E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.MotionOperator)
-
-# Test
-EHs = E.normal(image_ground_truth)
-show_slice_and_save(EHs.reshape(data.Nx, data.Ny, data.Nsli), 'EHs')
-
+# Reconstruction with known motion
 # Ax = b
 # EH E x = Eh s
 
-# Prepare for reconstruction
+E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.MotionOperator)
 b = E.adjoint(kspace_corrupted)
 x0 = image_corrupted.flatten()
 
-solver = ReconstructionSolver(E, reg_lambda=params.lambda_r, verbose=True)
+solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=True)
 start = time.time()
-image_recon = solver.solve_cg(b.flatten(), x0=x0, max_iter=params.max_iter_recon, tol=params.tol) #
+image_recon = solver.solve_cg(b.flatten(), x0=x0, max_iter=params.max_iter_recon, tol=params.tol_recon) #
 end = time.time()
-print(f"Elapsed time: {end - start:.2f} s")
+print(f"Elapsed time image only reconstruction: {end - start:.2f} s")
 show_slice_and_save(image_recon.reshape(data.Nx, data.Ny, data.Nsli), 'reconstructed_image')
+
+# Joint reconstruction
+
+jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, params)
+start = time.time()
+jointReconstructor.run()
+end = time.time()
+print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
+
+
+
+
