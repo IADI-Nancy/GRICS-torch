@@ -7,26 +7,53 @@ import sigpy as sp
 try:
     import cupy as cp
 
-    def calc_espirit_maps(kspace, acs = 48, kernel_width = 6, sp_device = sp.Device(-1)):
+    def calc_espirit_maps(kspace, acs=48, kernel_width=6, sp_device=None):
+
+        device = kspace.device             # torch device of input
+        use_gpu = device.type == "cuda"
+
+        if sp_device is None:
+            sp_device = sp.Device(0 if use_gpu else -1)
+
         nCha, nX, nY, nSlices = kspace.shape
-        espirit_maps = torch.zeros((nCha, nX, nY, nSlices), dtype=torch.complex64, device = "cuda")
+
+        espirit_maps = torch.zeros(
+            (nCha, nX, nY, nSlices),
+            dtype=torch.complex64,
+            device=device
+        )
+
         for i in range(nSlices):
-            kspace_cp = cp.asarray(kspace[:, :, :, i].contiguous())
 
-            maps_cp = spmri.app.EspiritCalib(
-                    kspace_cp, calib_width=acs, kernel_width=kernel_width, device=sp_device
+            # ---- GPU path ----
+            if use_gpu:
+                kspace_cp = cp.asarray(kspace[:, :, :, i].contiguous())
+                maps_cp = spmri.app.EspiritCalib(
+                    kspace_cp, calib_width=acs,
+                    kernel_width=kernel_width,
+                    device=sp_device
                 ).run()
+                maps_cp = maps_cp.astype(cp.complex64, copy=False)
+                maps_t = sp.to_pytorch(maps_cp).to(device)
 
-            maps_cp = maps_cp.astype(cp.complex64, copy=False)
-            maps_cp = cp.ascontiguousarray(maps_cp)
+            # ---- CPU path ----
+            else:
+                kspace_np = kspace[:, :, :, i].cpu().numpy()
+                maps_np = spmri.app.EspiritCalib(
+                    kspace_np, calib_width=acs,
+                    kernel_width=kernel_width,
+                    device=sp_device
+                ).run()
+                maps_np = maps_np.astype(np.complex64, copy=False)
+                maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
 
-            maps_t = sp.to_pytorch(maps_cp)
+            espiritual = torch.complex(maps_t[..., 0], maps_t[..., 1])
+            espirit_maps[:, :, :, i] = espiritual
 
-            espirit_maps[:, :, :, i] = torch.complex(maps_t[..., 0], maps_t[..., 1])
-
-            cp.get_default_memory_pool().free_all_blocks()
-            cp.get_default_pinned_memory_pool().free_all_blocks()
-            torch.cuda.empty_cache()
+            if use_gpu:
+                cp.get_default_memory_pool().free_all_blocks()
+                cp.get_default_pinned_memory_pool().free_all_blocks()
+                torch.cuda.empty_cache()
 
         return espirit_maps
 
