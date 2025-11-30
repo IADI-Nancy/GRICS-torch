@@ -108,17 +108,44 @@ class JointReconstructor:
     def build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
         motionOperator = []
-        for shot in range(self.params.Nshots):
-            tx = Data_res["MotionModel"][0, shot]
-            ty = Data_res["MotionModel"][1, shot]
-            Ux = torch.full((Nx,Ny), tx, device=self.device)
-            Uy = torch.full((Nx,Ny), ty, device=self.device)
 
-            # user-supplied function:
+        # Build coordinate grid (absolute coordinates 0..Nx-1, 0..Ny-1)
+        xs = torch.arange(Nx, device=self.device)
+        ys = torch.arange(Ny, device=self.device)
+        X, Y = torch.meshgrid(xs, ys, indexing='ij')
+
+        for shot in range(self.params.Nshots):
+
+            # --- Motion parameters ---
+            tx = Data_res["MotionModel"][0, shot]     # translation x
+            ty = Data_res["MotionModel"][1, shot]     # translation y
+            th = Data_res["MotionModel"][2, shot]     # rotation (radians)
+            cx = Data_res["MotionModel"][3, shot]     # center x
+            cy = Data_res["MotionModel"][4, shot]     # center y
+
+            # print(f"Shot {shot}: tx={tx.item():.2f}, ty={ty.item():.2f}, th={th.item():.2f}, cx={cx.item():.2f}, cy={cy.item():.2f}")
+
+            cos_t = torch.cos(th)
+            sin_t = torch.sin(th)
+
+            # Shift coordinates to rotation center
+            Xc = X - cx
+            Yc = Y - cy
+
+            # --- Rigid transform around (cx, cy) ---
+            Xp = cx + cos_t * Xc - sin_t * Yc + tx
+            Yp = cy + sin_t * Xc + cos_t * Yc + ty
+
+            # --- Displacement fields ---
+            Ux = Xp - X
+            Uy = Yp - Y
+
+            # Create sparse operator
             MotionOp = MotionOperator.create_sparse_motion_operator(Ux, Uy)
             motionOperator.append(MotionOp)
 
         return motionOperator
+
     
     def build_encoding_operator(self, Data_res):
         E = EncodingOperator(
@@ -137,6 +164,7 @@ class JointReconstructor:
             Data_res["SamplingIndices"],
             Data_res["KspaceOffset"],
             Data_res["ReconstructedImage"],
+            Data_res["MotionModel"],
             Data_res["MotionOperator"]
         )
         return J
@@ -166,7 +194,7 @@ class JointReconstructor:
     # # Solve for motion model update
     # # ----------------------------------------------------------------------
     def solve_motion(self, Data_res, residual):
-        x0 = torch.zeros(2 * self.params.Nshots , dtype=torch.float32, device=residual.device)
+        x0 = torch.zeros(5 * self.params.Nshots , dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b = J.adjoint(residual)
         
@@ -179,7 +207,7 @@ class JointReconstructor:
             tol=self.params.tol_motion,
         )
 
-        motion_perturb = mot_pert_vec.reshape(2, self.params.Nshots)
+        motion_perturb = mot_pert_vec.reshape(5, self.params.Nshots)
         return motion_perturb
 
 
@@ -199,7 +227,7 @@ class JointReconstructor:
             # Initialize image and motion model
             if idx_res == 0:
                 Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-                Data_res["MotionModel"] = torch.zeros((2, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"] = torch.zeros((5, self.params.Nshots), device=self.device)
             else:
                 # Upsample from previous resolution
                 img_prev = Data_prev["ReconstructedImage"]
@@ -207,9 +235,13 @@ class JointReconstructor:
                 Data_res["ReconstructedImage"] = img_res
 
                 mot_prev = Data_prev["MotionModel"]
-                Data_res["MotionModel"] = torch.zeros((2, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"] = torch.zeros((5, self.params.Nshots), device=self.device)
                 Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
                 Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
+                Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
+                Data_res["MotionModel"][3,:] = mot_prev[3,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale center x
+                Data_res["MotionModel"][4,:] = mot_prev[4,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale center y
+
 
             # Gauss–Newton iterations
             for it in range(GN_iter):

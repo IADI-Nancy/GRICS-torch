@@ -1,5 +1,6 @@
 import torch
 from  utils.fftnc import fftnc, ifftnc
+from iadi.MotionOperator import MotionOperator
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
@@ -10,17 +11,19 @@ Performes the simulation of motion perturbation effects in k-space data.
 = (Sampling · F · smaps · MotionOperator(u+δu) · image) - (Sampling · F · smaps · MotionOperator(u) · image) = 
 = Sampling · F · smaps · (MotionOperator(u+δu) - MotionOperator(u))· image = 
             <optical flow first-order approximation>
-= Sampling · F · smaps · MotionOperator(u) · (∇image · δu)
+= Sampling · F · smaps · MotionOperator(u(ᾱ)) · (∇image · ∂r/∂ᾱ · δᾱ)
+where ∂r/∂ᾱ_i are the (X,Y) grid derivatives with respect to motion parameters ᾱ_i (translation, rotation, center).
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, image, motionOperator=None):
+    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, image, motionModel, motionOperator=None):
         self.device = smaps.device
         self.SensitivityMaps = smaps
         self.KspaceOffset = KspaceOffset
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
+        self.motionModel = motionModel
         if motionOperator is None:
             Nshots = len(SamplingIndices)
             Nx, Ny, Nsli, _ = smaps.shape
@@ -52,11 +55,12 @@ class MotionPerturbationSimulator:
 
     def forward(self, MotionModelPerturbation):
         Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
+        M = MotionOperator(Nx, Ny, device=self.device)
         Nshots = len(self.SamplingIndices)
 
-        # reshape 2×Nshots perturbation vector
-        # MotionModelPerturbation: shape [2*Nshots]
-        MotionModelPerturbation = MotionModelPerturbation.reshape(2, Nshots)
+        # reshape 5×Nshots perturbation vector
+        # MotionModelPerturbation: shape [5*Nshots]
+        MotionModelPerturbation = MotionModelPerturbation.reshape(5, Nshots)
 
         # output k-space residual
         ResidualKspace = torch.zeros((self.Nsamples, Ncoils),
@@ -75,12 +79,18 @@ class MotionPerturbationSimulator:
             # 2) Spatial gradients ∂I/∂x, ∂I/∂y
             Gx, Gy = self.gradient_2d(WarpedImage)
 
-            # 3) translation perturbation dux, duy (constant matrix)
-            dux = MotionModelPerturbation[0, shot]
-            duy = MotionModelPerturbation[1, shot]
+            # 3) motion model and displacement field perturbations
+            # dt_x = MotionModelPerturbation[0, shot]
+            # dt_y = MotionModelPerturbation[1, shot]
+            # dtheta = MotionModelPerturbation[2, shot]
+            # dc_x = MotionModelPerturbation[3, shot]
+            # dc_y = MotionModelPerturbation[4, shot]
 
-            dux = dux * torch.ones((Nx, Ny), device=self.device)
-            duy = duy * torch.ones((Nx, Ny), device=self.device)
+            theta = self.motionModel[2, shot]
+            c_x = self.motionModel[3, shot]
+            c_y = self.motionModel[4, shot]
+
+            dux, duy = M.apply_J(MotionModelPerturbation[:, shot], theta, (c_x, c_y))
 
             # 4) optical-flow first-order perturbation
             WarpedImageError = Gx * dux + Gy * duy
@@ -112,12 +122,13 @@ class MotionPerturbationSimulator:
         """
 
         Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
+        M = MotionOperator(Nx, Ny, device=self.device)
         Nshots = len(self.SamplingIndices)
 
         ResidualKspace = ResidualKspace.reshape(self.Nsamples, Ncoils)
 
         # output: 2 × Nshots (dux and duy)
-        MotionModelPerturbation = torch.zeros((2, Nshots),
+        MotionModelPerturbation = torch.zeros((5, Nshots),
                                         dtype=torch.float32,
                                         device=self.device)
 
@@ -152,12 +163,16 @@ class MotionPerturbationSimulator:
                 ResidualImage += ImageSeenByCoil * self.SensitivityMaps[:, :, :, coil].conj().squeeze(-1)
 
             # 7) Inner products with Gx and Gy → scalar dux, duy contributions
-            dux = torch.sum(torch.real(ResidualImage * Gx.conj()))
-            duy = torch.sum(torch.real(ResidualImage * Gy.conj()))
+            du_x = (ResidualImage.real * Gx.conj())
+            du_y = (ResidualImage.real * Gy.conj())
 
-            MotionModelPerturbation[0, shot] = dux
-            MotionModelPerturbation[1, shot] = duy
+            theta = self.motionModel[2, shot]
+            c_x = self.motionModel[3, shot]
+            c_y = self.motionModel[4, shot]
 
+            # Apply the adjoint Jacobian
+            MotionModelPerturbation[:, shot] = M.apply_JH(du_x, du_y, theta, (c_x, c_y))
+            
         return MotionModelPerturbation.flatten()
     
     def normal(self, image):
