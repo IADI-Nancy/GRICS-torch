@@ -32,8 +32,8 @@ class Data:
         alpha[0, :] = 4* torch.randn(Nshots, device=self.t_device) #t_x
         alpha[1, :] = 3 * torch.randn(Nshots, device=self.t_device) #t_y
         alpha[2, :] = 5 * torch.randn(Nshots, device=self.t_device) * (torch.pi / 180) #phi_rot
-        alpha[3, :] = self.Nx / 2 + 0 * torch.randn(Nshots, device=self.t_device) #center_x
-        alpha[4, :] = self.Ny / 2 + 0 * torch.randn(Nshots, device=self.t_device) #center_y
+        alpha[3, :] = self.Nx / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_x
+        alpha[4, :] = self.Ny / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_y
 
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha)
 

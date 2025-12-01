@@ -216,6 +216,7 @@ class JointReconstructor:
                 Data_res["E"] = self.build_encoding_operator(Data_res)
 
                 # 2) Solve for image
+                print("    Solving for image...")
                 img = self.solve_image(Data_res)
                 Data_res["ReconstructedImage"] = img
 
@@ -231,6 +232,7 @@ class JointReconstructor:
                 Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
 
                 # 4) Solve for motion update
+                print("    Solving for motion update...")
                 dm = self.solve_motion(Data_res, residual)
                 Data_res["MotionModel"] += dm
 

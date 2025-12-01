@@ -10,7 +10,7 @@ class ConjugateGradientSolver:
     where A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
 
-    def __init__(self, encoding_operator, reg_lambda=0.0, verbose=False):
+    def __init__(self, encoding_operator, reg_lambda=0.0, regularizer="Tikhonov", verbose=False):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -18,25 +18,61 @@ class ConjugateGradientSolver:
         self.E = encoding_operator
         self.device = encoding_operator.device
         self.lambda_ = reg_lambda
+        self.regularizer = regularizer
         self.verbose = verbose
 
     # --------------------------------------------------------------
     # Regularized linear operator: A(x) = Eh(E(x)) + lambda_scaled * x
     # --------------------------------------------------------------
     def A(self, x):
-        return self.E.normal(x) + self.lambda_scaled * x 
+        return self.E.normal(x) + self.lambda_ * self.regularization(x)
+    
+    def regularization(self, x):
+        if self.regularizer == "Tikhonov":
+            return x
+        elif self.regularizer == "Tikhonov_gradient":
+            return self.gradient_op(x)
+        elif self.regularizer == "Tikhonov_laplacian":
+            return self.laplacian_op(x)
+        else:
+            raise ValueError("Unknown regularizer")
+    
+    # def gradient_op(self, x):
+    #     # x is (N) or 2D image flattened
+    #     Nx, Ny = self.E.SensitivityMaps.shape[:2]
+    #     img = x.view(Nx, Ny)
+
+    #     dx = torch.roll(img, -1, dims=0) - img
+    #     dy = torch.roll(img, -1, dims=1) - img
+
+    #     # return L^H L x
+    #     # because CG needs LᵀL—not L
+    #     dxx = dx - torch.roll(dx, 1, dims=0)
+    #     dyy = dy - torch.roll(dy, 1, dims=1)
+
+    #     return (dxx + dyy).reshape(-1)
+    
+    # def laplacian_op(self, x):
+    #     Nx, Ny = self.E.SensitivityMaps.shape[:2]
+    #     img = x.view(Nx, Ny)
+
+    #     lap = (
+    #         -4*img
+    #         + torch.roll(img, 1, 0) + torch.roll(img, -1, 0)
+    #         + torch.roll(img, 1, 1) + torch.roll(img, -1, 1)
+    #     )
+    #     return lap.reshape(-1)
 
     # --------------------------------------------------------------
     # Preconditioners ----------------------------------------------
     # --------------------------------------------------------------
 
-    def jacobi_preconditioner(self):
+    def jacobi_preconditioner(self, N):
         """ 
         Build Jacobi preconditioner: M^{-1} = diag(A)^(-1)
         Approximated by applying A to basis vectors implicitly via ones-vector.
         """
-        NxNy = self.E.smaps.shape[0] * self.E.smaps.shape[1]
-        ones_img = torch.ones(NxNy, dtype=torch.complex64, device=self.device)
+        ones_img = torch.ones(N, dtype=torch.complex64, device=self.device)
         d = self.A(ones_img).real   # diagonal approximation
         d = torch.clamp(d, min=1e-6)
         return lambda r: r / d
@@ -44,7 +80,7 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Conjugate Gradient Solver (with optional preconditioner)
     # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=50, tol=1e-6, M=None):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3, M=None):
         """
         Solve A(x) = b using Conjugate Gradient.
 
@@ -123,5 +159,5 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     def solve_pcg_jacobi(self, b, **kwargs):
         self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
-        M = self.jacobi_preconditioner()
+        M = self.jacobi_preconditioner(b.shape[0])
         return self.cg(b, M=M, **kwargs)

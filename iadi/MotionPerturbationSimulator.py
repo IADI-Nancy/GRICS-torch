@@ -137,8 +137,8 @@ class MotionPerturbationSimulator:
                 ResidualImage += ImageSeenByCoil * self.SensitivityMaps[:, :, :, coil].conj().squeeze(-1)
 
             # 7) Inner products with Gx and Gy → scalar dux, duy contributions
-            du_x = (ResidualImage.real * Gx.conj())
-            du_y = (ResidualImage.real * Gy.conj())
+            du_x = (ResidualImage * Gx.conj())
+            du_y = (ResidualImage * Gy.conj())
 
             # Apply the adjoint Jacobian
             MotionModelPerturbation[:, shot] = self.motionOperator.apply_JH(du_x, du_y, shot)
