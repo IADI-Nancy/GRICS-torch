@@ -28,22 +28,22 @@ class Data:
         self.Nshots = Nshots = params.NshotsPerNex * params.Nex
         self.simulate_kspace_sampling(params)
 
-        t_x = 4* torch.randn(Nshots, device=self.t_device)
-        t_y = 3 * torch.randn(Nshots, device=self.t_device)
-        s = torch.stack([t_x, t_y], dim=-1)
-        phi_rot      = 5 * torch.randn(Nshots, device=self.t_device)
-        alpha_x = torch.ones_like(self.image_no_moco, device=self.t_device)
-        alpha_y = torch.ones_like(self.image_no_moco, device=self.t_device)
-        alpha = torch.stack([alpha_x, alpha_y], dim=-1)
+        alpha = torch.zeros((5, Nshots), device=self.t_device)
+        alpha[0, :] = 4* torch.randn(Nshots, device=self.t_device) #t_x
+        alpha[1, :] = 3 * torch.randn(Nshots, device=self.t_device) #t_y
+        alpha[2, :] = 5 * torch.randn(Nshots, device=self.t_device) * (torch.pi / 180) #phi_rot
+        alpha[3, :] = self.Nx / 2 + 0 * torch.randn(Nshots, device=self.t_device) #center_x
+        alpha[4, :] = self.Ny / 2 + 0 * torch.randn(Nshots, device=self.t_device) #center_y
 
-        self.simulate_rigid_motion_fields(t_x, t_y, phi_rot, rotation_center=[300, 180]) #
+        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha)
+
+        # self.simulate_rigid_motion_fields(t_x, t_y, phi_rot, rotation_center=[300, 180]) #
         E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.MotionOperator)
         kspace_corruped = E.forward(self.image_no_moco)
         self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
         self.img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
 
         self.image_no_moco = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1)
-        return s, alpha
 
     
     def simulate_kspace_sampling(self, params):
@@ -78,89 +78,6 @@ class Data:
             self.KspaceOffset.append(Nex_idx* self.Nx* self.Ny)
             self.TotalKspaceSamples += Nsamp
 
-    def simulate_rigid_motion_fields(
-        self,
-        X_translations,    # shape: (Nshots,)
-        Y_translations,    # shape: (Nshots,)
-        Rotations,         # degrees, shape: (Nshots,)
-        rotation_center=None
-    ):
-        """
-        Creates sparse 2D rigid motion operators for each shot.
-        """
-
-        Nshots = X_translations.shape[0]
-
-        # Rotation center (default same as MATLAB)
-        if rotation_center is None:
-            cx = self.Nx/2 + 1
-            cy = self.Ny/2 + 1
-        else:
-            cx, cy = rotation_center
-
-        cx = torch.tensor(cx, device=self.t_device, dtype=torch.float32)
-        cy = torch.tensor(cy, device=self.t_device, dtype=torch.float32)
-
-        # ----------------------------
-        # Create pixel grid (X, Y)
-        # ----------------------------
-        coords_x = torch.arange(1, self.Nx+1, device=self.t_device, dtype=torch.float32)
-        coords_y = torch.arange(1, self.Ny+1, device=self.t_device, dtype=torch.float32)
-
-        # Same as MATLAB: X varies along columns, Y along rows
-        Y, X = torch.meshgrid(coords_y, coords_x, indexing="xy")   # (Nx, Ny)
-
-        self.MotionOperator = []                 
-        self.Ux_list = []
-        self.Uy_list = []
-
-        for shot in range(Nshots):
-            # ----------------------------
-            # Expand translations
-            # MATLAB uses inverse displacement: tx = -XTranslation(shot)
-            # ----------------------------
-            tx = -X_translations[shot].to(self.t_device)
-            ty = -Y_translations[shot].to(self.t_device)
-
-            # ----------------------------
-            # Rotations (convert to radians, inverse like MATLAB)
-            # ----------------------------
-            theta = -Rotations[shot].to(self.t_device) * (torch.pi / 180)
-            cos_t = torch.cos(theta)
-            sin_t = torch.sin(theta)
-
-            # ----------------------------
-            # Shift coordinates relative to rotation center
-            # ----------------------------
-            X0 = X - cx
-            Y0 = Y - cy
-
-            # ----------------------------
-            # Apply rotation (matrix R)
-            # [ cos -sin ] [X0]
-            # [ sin  cos ] [Y0]
-            # ----------------------------
-            X_rot = cos_t * X0 - sin_t * Y0
-            Y_rot = sin_t * X0 + cos_t * Y0
-
-            # ----------------------------
-            # Apply translation and shift back from center
-            # ----------------------------
-            X_warped = X_rot + (tx + cx)
-            Y_warped = Y_rot + (ty + cy)
-
-            # ----------------------------
-            # Final displacement field
-            # ----------------------------
-            Ux = X_warped - X
-            Uy = Y_warped - Y
-
-            self.Ux_list.append(Ux)
-            self.Uy_list.append(Uy)
-
-             # Create motion operator (your custom function)
-            M = MotionOperator.create_sparse_motion_operator(Ux, Uy)
-            self.MotionOperator.append(M)
 
 
 

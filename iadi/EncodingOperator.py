@@ -11,31 +11,12 @@ class EncodingOperator:
     - adjoint(y)  : adjoint operator (k-space -> image)
     """
 
-    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None):
+    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator):
         self.device = smaps.device
         self.smaps = smaps
         self.KspaceOffset = KspaceOffset
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
-        if motionOperator is None:
-            Nshots = len(SamplingIndices)
-            Nx, Ny, Nsli, _ = smaps.shape
-            Npix = Nx * Ny
-
-            # build a sparse identity (Nx*Ny x Nx*Ny) and reuse for each shot
-            idx = torch.arange(Npix, device=self.device)
-            indices = torch.stack([idx, idx], dim=0)            # shape (2, Npix)
-            vals = torch.ones(Npix, dtype=torch.complex64, device=self.device)
-            I_sparse = torch.sparse_coo_tensor(indices, vals, (Npix, Npix),
-                                               dtype=torch.complex64,
-                                               device=self.device).coalesce()
-
-            self.motionOperator = [I_sparse for _ in range(Nshots)]
-        else:
-            self.motionOperator = motionOperator
-        
-
-    def set_motion_operator(self, motionOperator):
         self.motionOperator = motionOperator
 
     def forward(self, image):
@@ -48,7 +29,7 @@ class EncodingOperator:
         for shot in range(Nshots):
             SamplingIndices = self.SamplingIndices[shot]
             KspaceOffset = self.KspaceOffset[shot]
-            MotionOp = self.motionOperator[shot]
+            MotionOp = self.motionOperator.get_sparse_operator(shot)
 
             # Apply motion operator -> reshape to image
             WarpedImage = (MotionOp @ image.flatten()).reshape(Nx, Ny)
@@ -93,7 +74,7 @@ class EncodingOperator:
                 WarpedImage += image_coil * torch.conj(smap)
 
             # Adjoint motion operator
-            MotionOp = self.motionOperator[shot].coalesce().transpose(0, 1)
+            MotionOp = self.motionOperator.get_sparse_operator(shot).coalesce().transpose(0, 1)
             Unwarped = MotionOp @ WarpedImage.reshape(-1)
             Unwarped = Unwarped.reshape(Nx, Ny)
 

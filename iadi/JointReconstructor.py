@@ -107,43 +107,8 @@ class JointReconstructor:
     # ----------------------------------------------------------------------
     def build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
-        motionOperator = []
-
-        # Build coordinate grid (absolute coordinates 0..Nx-1, 0..Ny-1)
-        xs = torch.arange(Nx, device=self.device)
-        ys = torch.arange(Ny, device=self.device)
-        X, Y = torch.meshgrid(xs, ys, indexing='ij')
-
-        for shot in range(self.params.Nshots):
-
-            # --- Motion parameters ---
-            tx = Data_res["MotionModel"][0, shot]     # translation x
-            ty = Data_res["MotionModel"][1, shot]     # translation y
-            th = Data_res["MotionModel"][2, shot]     # rotation (radians)
-            cx = Data_res["MotionModel"][3, shot]     # center x
-            cy = Data_res["MotionModel"][4, shot]     # center y
-
-            # print(f"Shot {shot}: tx={tx.item():.2f}, ty={ty.item():.2f}, th={th.item():.2f}, cx={cx.item():.2f}, cy={cy.item():.2f}")
-
-            cos_t = torch.cos(th)
-            sin_t = torch.sin(th)
-
-            # Shift coordinates to rotation center
-            Xc = X - cx
-            Yc = Y - cy
-
-            # --- Rigid transform around (cx, cy) ---
-            Xp = cx + cos_t * Xc - sin_t * Yc + tx
-            Yp = cy + sin_t * Xc + cos_t * Yc + ty
-
-            # --- Displacement fields ---
-            Ux = Xp - X
-            Uy = Yp - Y
-
-            # Create sparse operator
-            MotionOp = MotionOperator.create_sparse_motion_operator(Ux, Uy)
-            motionOperator.append(MotionOp)
-
+        alpha = Data_res["MotionModel"]
+        motionOperator = MotionOperator(Nx, Ny, alpha)
         return motionOperator
 
     
@@ -164,7 +129,6 @@ class JointReconstructor:
             Data_res["SamplingIndices"],
             Data_res["KspaceOffset"],
             Data_res["ReconstructedImage"],
-            Data_res["MotionModel"],
             Data_res["MotionOperator"]
         )
         return J

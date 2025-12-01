@@ -5,41 +5,27 @@ from iadi.MotionOperator import MotionOperator
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
 Performes the simulation of motion perturbation effects in k-space data.
-(∇_u(E)·δu) = δkspace, where δkspace is the residual from the image reconstruction step - is the equation to solve.
+J_ᾱ(E)·δᾱ = δkspace, where δkspace is the residual from the image reconstruction step - is the equation to solve.
 
-(∇_u(E)·δu) = E(image, MotionOperator(u+δu)) - E(image, MotionOperator(u)) = 
-= (Sampling · F · smaps · MotionOperator(u+δu) · image) - (Sampling · F · smaps · MotionOperator(u) · image) = 
-= Sampling · F · smaps · (MotionOperator(u+δu) - MotionOperator(u))· image = 
+J_ᾱ(E)·δᾱ = E(image, MotionOperator(ᾱ+δᾱ)) - E(image, MotionOperator(ᾱ)) = 
+= (Sampling · F · smaps · MotionOperator(ᾱ+δᾱ) · image) - (Sampling · F · smaps · MotionOperator(ᾱ) · image) = 
+= Sampling · F · smaps · (MotionOperator(ᾱ+δᾱ) - MotionOperator(ᾱ))· image = 
             <optical flow first-order approximation>
-= Sampling · F · smaps · MotionOperator(u(ᾱ)) · (∇image · ∂r/∂ᾱ · δᾱ)
-where ∂r/∂ᾱ_i are the (X,Y) grid derivatives with respect to motion parameters ᾱ_i (translation, rotation, center).
+= Sampling · F · smaps · sum_{i,j}(∇_i(MotionOperator(ᾱ) · image) · ∂x_i/∂ᾱ_j · δᾱ_j)
+where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives with respect to motion parameters
+ᾱ_i (translation, rotation, center).
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, image, motionModel, motionOperator=None):
+    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, image, motionOperator):
         self.device = smaps.device
         self.SensitivityMaps = smaps
         self.KspaceOffset = KspaceOffset
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
-        self.motionModel = motionModel
-        if motionOperator is None:
-            Nshots = len(SamplingIndices)
-            Nx, Ny, Nsli, _ = smaps.shape
-            Npix = Nx * Ny
-
-            # build a sparse identity (Nx*Ny x Nx*Ny) and reuse for each shot
-            idx = torch.arange(Npix, device=self.device)
-            indices = torch.stack([idx, idx], dim=0)            # shape (2, Npix)
-            vals = torch.ones(Npix, dtype=torch.complex64, device=self.device)
-            I_sparse = torch.sparse_coo_tensor(indices, vals, (Npix, Npix),
-                                               dtype=torch.complex64,
-                                               device=self.device).coalesce()
-
-            self.motionOperator = [I_sparse for _ in range(Nshots)]
-        else:
-            self.motionOperator = motionOperator
+        self.motionOperator = motionOperator
+        
 
     def set_image(self, image):
         self.image = image
@@ -55,7 +41,6 @@ class MotionPerturbationSimulator:
 
     def forward(self, MotionModelPerturbation):
         Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
-        M = MotionOperator(Nx, Ny, device=self.device)
         Nshots = len(self.SamplingIndices)
 
         # reshape 5×Nshots perturbation vector
@@ -71,7 +56,7 @@ class MotionPerturbationSimulator:
         for shot in range(Nshots):
             SamplingIndices = self.SamplingIndices[shot]    
             KspaceOffset = self.KspaceOffset[shot]
-            MotionOp = self.motionOperator[shot]
+            MotionOp = self.motionOperator.get_sparse_operator(shot)
 
             # 1) Warp the image using the motion operator
             WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
@@ -80,17 +65,7 @@ class MotionPerturbationSimulator:
             Gx, Gy = self.gradient_2d(WarpedImage)
 
             # 3) motion model and displacement field perturbations
-            # dt_x = MotionModelPerturbation[0, shot]
-            # dt_y = MotionModelPerturbation[1, shot]
-            # dtheta = MotionModelPerturbation[2, shot]
-            # dc_x = MotionModelPerturbation[3, shot]
-            # dc_y = MotionModelPerturbation[4, shot]
-
-            theta = self.motionModel[2, shot]
-            c_x = self.motionModel[3, shot]
-            c_y = self.motionModel[4, shot]
-
-            dux, duy = M.apply_J(MotionModelPerturbation[:, shot], theta, (c_x, c_y))
+            dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, shot], shot)
 
             # 4) optical-flow first-order perturbation
             WarpedImageError = Gx * dux + Gy * duy
@@ -122,7 +97,6 @@ class MotionPerturbationSimulator:
         """
 
         Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
-        M = MotionOperator(Nx, Ny, device=self.device)
         Nshots = len(self.SamplingIndices)
 
         ResidualKspace = ResidualKspace.reshape(self.Nsamples, Ncoils)
@@ -136,7 +110,7 @@ class MotionPerturbationSimulator:
         for shot in range(Nshots):
             SamplingIndices = self.SamplingIndices[shot]
             KspaceOffset  = self.KspaceOffset[shot]
-            MotionOp     = self.motionOperator[shot]
+            MotionOp     = self.motionOperator.get_sparse_operator(shot)
 
             # 1) Warp image with shot operator
             WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
@@ -166,12 +140,8 @@ class MotionPerturbationSimulator:
             du_x = (ResidualImage.real * Gx.conj())
             du_y = (ResidualImage.real * Gy.conj())
 
-            theta = self.motionModel[2, shot]
-            c_x = self.motionModel[3, shot]
-            c_y = self.motionModel[4, shot]
-
             # Apply the adjoint Jacobian
-            MotionModelPerturbation[:, shot] = M.apply_JH(du_x, du_y, theta, (c_x, c_y))
+            MotionModelPerturbation[:, shot] = self.motionOperator.apply_JH(du_x, du_y, shot)
             
         return MotionModelPerturbation.flatten()
     
