@@ -146,6 +146,70 @@ class ConjugateGradientSolver:
                 p = z + beta * p
 
             return x
+        
+    def cg_keep_best(self, b, x0=None, max_iter=20, tol=1e-3, M=None):
+        """
+        Solve A(x) = b using Conjugate Gradient.
+        Returns the x that achieved the smallest residual norm during iterations.
+        """
+        with torch.no_grad():
+            b = b.to(self.device)
+
+            if x0 is None:
+                x = torch.zeros_like(b)
+            else:
+                x = x0.clone().to(self.device)
+
+            # Compute initial residual
+            Ax = self.A(x)
+            r = b - Ax
+
+            # Precondition
+            z = r.clone() if M is None else M(r)
+            p = z.clone()
+            rz_old = torch.dot(torch.conj(r), z).real
+
+            # === NEW: store best iterate ===
+            best_x = x.clone()
+            best_res = torch.linalg.norm(r)
+
+            # CG iterations
+            for it in range(max_iter):
+                Ap = self.A(p)
+                denom = torch.dot(torch.conj(p), Ap).real
+
+                if denom.abs() < 1e-15:
+                    break
+
+                alpha = rz_old / denom
+
+                x = x + alpha * p
+                r = r - alpha * Ap
+
+                res_norm = torch.linalg.norm(r)
+
+                if self.verbose:
+                    print(f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}")
+
+                # === NEW: update best solution ===
+                if res_norm < best_res:
+                    best_res = res_norm.clone()
+                    best_x = x.clone()
+
+                if res_norm < tol:
+                    break
+
+                # Precondition
+                z = r.clone() if M is None else M(r)
+
+                rz_new = torch.dot(torch.conj(r), z).real
+                beta = rz_new / rz_old
+                rz_old = rz_new
+
+                p = z + beta * p
+
+            # === Return best solution, not last one ===
+            return best_x
 
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG
@@ -153,6 +217,10 @@ class ConjugateGradientSolver:
     def solve_cg(self, b, **kwargs):
         self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
         return self.cg(b, M=None, **kwargs)
+    
+    def solve_cg_keep_best(self, b, **kwargs):
+        self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
+        return self.cg_keep_best(b, M=None, **kwargs)
 
     # --------------------------------------------------------------
     # Convenience function: solve with Jacobi PCG

@@ -25,6 +25,7 @@ class JointReconstructor:
         self.Ncoils = Ncoils
         self.params = params
         self.device = KspaceData.device
+        self.Nalpha = 3  # number of motion parameters (t_x, t_y, phi)
 
         # Data changing with resolution
         self.Data_full = {}
@@ -35,6 +36,7 @@ class JointReconstructor:
         self.Data_full["Nsamples"] = Nsamples
         self.Data_full["SamplingIndices"] = SamplingIndices
         self.Data_full["KspaceOffset"] = KspaceOffset
+        
 
     def downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res):
         Nx_full, Ny_full, = self.Data_full["Nx"], self.Data_full["Ny"]
@@ -101,6 +103,17 @@ class JointReconstructor:
         Data_res["Nsamples"] = Data_res["KspaceData"].shape[0]
 
         return Data_res
+    
+    def upsample_data(self, Data_prev, Data_res):
+                img_prev = Data_prev["ReconstructedImage"]
+                img_res = resize_img_2D(img_prev.unsqueeze(-1), (Data_res["Nx"], Data_res["Ny"])).squeeze(-1)
+                Data_res["ReconstructedImage"] = img_res
+
+                mot_prev = Data_prev["MotionModel"]
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
+                Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
+                Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
 
     # ----------------------------------------------------------------------
     # Build Ux, Uy fields and Motion Operators
@@ -158,20 +171,20 @@ class JointReconstructor:
     # # Solve for motion model update
     # # ----------------------------------------------------------------------
     def solve_motion(self, Data_res, residual):
-        x0 = torch.zeros(5 * self.params.Nshots , dtype=torch.float32, device=residual.device)
+        x0 = torch.zeros(self.Nalpha * self.params.Nshots , dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b = J.adjoint(residual)
         
         solver = ConjugateGradientSolver(J, reg_lambda=self.params.lambda_m, verbose=True)
 
-        mot_pert_vec = solver.solve_cg(
+        mot_pert_vec = solver.solve_cg_keep_best(
             b.flatten(),
             x0=x0,
             max_iter=self.params.max_iter_motion,
             tol=self.params.tol_motion,
         )
 
-        motion_perturb = mot_pert_vec.reshape(5, self.params.Nshots)
+        motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.Nshots)
         return motion_perturb
 
 
@@ -191,21 +204,9 @@ class JointReconstructor:
             # Initialize image and motion model
             if idx_res == 0:
                 Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-                Data_res["MotionModel"] = torch.zeros((5, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.Nshots), device=self.device)
             else:
-                # Upsample from previous resolution
-                img_prev = Data_prev["ReconstructedImage"]
-                img_res = resize_img_2D(img_prev.unsqueeze(-1), (Data_res["Nx"], Data_res["Ny"])).squeeze(-1)
-                Data_res["ReconstructedImage"] = img_res
-
-                mot_prev = Data_prev["MotionModel"]
-                Data_res["MotionModel"] = torch.zeros((5, self.params.Nshots), device=self.device)
-                Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
-                Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
-                Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
-                Data_res["MotionModel"][3,:] = mot_prev[3,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale center x
-                Data_res["MotionModel"][4,:] = mot_prev[4,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale center y
-
+                self.upsample_data(Data_prev, Data_res)
 
             # Gauss–Newton iterations
             for it in range(GN_iter):

@@ -19,10 +19,10 @@ class Parameters:
 
     # Reconstruction parameters
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
-    GN_iterations_per_level = 8
+    GN_iterations_per_level = 16
 
     # Image reconstruction parameters
-    lambda_r = 1e-3
+    lambda_r = 2e-3
     max_iter_recon = 20
     tol_recon = 1e-3
     # Motion model parameters

@@ -31,11 +31,11 @@ class Data:
         alpha = torch.zeros((5, Nshots), device=self.t_device)
         alpha[0, :] = 4* torch.randn(Nshots, device=self.t_device) #t_x
         alpha[1, :] = 3 * torch.randn(Nshots, device=self.t_device) #t_y
-        alpha[2, :] = 5 * torch.randn(Nshots, device=self.t_device) * (torch.pi / 180) #phi_rot
-        alpha[3, :] = self.Nx / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_x
-        alpha[4, :] = self.Ny / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_y
-
-        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha)
+        alpha[2, :] = 10 * torch.randn(Nshots, device=self.t_device) * (torch.pi / 180) #phi_rot
+        centers = torch.zeros((2, Nshots), device=self.t_device)
+        centers[0, :] = self.Nx / 2 + 60 * torch.ones(Nshots, device=self.t_device) #center_x
+        centers[1, :] = self.Ny / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_y
+        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, centers)
 
         # self.simulate_rigid_motion_fields(t_x, t_y, phi_rot, rotation_center=[300, 180]) #
         E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.SamplingIndices, self.KspaceOffset, self.MotionOperator)

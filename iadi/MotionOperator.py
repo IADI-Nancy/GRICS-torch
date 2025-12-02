@@ -10,21 +10,21 @@ Translational and rotational motion derivatives:
 
 ∂X/∂φ = -(x-c_x)sinφ-(y-c_y)cosφ
 ∂Y/∂φ = (x-c_x)cosφ-(y-c_y)sinφ
-
-∂X/∂c_x = 1 - cosφ
-∂Y/∂c_x = -sinφ
-
-∂X/∂c_y = sinφ
-∂Y/∂c_y = 1 - cosφ
 """
 
 
 class MotionOperator:
-    def __init__(self, Nx, Ny, alpha):
+    def __init__(self, Nx, Ny, alpha, centers=None):
         self.Nx = Nx
         self.Ny = Ny
         self.device = alpha.device
         self.alpha = alpha
+        
+        if centers is None:
+            centers = torch.zeros((2,alpha.shape[1]), device=self.device)
+            centers[0,:] = Nx/2 * torch.ones(alpha.shape[1], device=self.device)
+            centers[1,:] = Ny/2 * torch.ones(alpha.shape[1], device=self.device)
+        self.centers = centers
 
         # Precompute meshgrid
         coords_x = torch.arange(Nx, device=self.device, dtype=torch.float32)
@@ -44,8 +44,8 @@ class MotionOperator:
             tx = alpha[0, shot]     # translation x
             ty = alpha[1, shot]     # translation y
             phi = alpha[2, shot]     # rotation (radians)
-            cx = alpha[3, shot]     # center x
-            cy = alpha[4, shot]     # center y
+            cx = centers[0, shot]     # center x
+            cy = centers[1, shot]     # center y
 
             cos_phi = torch.cos(phi)
             sin_phi = torch.sin(phi)
@@ -81,9 +81,8 @@ class MotionOperator:
 
     def phi_derivative(self, shot):
         phi = self.alpha[2,shot] 
-        cx, cy = self.alpha[3,shot], self.alpha[4,shot]
-        xmc = self.X - cx
-        ymc = self.Y - cy
+        xmc = self.X - self.centers[0,shot]
+        ymc = self.Y - self.centers[1,shot]
 
         st = torch.sin(phi)
         ct = torch.cos(phi)
@@ -93,61 +92,33 @@ class MotionOperator:
 
         return dX, dY
 
-    def cx_derivative(self, shot):
-        phi = self.alpha[2,shot] 
-        ones = torch.ones((self.Nx, self.Ny), device=self.device)
-        st = torch.sin(phi)
-        ct = torch.cos(phi)
-
-        dX = (1 - ct) * ones
-        dY = -st * ones
-
-        return dX, dY
-
-    def cy_derivative(self, shot):
-        phi = self.alpha[2,shot] 
-        ones = torch.ones((self.Nx, self.Ny), device=self.device)
-        st = torch.sin(phi)
-        ct = torch.cos(phi)
-
-        dX = st * ones
-        dY = (1 - ct) * ones
-        return dX, dY
-
-
     # ---------------------------------------------------------
     # FULL JACOBIAN OPERATOR J * δᾱ_j = sum_j(∂x_i/∂ᾱ_j) δᾱ_j = δu_i
     # ---------------------------------------------------------
 
     def apply_J(self, delta_alpha, shot):
         """
-        delta_alpha : (5,) tensor [dt_x, dt_y, dphi, dc_x, dc_y]
+        delta_alpha : (3,) tensor [dt_x, dt_y, dphi, dc_x, dc_y]
         returns:
             du_x, du_y  (each Nx x Ny)
         """
-        dt_x, dt_y, dphi, dc_x, dc_y = delta_alpha
+        dt_x, dt_y, dphi = delta_alpha
 
         # Derivative fields
         (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
         dX_dphi, dY_dphi = self.phi_derivative(shot)
-        dX_dcx, dY_dcx       = self.cx_derivative(shot)
-        dX_dcy, dY_dcy       = self.cy_derivative(shot)
 
         # Combine linearly
         du_x = (
             dt_x * dX_dtx +
             dt_y * dX_dty +
-            dphi * dX_dphi +
-            dc_x  * dX_dcx +
-            dc_y  * dX_dcy
+            dphi * dX_dphi
         )
 
         du_y = (
             dt_x * dY_dtx +
             dt_y * dY_dty +
-            dphi * dY_dphi +
-            dc_x  * dY_dcx +
-            dc_y  * dY_dcy
+            dphi * dY_dphi
         )
 
         return du_x, du_y
@@ -161,23 +132,19 @@ class MotionOperator:
         """
         Applies J^H to (du_x, du_y).
         Returns
-            delta_alpha : (5,) tensor
+            delta_alpha : (3,) tensor
         """
         # zeros = torch.zeros((self.Nx, self.Ny), device=self.device)
 
         (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
         dX_dphi, dY_dphi = self.phi_derivative(shot)
-        dX_dcx, dY_dcx       = self.cx_derivative(shot)
-        dX_dcy, dY_dcy       = self.cy_derivative(shot)
 
         # Each parameter is a scalar product <v_m, du>
         dt_x  = torch.sum(dX_dtx * du_x + dY_dtx * du_y)
         dt_y  = torch.sum(dX_dty * du_x + dY_dty * du_y)
         dphi = torch.sum(dX_dphi * du_x + dY_dphi * du_y)
-        dc_x   = torch.sum(dX_dcx * du_x + dY_dcx * du_y)
-        dc_y   = torch.sum(dX_dcy * du_x + dY_dcy * du_y)
 
-        return torch.stack([dt_x, dt_y, dphi, dc_x, dc_y])
+        return torch.stack([dt_x, dt_y, dphi])
 
     @staticmethod
     def create_sparse_motion_operator(Ux, Uy):

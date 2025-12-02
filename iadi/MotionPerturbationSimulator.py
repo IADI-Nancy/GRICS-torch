@@ -25,6 +25,7 @@ class MotionPerturbationSimulator:
         self.SamplingIndices = SamplingIndices
         self.image = image
         self.motionOperator = motionOperator
+        self.Nalpha = motionOperator.alpha.shape[0]  # number of motion parameters (t_x, t_y, phi)
         
 
     def set_image(self, image):
@@ -43,9 +44,9 @@ class MotionPerturbationSimulator:
         Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
         Nshots = len(self.SamplingIndices)
 
-        # reshape 5×Nshots perturbation vector
-        # MotionModelPerturbation: shape [5*Nshots]
-        MotionModelPerturbation = MotionModelPerturbation.reshape(5, Nshots)
+        # reshape 3×Nshots perturbation vector
+        # MotionModelPerturbation: shape [3*Nshots]
+        MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nshots)
 
         # output k-space residual
         ResidualKspace = torch.zeros((self.Nsamples, Ncoils),
@@ -102,7 +103,7 @@ class MotionPerturbationSimulator:
         ResidualKspace = ResidualKspace.reshape(self.Nsamples, Ncoils)
 
         # output: 2 × Nshots (dux and duy)
-        MotionModelPerturbation = torch.zeros((5, Nshots),
+        MotionModelPerturbation = torch.zeros((self.Nalpha, Nshots),
                                         dtype=torch.float32,
                                         device=self.device)
 
