@@ -17,4 +17,6 @@
 *.pt
 __pycache__/
 data/app_data/
+data/
 debug_outputs/
+bart-*
