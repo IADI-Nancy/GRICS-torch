@@ -4,13 +4,10 @@ IMAGE_VERSION=2.3.0-cuda12.1-cudnn8-devel
 IMAGE="${IMAGE_NAME}:${IMAGE_VERSION}"
 CONTAINER_SUFFIX=pytorch-jupyter-vscode
 
-DATADIR=$(dirname $(pwd))/data
-CODEDIR=$(dirname $(pwd))/code
-RECORDSDIR=$(dirname $(pwd))/records
-WKDIR=${CODEDIR}
+WKDIR=$(pwd)
 
 # !!!!!!!!!!!!!!!!!!
-EXTRAS=( -v ~/.cicit-nancy:/home/pyuser/.cicit-nancy -v .bashrcoverride:/home/pyuser/.bashrcoverride -v ${RECORDSDIR}:/home/pyuser/records )
+EXTRAS=( -v ~/.cicit-nancy:/home/pyuser/.cicit-nancy -v .bashrcoverride:/home/pyuser/.bashrcoverride )
 # put this in extras
 # if you want to add something into .bashrc without loosing it
 # -v .bashrcoverride:/home/pyuser/.bashrcoverride
@@ -23,13 +20,11 @@ GPU_NUMBER=0
 # ????????????
 #avoid root ownership on these files
 mkdir -p $WKDIR
-mkdir -p $DATADIR
-mkdir -p $RECORDSDIR
 mkdir -p ~/.ssh
 mkdir -p ~/.cicit-nancy
 touch ~/.gitconfig
 
-MOUNTS=( -v $WKDIR:/home/pyuser/wkdir -v $DATADIR:/home/pyuser/data -v ~/.ssh:/home/pyuser/.ssh -v ~/.gitconfig:/home/pyuser/.gitconfig )
+MOUNTS=( -v $WKDIR:/home/pyuser/wkdir -v ~/.ssh:/home/pyuser/.ssh -v ~/.gitconfig:/home/pyuser/.gitconfig )
 GPU=( --gpus device=$GPU_NUMBER )
 #GPU=( )
 

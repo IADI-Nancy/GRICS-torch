@@ -24,3 +24,5 @@ wandb==0.19.11
 wget==3.2
 piq>=0.8.0
 GitPython>=3.1.0
+sigpy>=0.1.27
+cupy==13.6.0
