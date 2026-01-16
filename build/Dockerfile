@@ -8,19 +8,28 @@ COPY conda_environment.yml /tmp/conda_environment.yml
 # -------------------------------------------------------------------
 # Install system dependencies
 # -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Install system dependencies (pinned versions)
+# -------------------------------------------------------------------
 RUN apt update \
-	&& apt install -y --no-install-recommends \
-		wget \
-		unzip \
-		git \
-		openssh-client \
-		sudo \
-		ca-certificates \
-		bzip2 \
-        build-essential cmake git wget \
-        fftw3-dev libfftw3-dev  \
-        liblapacke-dev libpng-dev libopenblas-dev \
-        && rm -rf /var/lib/apt/lists/*
+    && apt install -y --no-install-recommends \
+        wget=1.21.2-2ubuntu1.1 \
+        unzip=6.0-26ubuntu3.2 \
+        git=1:2.34.1-1ubuntu1.15 \
+        openssh-client=1:8.9p1-3ubuntu0.13 \
+        sudo=1.9.9-1ubuntu2.5 \
+        ca-certificates=20240203~22.04.1 \
+        bzip2=1.0.8-5build1 \
+        build-essential=12.9ubuntu3 \
+        cmake=3.22.1-1ubuntu1.22.04.2 \
+        liblapacke-dev=3.10.0-2ubuntu1 \
+        libopenblas-dev=0.3.20+ds-1 \
+    && apt install -y --no-install-recommends \
+        libfftw3-dev \
+        libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+
 
 # -------------------------------------------------------------------
 # Install Miniconda and conda environment
@@ -44,13 +53,22 @@ RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkg
 ENV PATH=/opt/conda/envs/environment_grics/bin:$PATH
 
 # -------------------------------------------------------------------
-# Install CUDA-enabled PyTorch (CUDA 12.1)
+# Install pip packages
 # -------------------------------------------------------------------
+# PyTorch (CUDA wheels)
 RUN pip install --no-cache-dir \
-    torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu121 \
- && pip install --no-cache-dir \
-    ismrmrd GitPython pandas
+    torch==2.5.1+cu121 \
+    torchvision==0.20.1+cu121 \
+    torchaudio==2.5.1+cu121 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Everything else
+RUN pip install --no-cache-dir \
+    ismrmrd==1.14.2 \
+    GitPython==3.1.46 \
+    pandas==2.3.3
+
+
 
 ENV CUDA_PATH=/usr/local/cuda-12.1
 ENV NVCC=$CUDA_PATH/bin/nvcc

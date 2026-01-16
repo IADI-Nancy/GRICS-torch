@@ -2,9 +2,11 @@ name: environment_grics
 channels:
   - conda-forge
 dependencies:
-  - python=3.12
-  - numpy=2.3
-  - sigpy
-  - matplotlib
-  - cupy
-  - ipykernel
+  - python=3.12.12
+  - numpy=2.3.5
+  - scipy=1.16.3
+  - sigpy=0.1.27
+  - matplotlib=3.10.8
+  - cupy=13.6.0
+  - ipykernel=7.1.0
+
