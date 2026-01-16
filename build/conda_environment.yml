@@ -1,0 +1,10 @@
+name: environment_grics
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy=2.3
+  - sigpy
+  - matplotlib
+  - cupy
+  - ipykernel

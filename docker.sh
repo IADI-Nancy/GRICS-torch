@@ -1,8 +1,8 @@
-IMAGE_NAME=virtus.iadi.lan:8123/iadi/pytorch-jupyter-vscode
+IMAGE_NAME=virtus.iadi.lan:8123/iadi/grics-torch
 IMAGE_VERSION=2.3.0-cuda12.1-cudnn8-devel
 
 IMAGE="${IMAGE_NAME}:${IMAGE_VERSION}"
-CONTAINER_SUFFIX=pytorch-jupyter-vscode
+CONTAINER_SUFFIX=grics-torch
 
 WKDIR=$(pwd)
 

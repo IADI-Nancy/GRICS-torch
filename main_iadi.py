@@ -8,6 +8,7 @@ from iadi.Parameters import Parameters
 from iadi.EncodingOperator import EncodingOperator
 from iadi.ConjugateGadientSolver import ConjugateGradientSolver
 from iadi.JointReconstructor import JointReconstructor
+from iadi.DataReader import DataReader
 import time
 
 def show_slice_and_save(image, image_name):
@@ -71,6 +72,38 @@ start = time.time()
 jointReconstructor.run()
 end = time.time()
 print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
+
+
+# Test DataReader
+saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
+ismrmrd_file = 'data/t2_1724.h5'
+data = DataReader.read_kspace_and_motion_data_from_rawdata(ismrmrd_file, saec_file, \
+                                                    sensor_type='BELT', Nbins=8,\
+                                                    h5filename='data/breast_motion_data.h5')
+# Read the data
+data = DataReader.read_kspace_and_motion_data_from_h5('data/breast_motion_data.h5')
+
+# Access individual datasets
+motion_data = data['motion_data']
+prior_image = data['prior_image']
+line_idx = data['line_idx']
+kspace = data['kspace']
+smap = data['smap']
+bin_centers = data['bin_centers']
+binned_indices = data['binned_indices']
+
+# Print shapes to verify
+print(f"motion_data shape: {motion_data.shape}")
+print(f"prior_image shape: {prior_image.shape}")
+print(f"line_idx shape: {line_idx.shape}")
+print(f"kspace shape: {kspace.shape}")
+print(f"smap shape: {smap.shape}")
+print(f"bin_centers shape: {bin_centers.shape}")
+print(f"binned_indices shape: {binned_indices.shape}")
+
+# Access a specific binned index array
+print(f"\nExample - binned_indices[0, 0]: {binned_indices[0, 0]}")
+print(f"Type: {type(binned_indices[0, 0])}")
 
 
 
