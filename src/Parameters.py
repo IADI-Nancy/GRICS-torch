@@ -6,12 +6,16 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 4
-    Nex = 1
-    kspace_sampling_type = 'interleaved' # can be also 'linear'
+    Nex = 1 # TODO : add multiple excitations support
+    kspace_sampling_type = 'linear' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
-    max_motion = 4 * 3/2  # ~~ in pixels# in cm
+    num_motion_events = 5
+    max_tx = 4.0  # maximum translation in x (pixels)
+    max_ty = 3.0  # maximum translation in y (pixels)
+    max_rot = 10.0  # maximum rotation (degrees)
     seed = 3
+    motion_tau = 5.0  # transition width of motion events (in ky lines)
 
     # Espirits parameters
     acs = 48

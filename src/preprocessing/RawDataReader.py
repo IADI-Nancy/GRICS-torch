@@ -9,7 +9,7 @@ import os
 
 # from scipy.signal import butter, filtfilt
 from scipy.interpolate import interp1d
-from src.loaders.RespiratoryDataReader import RespiratoryDataReader
+from src.preprocessing.RespiratoryDataReader import RespiratoryDataReader
 
 def is_noise(acq):
     return acq.isFlagSet(ismrmrd.ACQ_IS_NOISE_MEASUREMENT)
