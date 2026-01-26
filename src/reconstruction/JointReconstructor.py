@@ -1,13 +1,12 @@
 import torch
-
-from iadi.ConjugateGadientSolver import ConjugateGradientSolver
-from iadi.MotionOperator import MotionOperator
-from iadi.EncodingOperator import EncodingOperator
-from iadi.MotionPerturbationSimulator import MotionPerturbationSimulator
-from iadi.Helpers import resize_img_2D
-
-from utils.show_slice import show_slice
 import matplotlib.pyplot as plt
+
+from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
+from src.reconstruction.MotionOperator import MotionOperator
+from src.reconstruction.EncodingOperator import EncodingOperator
+from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
+from src.utils.Helpers import resize_img_2D
+from src.utils.show_slice import show_slice
 
 def show_slice_and_save(image, image_name):
     show_slice(image, max_images=1, headline=image_name)

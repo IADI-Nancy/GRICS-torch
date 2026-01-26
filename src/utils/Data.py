@@ -1,11 +1,11 @@
 import numpy as np
 import torch
-from utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
+from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 
-from utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
-from iadi.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
-from iadi.EncodingOperator import EncodingOperator
-from iadi.MotionOperator import MotionOperator
+from src.utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
+from src.utils.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
+from src.reconstruction.EncodingOperator import EncodingOperator
+from src.reconstruction.MotionOperator import MotionOperator
 
 
 class Data:

@@ -1,6 +1,6 @@
 import torch
-from  utils.fftnc import fftnc, ifftnc
-from iadi.MotionOperator import MotionOperator
+from  src.utils.fftnc import fftnc, ifftnc
+from src.reconstruction.MotionOperator import MotionOperator
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.

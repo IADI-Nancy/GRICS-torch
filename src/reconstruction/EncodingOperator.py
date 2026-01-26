@@ -1,5 +1,5 @@
 import torch
-from  utils.fftnc import fftnc, ifftnc
+from  src.utils.fftnc import fftnc, ifftnc
 
 class EncodingOperator:
     """
