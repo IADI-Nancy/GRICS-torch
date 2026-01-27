@@ -20,14 +20,14 @@ class RigidMotionSimulator:
     def get_simulated_sampling(self):
         return self.ky_idx, self.nex_idx, self.TotalKspaceSamples
     
-    def get_motion_operator(self):
-        return self.MotionOperator
-    
     def get_corrupted_kspace(self):
         return self.kspace
     
     def get_corrupted_image(self):
         return self.image_no_moco
+
+    def get_motion_information(self):
+        return self.navigator, self.tx, self.ty, self.phi, self.event_times
     
     def create_motion_curves(self, params):
         # Set random seed for reproducibility
@@ -145,49 +145,7 @@ class RigidMotionSimulator:
         plt.savefig("debug_outputs/all_curves.png")
         plt.close()
 
-    def bin_motion_by_pc1(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
-        # TODO include multiple Nex support
-        line_idx = line_idx[0, :]
-
-        Nbins = num_motion_events + 1
-
-        # Ensure all are torch tensors on GPU
-        motion_curve = motion_curve.to(self.t_device)
-        tx = tx.to(self.t_device)
-        ty = ty.to(self.t_device)
-        phi = phi.to(self.t_device)
-        line_idx = line_idx.to(self.t_device)
-
-        # Bin edges based on PC1
-        min_val = motion_curve.min()
-        max_val = motion_curve.max()
-        bins = torch.linspace(min_val, max_val, Nbins + 1, device=self.t_device)
-
-        # Digitize (bucketize) using PC1
-        bin_ids = torch.bucketize(motion_curve, bins) - 1
-        bin_ids = torch.clamp(bin_ids, 0, Nbins - 1)
-
-        binned_indices = [None] * Nbins
-        bin_centers_tx = torch.zeros(Nbins, device=self.t_device)
-        bin_centers_ty = torch.zeros(Nbins, device=self.t_device)
-        bin_centers_phi = torch.zeros(Nbins, device=self.t_device)
-
-        for b in range(Nbins):
-            mask = (bin_ids == b)
-
-            # Save line indices
-            binned_indices[b] = line_idx[mask]
-
-            if mask.any():
-                bin_centers_tx[b]  = tx[mask].mean()
-                bin_centers_ty[b]  = ty[mask].mean()
-                bin_centers_phi[b] = phi[mask].mean()
-            else:
-                bin_centers_tx[b]  = float('nan')
-                bin_centers_ty[b]  = float('nan')
-                bin_centers_phi[b] = float('nan')
-
-        return binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi
+   
 
     def create_motion_corrupted_dataset(self, params):
         # self.Nshots = Nshots = params.NshotsPerNex * params.Nex
@@ -199,16 +157,17 @@ class RigidMotionSimulator:
         # idx_ky = self.generate_line_idx(params)
 
         # generate motion curves and parameters
-        motion_curve, tx, ty, phi, event_times = self.create_motion_curves(params)
+        self.navigator, self.tx, self.ty, self.phi, self.event_times = self.create_motion_curves(params)
 
         # save debug plots
-        self.save_debug_plots(motion_curve, tx, ty, phi, event_times)
+        if params.debug_flag:
+            self.save_debug_plots(self.navigator, self.tx, self.ty, self.phi, self.event_times)
 
         # build alpha matrix
         alpha = torch.zeros(5, len(self.sampling_idx), device=self.t_device)
-        alpha[0, :] = tx
-        alpha[1, :] = ty
-        alpha[2, :] = phi
+        alpha[0, :] = self.tx
+        alpha[1, :] = self.ty
+        alpha[2, :] = self.phi
 
         centers = torch.zeros((2, len(self.sampling_idx)), device=self.t_device)
         centers[0, :] = self.Nx / 2 + 60 * torch.ones(len(self.sampling_idx), device=self.t_device)
@@ -229,13 +188,7 @@ class RigidMotionSimulator:
         img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=-1)
 
-        # binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi = \
-        #     self.bin_motion_by_pc1(motion_curve, tx, ty, phi, self.ky_idx, params.num_motion_events)
-        # self.binned_indices = binned_indices
-        # self.bin_centers = torch.stack([bin_centers_tx, bin_centers_ty, bin_centers_phi], dim=1)
-
-        # self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-        #     build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Nyself.t_device)
+        
 
     def build_ky_nex_and_motion_states(self, params):
         Nshots = self.Ny

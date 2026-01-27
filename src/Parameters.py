@@ -37,4 +37,5 @@ class Parameters:
     def __init__(self):
         if self.debug_flag and not os.path.exists(self.debug_folder):
             os.makedirs(self.debug_folder)
-        self.Nshots = self.NshotsPerNex * self.Nex
+        # self.Nshots = self.NshotsPerNex * self.Nex
+        self.N_mot_states = self.num_motion_events + 1

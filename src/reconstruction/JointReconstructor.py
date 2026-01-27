@@ -109,7 +109,7 @@ class JointReconstructor:
                 Data_res["ReconstructedImage"] = img_res
 
                 mot_prev = Data_prev["MotionModel"]
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
                 Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
                 Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
                 Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
@@ -170,7 +170,7 @@ class JointReconstructor:
     # # Solve for motion model update
     # # ----------------------------------------------------------------------
     def solve_motion(self, Data_res, residual):
-        x0 = torch.zeros(self.Nalpha * self.params.Nshots , dtype=torch.float32, device=residual.device)
+        x0 = torch.zeros(self.Nalpha * self.params.N_mot_states, dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b = J.adjoint(residual)
         
@@ -183,7 +183,7 @@ class JointReconstructor:
             tol=self.params.tol_motion,
         )
 
-        motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.Nshots)
+        motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_mot_states)
         return motion_perturb
 
 
@@ -203,7 +203,7 @@ class JointReconstructor:
             # Initialize image and motion model
             if idx_res == 0:
                 Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.Nshots), device=self.device)
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
             else:
                 self.upsample_data(Data_prev, Data_res)
 

@@ -53,6 +53,12 @@ image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
+jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
+start = time.time()
+jointReconstructor.run()
+end = time.time()
+print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
+
 
 # Load data and simulate motion
 data = Data("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
