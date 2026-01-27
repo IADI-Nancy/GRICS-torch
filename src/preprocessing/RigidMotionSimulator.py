@@ -186,24 +186,21 @@ class RigidMotionSimulator:
         return binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi
 
     
-    def generate_line_idx(self, params):
-        """
-        Generate line sampling order on GPU as torch tensor.
-        """
-        if params.kspace_sampling_type == 'linear':
-            return torch.arange(self.Ny, device=self.t_device, dtype=torch.int32)
+    # def generate_line_idx(self, params):
+    #     """
+    #     Generate line sampling order on GPU as torch tensor.
+    #     """
+    #     if params.kspace_sampling_type == 'linear':
+    #         return torch.arange(self.Ny, device=self.t_device, dtype=torch.int32)
 
-        elif params.kspace_sampling_type == 'interleaved':
-            # 0, 2, 4 ... 1, 3, 5 ...
-            evens = torch.arange(0, self.Ny, 2, device=self.t_device, dtype=torch.int32)
-            odds  = torch.arange(1, self.Ny, 2, device=self.t_device, dtype=torch.int32)
-            return torch.cat([evens, odds])
+    #     elif params.kspace_sampling_type == 'interleaved':
+    #         # 0, 2, 4 ... 1, 3, 5 ...
+    #         evens = torch.arange(0, self.Ny, 2, device=self.t_device, dtype=torch.int32)
+    #         odds  = torch.arange(1, self.Ny, 2, device=self.t_device, dtype=torch.int32)
+    #         return torch.cat([evens, odds])
 
-        else:
-            raise ValueError("Unknown kspace_sampling_type")
-
-
-
+    #     else:
+    #         raise ValueError("Unknown kspace_sampling_type")
 
     def create_motion_corrupted_dataset(self, params):
         # self.Nshots = Nshots = params.NshotsPerNex * params.Nex
@@ -218,22 +215,22 @@ class RigidMotionSimulator:
         self.save_debug_plots(motion_curve, tx, ty, phi, event_times)
 
         # build alpha matrix
-        alpha = torch.zeros((5, self.ky_idx.shape[1]), device=self.t_device)
+        alpha = torch.zeros(5, len(self.sampling_idx), device=self.t_device)
         alpha[0, :] = tx
         alpha[1, :] = ty
         alpha[2, :] = phi
 
-        centers = torch.zeros((2, self.ky_idx.shape[1]), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + 60 * torch.ones(self.ky_idx.shape[1], device=self.t_device)
-        centers[1, :] = self.Ny / 2 + 10 * torch.randn(self.ky_idx.shape[1], device=self.t_device)
+        centers = torch.zeros((2, len(self.sampling_idx)), device=self.t_device)
+        centers[0, :] = self.Nx / 2 + 60 * torch.ones(len(self.sampling_idx), device=self.t_device)
+        centers[1, :] = self.Ny / 2 + 10 * torch.randn(len(self.sampling_idx), device=self.t_device)
 
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, centers)
 
         E = EncodingOperator(
             self.smaps,
             self.TotalKspaceSamples,
-            self.ky_idx,
-            self.nex_idx * self.Nx * self.Ny,
+            self.sampling_idx,
+            self.nex_offset,
             self.MotionOperator
         )
         kspace_corruped = E.forward(self.image)
@@ -248,30 +245,67 @@ class RigidMotionSimulator:
 
 
     def simulate_kspace_sampling(self, params):
-        self.ky_idx = None
-        self.nex_idx = None
+        Nshots = self.Ny
+
+        self.sampling_idx = []   # list of tensors, one per shot
+        self.nex_offset      = []   # one scalar per shot
+        self.ky_idx          = []   # ky indices per shot
+        self.nex_idx         = []   # nex index per ky per shot
         self.TotalKspaceSamples = 0
 
-        ky_list = []
-        nex_list = []
+        kx = torch.arange(self.Nx, device=self.t_device, dtype=torch.int32)
 
-        for i_ex in range(params.Nex):
+        # -------------------------------------------------
+        # Loop over all shots (UNCHANGED logic)
+        # -------------------------------------------------
+        for shot in range(Nshots):
+            shot_in_nex = shot % params.NshotsPerNex
+            Nex_idx     = shot // params.NshotsPerNex
+
+            # -------------------------------------------------
+            # Compute ky indices for this shot
+            # -------------------------------------------------
             if params.kspace_sampling_type == 'linear':
-                ky_list.append(torch.arange(self.Ny, device=self.t_device, dtype=torch.int32))
+                start = shot_in_nex * self.Ny // params.NshotsPerNex
+                end   = (shot_in_nex + 1) * self.Ny // params.NshotsPerNex
+                ky = torch.arange(start, end,
+                                device=self.t_device,
+                                dtype=torch.int32)
+
             elif params.kspace_sampling_type == 'interleaved':
-                evens = torch.arange(0, self.Ny, 2, device=self.t_device, dtype=torch.int32)
-                odds  = torch.arange(1, self.Ny, 2, device=self.t_device, dtype=torch.int32)
-                ky_list.append(torch.cat([evens, odds]))
+                ky = torch.arange(shot_in_nex, self.Ny, params.NshotsPerNex,
+                                device=self.t_device,
+                                dtype=torch.int32)
             else:
                 raise ValueError("Unknown kspace_sampling_type")
 
-            nex_list.append(torch.full((self.Ny,), i_ex, device=self.t_device, dtype=torch.int32))
+            # -------------------------------------------------
+            # Build flattened (kx, ky) sampling indices
+            # idx = ky + Ny * kx
+            # -------------------------------------------------
+            sampling_idx_nex = (
+                ky.unsqueeze(0) +
+                self.Ny * kx.unsqueeze(1)
+            ).reshape(-1)
 
-        # Convert lists to tensors
-        self.ky_idx = torch.stack(ky_list, dim=0)    # shape: (Nex, Ny)
-        self.nex_idx = torch.stack(nex_list, dim=0)  # shape: (Nex, Ny)
+            # -------------------------------------------------
+            # Store results (per shot)
+            # -------------------------------------------------
+            self.sampling_idx.append(sampling_idx_nex)
+            self.nex_offset.append(Nex_idx)
 
-        self.TotalKspaceSamples = int(self.ky_idx.numel()) * self.Nx
+            self.ky_idx.append(ky)
+            self.nex_idx.append(
+                torch.full((ky.numel(),), Nex_idx,
+                        device=self.t_device,
+                        dtype=torch.int32)
+            )
+
+            self.TotalKspaceSamples += sampling_idx_nex.numel()
+
+
+
+
 
 
 

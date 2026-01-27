@@ -5,7 +5,7 @@ class Parameters:
     debug_folder = "debug_outputs/"
 
     # Sampling simulation parameters
-    NshotsPerNex = 4
+    NshotsPerNex = 320
     Nex = 1 # TODO : add multiple excitations support
     kspace_sampling_type = 'linear' # 'linear' or 'interleaved'
 
