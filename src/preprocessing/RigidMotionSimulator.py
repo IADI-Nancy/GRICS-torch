@@ -4,6 +4,7 @@ from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 import matplotlib.pyplot as plt
+from src.utils.Helpers import build_sampling_from_motion_states
 
 
 class RigidMotionSimulator:
@@ -145,6 +146,9 @@ class RigidMotionSimulator:
         plt.close()
 
     def bin_motion_by_pc1(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
+        # TODO include multiple Nex support
+        line_idx = line_idx[0, :]
+
         Nbins = num_motion_events + 1
 
         # Ensure all are torch tensors on GPU
@@ -185,26 +189,12 @@ class RigidMotionSimulator:
 
         return binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi
 
-    
-    # def generate_line_idx(self, params):
-    #     """
-    #     Generate line sampling order on GPU as torch tensor.
-    #     """
-    #     if params.kspace_sampling_type == 'linear':
-    #         return torch.arange(self.Ny, device=self.t_device, dtype=torch.int32)
-
-    #     elif params.kspace_sampling_type == 'interleaved':
-    #         # 0, 2, 4 ... 1, 3, 5 ...
-    #         evens = torch.arange(0, self.Ny, 2, device=self.t_device, dtype=torch.int32)
-    #         odds  = torch.arange(1, self.Ny, 2, device=self.t_device, dtype=torch.int32)
-    #         return torch.cat([evens, odds])
-
-    #     else:
-    #         raise ValueError("Unknown kspace_sampling_type")
-
     def create_motion_corrupted_dataset(self, params):
         # self.Nshots = Nshots = params.NshotsPerNex * params.Nex
-        self.simulate_kspace_sampling(params)
+        self.ky_idx, self.nex_idx, ky_per_mot_state_idx = self.build_ky_nex_and_motion_states(params)
+        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
+            build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        # self.simulate_kspace_sampling(params)
 
         # idx_ky = self.generate_line_idx(params)
 
@@ -241,30 +231,24 @@ class RigidMotionSimulator:
 
         # binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi = \
         #     self.bin_motion_by_pc1(motion_curve, tx, ty, phi, self.ky_idx, params.num_motion_events)
+        # self.binned_indices = binned_indices
+        # self.bin_centers = torch.stack([bin_centers_tx, bin_centers_ty, bin_centers_phi], dim=1)
 
+        # self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
+        #     build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Nyself.t_device)
 
-
-    def simulate_kspace_sampling(self, params):
+    def build_ky_nex_and_motion_states(self, params):
         Nshots = self.Ny
+        Nex    = params.Nex
 
-        self.sampling_idx = []   # list of tensors, one per shot
-        self.nex_offset      = []   # one scalar per shot
-        self.ky_idx          = []   # ky indices per shot
-        self.nex_idx         = []   # nex index per ky per shot
-        self.TotalKspaceSamples = 0
+        ky_per_nex = [[] for _ in range(Nex)]
+        ky_per_mot_state  = []   # list of tensors (motion states)
 
-        kx = torch.arange(self.Nx, device=self.t_device, dtype=torch.int32)
-
-        # -------------------------------------------------
-        # Loop over all shots (UNCHANGED logic)
-        # -------------------------------------------------
         for shot in range(Nshots):
             shot_in_nex = shot % params.NshotsPerNex
             Nex_idx     = shot // params.NshotsPerNex
 
-            # -------------------------------------------------
-            # Compute ky indices for this shot
-            # -------------------------------------------------
+            # ----- ky selection -----
             if params.kspace_sampling_type == 'linear':
                 start = shot_in_nex * self.Ny // params.NshotsPerNex
                 end   = (shot_in_nex + 1) * self.Ny // params.NshotsPerNex
@@ -279,29 +263,33 @@ class RigidMotionSimulator:
             else:
                 raise ValueError("Unknown kspace_sampling_type")
 
-            # -------------------------------------------------
-            # Build flattened (kx, ky) sampling indices
-            # idx = ky + Ny * kx
-            # -------------------------------------------------
-            sampling_idx_nex = (
-                ky.unsqueeze(0) +
-                self.Ny * kx.unsqueeze(1)
-            ).reshape(-1)
+            # ----- accumulate per Nex (ordering preserved) -----
+            ky_per_nex[Nex_idx].append(ky)
 
-            # -------------------------------------------------
-            # Store results (per shot)
-            # -------------------------------------------------
-            self.sampling_idx.append(sampling_idx_nex)
-            self.nex_offset.append(Nex_idx)
+            # ----- motion states -----
+            # current policy: ONE ky line = ONE motion state
+            for ky_line in ky:
+                ky_per_mot_state.append(
+                    ky_line.unsqueeze(0)   # shape (1,)
+                )
 
-            self.ky_idx.append(ky)
-            self.nex_idx.append(
-                torch.full((ky.numel(),), Nex_idx,
-                        device=self.t_device,
-                        dtype=torch.int32)
-            )
+        # -------------------------------------------------
+        # Build (Nex, Ny) tensors
+        # -------------------------------------------------
+        ky_idx = torch.stack(
+            [torch.cat(ky_list) for ky_list in ky_per_nex],
+            dim=0
+        )  # (Nex, Ny)
 
-            self.TotalKspaceSamples += sampling_idx_nex.numel()
+        nex_idx = torch.arange(Nex, device=self.t_device, dtype=torch.int32) \
+                            .unsqueeze(1) \
+                            .expand(-1, self.Ny)
+
+        ky_per_mot_state_idx = ky_per_mot_state   # list of tensors
+        return ky_idx, nex_idx, ky_per_mot_state_idx
+
+
+    
 
 
 
