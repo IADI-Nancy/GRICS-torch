@@ -198,19 +198,19 @@ class RigidMotionSimulator:
         ky_per_mot_state  = []   # list of tensors (motion states)
 
         for shot in range(Nshots):
-            shot_in_nex = shot % params.NshotsPerNex
-            Nex_idx     = shot // params.NshotsPerNex
+            shot_in_nex = shot % Nshots # params.NshotsPerNex
+            Nex_idx     = shot // Nshots # params.NshotsPerNex
 
             # ----- ky selection -----
             if params.kspace_sampling_type == 'linear':
-                start = shot_in_nex * self.Ny // params.NshotsPerNex
-                end   = (shot_in_nex + 1) * self.Ny // params.NshotsPerNex
+                start = shot_in_nex * self.Ny // Nshots # params.NshotsPerNex
+                end   = (shot_in_nex + 1) * self.Ny // Nshots # params.NshotsPerNex
                 ky = torch.arange(start, end,
                                 device=self.t_device,
                                 dtype=torch.int32)
 
             elif params.kspace_sampling_type == 'interleaved':
-                ky = torch.arange(shot_in_nex, self.Ny, params.NshotsPerNex,
+                ky = torch.arange(shot_in_nex, self.Ny, Nshots, # params.NshotsPerNex,
                                 device=self.t_device,
                                 dtype=torch.int32)
             else:

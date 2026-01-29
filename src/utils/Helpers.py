@@ -67,7 +67,8 @@ def build_sampling_from_motion_states(ky_per_mot_state_idx, ky_idx, nex_idx, Nx,
         ky0 = ky_mot_state[0]
 
         # Find Nex index (cheap lookup)
-        Nex_idx = (ky_idx == ky0).nonzero(as_tuple=False)[0, 0]
+        # TODO add multiple Nex support
+        Nex_idx = 0 # (ky_idx == ky0).nonzero(as_tuple=False)[0, 0]
 
         # ----- flattened sampling indices -----
         samp = (

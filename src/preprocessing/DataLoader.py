@@ -8,6 +8,7 @@ from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.RawDataReader import DataReader
 from src.preprocessing.RigidMotionSimulator import RigidMotionSimulator
+from src.preprocessing.RigidMotionSimulatorShots import RigidMotionSimulatorShots
 from src.utils.Helpers import build_sampling_from_motion_states
 
 
@@ -24,11 +25,11 @@ class DataLoader:
         self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1).to(self.t_device)
 
         # Simulate motion-corrupted dataset
-        simulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
+        simulator = RigidMotionSimulatorShots(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
         self.ky_idx, self.nex_idx, self.TotalKspaceSamples = simulator.get_simulated_sampling()
         self.kspace = simulator.get_corrupted_kspace()
         self.image_no_moco = simulator.get_corrupted_image()
-        navigator, tx, ty, phi, event_times = simulator.get_motion_information()
+        navigator, tx, ty, phi = simulator.get_motion_information()
 
         binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi = \
             self.bin_motion_rigid(navigator, tx, ty, phi, self.ky_idx, params.num_motion_events)
@@ -62,7 +63,7 @@ class DataLoader:
 
     def bin_motion_rigid(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
         # TODO include multiple Nex support
-        line_idx = line_idx[0, :]
+        # line_idx = line_idx[0, :]
 
         Nbins = num_motion_events + 1
 

@@ -5,12 +5,12 @@ class Parameters:
     debug_folder = "debug_outputs/"
 
     # Sampling simulation parameters
-    NshotsPerNex = 320
+    # NshotsPerNex = 320
     Nex = 1 # TODO : add multiple excitations support
     kspace_sampling_type = 'linear' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
-    num_motion_events = 5
+    num_motion_events = 3
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_rot = 10.0  # maximum rotation (degrees)
