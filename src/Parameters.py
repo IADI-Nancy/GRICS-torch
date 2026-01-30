@@ -10,7 +10,7 @@ class Parameters:
     kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
-    num_motion_events = 3
+    num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_phi = 10.0  # maximum rotation (degrees)

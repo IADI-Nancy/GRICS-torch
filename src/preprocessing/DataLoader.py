@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
+import matplotlib.pyplot as plt
 
 from src.utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
 from src.utils.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
@@ -10,6 +10,7 @@ from src.preprocessing.RawDataReader import DataReader
 from src.preprocessing.RigidMotionSimulator import RigidMotionSimulator
 from src.preprocessing.RigidMotionSimulatorShots import RigidMotionSimulatorShots
 from src.utils.Helpers import build_sampling_from_motion_states, kmeans_torch
+from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 
 
 class DataLoader:
@@ -25,13 +26,13 @@ class DataLoader:
         self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1).to(self.t_device)
 
         # Simulate motion-corrupted dataset
-        simulator = RigidMotionSimulatorShots(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
+        simulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
         self.ky_idx, self.nex_idx, self.TotalKspaceSamples = simulator.get_simulated_sampling()
         self.kspace = simulator.get_corrupted_kspace()
         self.image_no_moco = simulator.get_corrupted_image()
         navigator, tx, ty, phi = simulator.get_motion_information()
 
-        self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params.num_motion_events)
+        self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
 
         self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
             build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
@@ -57,8 +58,10 @@ class DataLoader:
         #     data['smap'] = f['smap'][:]
         #     data['bin_centers'] = f['bin_centers'][:]
     
-    def bin_motion_rigid(self, motion_curve, line_idx, num_motion_events):
-        Nbins = num_motion_events + 1
+
+
+    def bin_motion_rigid(self, motion_curve, line_idx, params):
+        Nbins = params.num_motion_events + 1
 
         # Ensure tensors on device
         motion_curve = motion_curve.to(self.t_device)
@@ -72,7 +75,31 @@ class DataLoader:
             mask = labels == b
             binned_indices[b] = line_idx[mask]
 
+        # ---- Plot ----
+        if params.debug_flag:
+            # Move to CPU for plotting
+            motion_cpu = motion_curve.detach().cpu()
+            labels_cpu = labels.detach().cpu()
+            line_idx_cpu = line_idx.detach().cpu()
+
+            plt.figure(figsize=(10, 4))
+            scatter = plt.scatter(
+                line_idx_cpu,
+                motion_cpu,
+                c=labels_cpu,
+                s=10,
+            )
+
+            plt.xlabel("Line index")
+            plt.ylabel("Motion amplitude")
+            plt.title("Motion curve with K-means bin assignment")
+            plt.colorbar(scatter, label="Motion bin")
+            plt.tight_layout()
+            plt.savefig("debug_outputs/binned_curve.png")
+            plt.close()
+
         return binned_indices
+
 
     # def bin_motion_rigid(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
     #     # TODO include multiple Nex support

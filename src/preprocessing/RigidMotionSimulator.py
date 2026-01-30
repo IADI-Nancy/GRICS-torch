@@ -27,7 +27,7 @@ class RigidMotionSimulator:
         return self.image_no_moco
 
     def get_motion_information(self):
-        return self.navigator, self.tx, self.ty, self.phi, self.event_times
+        return self.navigator, self.tx, self.ty, self.phi
     
     def create_motion_curves(self, params):
         # Time axis: one value per k-space line (Ny)
@@ -52,7 +52,7 @@ class RigidMotionSimulator:
         # Range: [-max, max]
         A_tx  = params.max_tx  * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1)
         A_ty  = params.max_ty  * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1)
-        A_phi = params.max_rot * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1) * (torch.pi/180)
+        A_phi = params.max_phi * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1) * (torch.pi/180)
 
         # -------------------------------
         # 3) Build independent motion curves
@@ -90,17 +90,16 @@ class RigidMotionSimulator:
         score1 = torch.matmul(u1.unsqueeze(0), M_centered)
 
         # Convert to 1D curve
-        curve = score1.squeeze(0)
+        navigator = score1.squeeze(0)
 
-        # Normalize curve to [-1, 1] for stability
-        curve = curve / curve.abs().max()
+        # Normalize navigator to [-1, 1] for stability
+        navigator = navigator / navigator.abs().max()
 
         # save debug plots
         if params.debug_flag:
-            self.save_debug_plots(self.navigator, self.tx, self.ty, self.phi, self.event_times)
-
+            self.save_debug_plots(navigator, tx, ty, phi, event_times)
         # Return the motion curve, parameter curves, and event times
-        return curve, tx, ty, phi
+        return navigator, tx, ty, phi
 
 
     def save_debug_plots(self, motion_curve, tx, ty, phi, event_times):
@@ -184,55 +183,56 @@ class RigidMotionSimulator:
 
 
     def build_ky_nex_and_motion_states(self, params):
-        Nshots = self.Ny
-        Nex    = params.Nex
+        Nshots = params.N_mot_states
+        Nex    = params.Nex  # kept for future multi-Nex support
 
-        ky_per_nex = [[] for _ in range(Nex)]
-        ky_per_mot_state  = []   # list of tensors (motion states)
+        ky_chronological = []      # list of scalar ky values
+        ky_per_mot_state = []      # list of (1,) tensors
+        nex_chronological = []     # optional, for future use
 
         for shot in range(Nshots):
-            shot_in_nex = shot % Nshots # params.NshotsPerNex
-            Nex_idx     = shot // Nshots # params.NshotsPerNex
+            shot_in_nex = shot
+            Nex_idx     = 0  # TODO: multi-Nex later
 
             # ----- ky selection -----
             if params.kspace_sampling_type == 'linear':
-                start = shot_in_nex * self.Ny // Nshots # params.NshotsPerNex
-                end   = (shot_in_nex + 1) * self.Ny // Nshots # params.NshotsPerNex
-                ky = torch.arange(start, end,
-                                device=self.t_device,
-                                dtype=torch.int32)
+                start = shot_in_nex * self.Ny // Nshots
+                end   = (shot_in_nex + 1) * self.Ny // Nshots
+                ky = torch.arange(
+                    start, end,
+                    device=self.t_device,
+                    dtype=torch.int32
+                )
 
             elif params.kspace_sampling_type == 'interleaved':
-                ky = torch.arange(shot_in_nex, self.Ny, Nshots, # params.NshotsPerNex,
-                                device=self.t_device,
-                                dtype=torch.int32)
+                ky = torch.arange(
+                    shot_in_nex, self.Ny, Nshots,
+                    device=self.t_device,
+                    dtype=torch.int32
+                )
             else:
                 raise ValueError("Unknown kspace_sampling_type")
 
-            # ----- accumulate per Nex (ordering preserved) -----
-            ky_per_nex[Nex_idx].append(ky)
-
-            # ----- motion states -----
-            # current policy: ONE ky line = ONE motion state
+            # ----- chronological accumulation -----
             for ky_line in ky:
-                ky_per_mot_state.append(
-                    ky_line.unsqueeze(0)   # shape (1,)
-                )
+                ky_chronological.append(ky_line)
+                ky_per_mot_state.append(ky_line.unsqueeze(0))  # (1,)
+                nex_chronological.append(Nex_idx)
 
         # -------------------------------------------------
-        # Build (Nex, Ny) tensors
+        # Final tensors
         # -------------------------------------------------
-        ky_idx = torch.stack(
-            [torch.cat(ky_list) for ky_list in ky_per_nex],
-            dim=0
-        )  # (Nex, Ny)
+        ky_idx = torch.stack(ky_chronological)                 # (Ny,)
+        nex_idx = torch.tensor(
+            nex_chronological,
+            device=self.t_device,
+            dtype=torch.int32
+        )                                                      # (Ny,)
 
-        nex_idx = torch.arange(Nex, device=self.t_device, dtype=torch.int32) \
-                            .unsqueeze(1) \
-                            .expand(-1, self.Ny)
+        ky_per_mot_state_idx = ky_per_mot_state                # list of (1,) tensors
 
-        ky_per_mot_state_idx = ky_per_mot_state   # list of tensors
         return ky_idx, nex_idx, ky_per_mot_state_idx
+
 
 
     
