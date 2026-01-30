@@ -104,15 +104,15 @@ class JointReconstructor:
         return Data_res
     
     def upsample_data(self, Data_prev, Data_res):
-                img_prev = Data_prev["ReconstructedImage"]
-                img_res = resize_img_2D(img_prev.unsqueeze(-1), (Data_res["Nx"], Data_res["Ny"])).squeeze(-1)
-                Data_res["ReconstructedImage"] = img_res
+        img_prev = Data_prev["ReconstructedImage"]
+        img_res = resize_img_2D(img_prev.unsqueeze(-1), (Data_res["Nx"], Data_res["Ny"])).squeeze(-1)
+        Data_res["ReconstructedImage"] = img_res
 
-                mot_prev = Data_prev["MotionModel"]
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
-                Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
-                Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
-                Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
+        mot_prev = Data_prev["MotionModel"]
+        Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
+        Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
+        Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
+        Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
 
     # ----------------------------------------------------------------------
     # Build Ux, Uy fields and Motion Operators

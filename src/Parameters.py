@@ -5,7 +5,7 @@ class Parameters:
     debug_folder = "debug_outputs/"
 
     # Sampling simulation parameters
-    # NshotsPerNex = 320
+    NshotsPerNex = 4
     Nex = 1 # TODO : add multiple excitations support
     kspace_sampling_type = 'linear' # 'linear' or 'interleaved'
 
@@ -37,5 +37,5 @@ class Parameters:
     def __init__(self):
         if self.debug_flag and not os.path.exists(self.debug_folder):
             os.makedirs(self.debug_folder)
-        # self.Nshots = self.NshotsPerNex * self.Nex
+        self.Nshots = self.NshotsPerNex * self.Nex
         self.N_mot_states = self.num_motion_events + 1

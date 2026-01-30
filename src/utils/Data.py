@@ -28,13 +28,26 @@ class Data:
         self.Nshots = Nshots = params.NshotsPerNex * params.Nex
         self.simulate_kspace_sampling(params)
 
-        alpha = torch.zeros((5, Nshots), device=self.t_device)
-        alpha[0, :] = 4* torch.randn(Nshots, device=self.t_device) #t_x
-        alpha[1, :] = 3 * torch.randn(Nshots, device=self.t_device) #t_y
-        alpha[2, :] = 10 * torch.randn(Nshots, device=self.t_device) * (torch.pi / 180) #phi_rot
+        # torch.manual_seed(3) #params.seed
+        # if self.t_device.type == 'cuda':
+        #     torch.cuda.manual_seed_all(3) #params.seed
+
+        # alpha = torch.zeros((5, Nshots), device=self.t_device)
+        # alpha[0, :] = 4* torch.randn(Nshots, device=self.t_device) #t_x
+        # alpha[1, :] = 3 * torch.randn(Nshots, device=self.t_device) #t_y
+        # alpha[2, :] = 10 * torch.randn(Nshots, device=self.t_device) * (torch.pi / 180) #phi_rot
+        # centers[0, :] = self.Nx / 2 + 60 * torch.ones(Nshots, device=self.t_device) #center_x
+        # centers[1, :] = self.Ny / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_y
+        alpha = torch.zeros((3, Nshots), device=self.t_device)
+        alpha[0, :] = torch.linspace(-4.0, 4.0, Nshots, device=self.t_device)  # t_x: from -4 to +4
+        alpha[1, :] = torch.linspace(-3.0, 3.0, Nshots, device=self.t_device)  # t_y: from -3 to +3
+        alpha[2, :] = torch.linspace(-10, 10, Nshots, device=self.t_device) * (torch.pi / 180)  # phi_rot in radians
+
+        # Coil / image centers
         centers = torch.zeros((2, Nshots), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + 60 * torch.ones(Nshots, device=self.t_device) #center_x
-        centers[1, :] = self.Ny / 2 + 10 * torch.randn(Nshots, device=self.t_device) #center_y
+        centers[0, :] = self.Nx / 2 + 60.0  # center_x, same for all shots
+        centers[1, :] = self.Ny / 2 + torch.linspace(-10, 10, Nshots, device=self.t_device)  # center_y: from -10 to +10
+        
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, centers)
 
         # self.simulate_rigid_motion_fields(t_x, t_y, phi_rot, rotation_center=[300, 180]) #

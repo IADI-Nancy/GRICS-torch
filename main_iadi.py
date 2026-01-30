@@ -44,20 +44,20 @@ t_device = torch.device("cuda:0" if _cupy_ok and torch.cuda.is_available() else 
 
 
 
-data = DataLoader("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
-image_ground_truth = data.image_ground_truth.clone()
-show_slice_and_save(image_ground_truth, 'img_ground_truth')
+# data = DataLoader("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
+# image_ground_truth = data.image_ground_truth.clone()
+# show_slice_and_save(image_ground_truth, 'img_ground_truth')
 
-# data.create_motion_corrupted_dataset(params=params)
-image_corrupted = data.image_no_moco.clone()
-kspace_corrupted = data.kspace
-show_slice_and_save(image_corrupted, 'img_corrupted')
+# # data.create_motion_corrupted_dataset(params=params)
+# image_corrupted = data.image_no_moco.clone()
+# kspace_corrupted = data.kspace
+# show_slice_and_save(image_corrupted, 'img_corrupted')
 
-jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
-start = time.time()
-jointReconstructor.run()
-end = time.time()
-print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
+# jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
+# start = time.time()
+# jointReconstructor.run()
+# end = time.time()
+# print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
 
 
 # Load data and simulate motion
