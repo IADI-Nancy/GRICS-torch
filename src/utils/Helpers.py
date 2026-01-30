@@ -87,3 +87,27 @@ def build_sampling_from_motion_states(ky_per_mot_state_idx, ky_idx, nex_idx, Nx,
         TotalKspaceSamples += samp.numel()
 
     return sampling_idx, nex_offset, TotalKspaceSamples
+
+def kmeans_torch(x, k, n_iter=20):
+    """
+    x: (N, D)
+    returns: labels (N,), centers (k, D)
+    """
+    N, D = x.shape
+
+    # Deterministic initialization: pick evenly spaced points
+    init_idx = torch.linspace(0, N - 1, k, device=x.device).long()
+    centers = x[init_idx].clone()
+
+    for _ in range(n_iter):
+        # Assign
+        dist = torch.cdist(x, centers)  # (N, k)
+        labels = dist.argmin(dim=1)
+
+        # Update
+        for j in range(k):
+            mask = labels == j
+            if mask.any():
+                centers[j] = x[mask].mean(dim=0)
+
+    return labels, centers

@@ -9,7 +9,7 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.RawDataReader import DataReader
 from src.preprocessing.RigidMotionSimulator import RigidMotionSimulator
 from src.preprocessing.RigidMotionSimulatorShots import RigidMotionSimulatorShots
-from src.utils.Helpers import build_sampling_from_motion_states
+from src.utils.Helpers import build_sampling_from_motion_states, kmeans_torch
 
 
 class DataLoader:
@@ -31,10 +31,7 @@ class DataLoader:
         self.image_no_moco = simulator.get_corrupted_image()
         navigator, tx, ty, phi = simulator.get_motion_information()
 
-        binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi = \
-            self.bin_motion_rigid(navigator, tx, ty, phi, self.ky_idx, params.num_motion_events)
-        self.binned_indices = binned_indices
-        self.bin_centers = torch.stack([bin_centers_tx, bin_centers_ty, bin_centers_phi], dim=1)
+        self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params.num_motion_events)
 
         self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
             build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
@@ -59,51 +56,67 @@ class DataLoader:
         #     data['kspace'] = f['kspace'][:]
         #     data['smap'] = f['smap'][:]
         #     data['bin_centers'] = f['bin_centers'][:]
-
-
-    def bin_motion_rigid(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
-        # TODO include multiple Nex support
-        # line_idx = line_idx[0, :]
-
+    
+    def bin_motion_rigid(self, motion_curve, line_idx, num_motion_events):
         Nbins = num_motion_events + 1
 
-        # Ensure all are torch tensors on GPU
+        # Ensure tensors on device
         motion_curve = motion_curve.to(self.t_device)
-        tx = tx.to(self.t_device)
-        ty = ty.to(self.t_device)
-        phi = phi.to(self.t_device)
         line_idx = line_idx.to(self.t_device)
 
-        # Bin edges based on PC1
-        min_val = motion_curve.min()
-        max_val = motion_curve.max()
-        bins = torch.linspace(min_val, max_val, Nbins + 1, device=self.t_device)
-
-        # Digitize (bucketize) using PC1
-        bin_ids = torch.bucketize(motion_curve, bins) - 1
-        bin_ids = torch.clamp(bin_ids, 0, Nbins - 1)
-
+        # K-means clustering
+        labels, centers = kmeans_torch(motion_curve.unsqueeze(1), Nbins)
         binned_indices = [None] * Nbins
-        bin_centers_tx = torch.zeros(Nbins, device=self.t_device)
-        bin_centers_ty = torch.zeros(Nbins, device=self.t_device)
-        bin_centers_phi = torch.zeros(Nbins, device=self.t_device)
 
         for b in range(Nbins):
-            mask = (bin_ids == b)
-
-            # Save line indices
+            mask = labels == b
             binned_indices[b] = line_idx[mask]
 
-            if mask.any():
-                bin_centers_tx[b]  = tx[mask].mean()
-                bin_centers_ty[b]  = ty[mask].mean()
-                bin_centers_phi[b] = phi[mask].mean()
-            else:
-                bin_centers_tx[b]  = float('nan')
-                bin_centers_ty[b]  = float('nan')
-                bin_centers_phi[b] = float('nan')
+        return binned_indices
 
-        return binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi
+    # def bin_motion_rigid(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
+    #     # TODO include multiple Nex support
+    #     # line_idx = line_idx[0, :]
+
+    #     Nbins = num_motion_events + 1
+
+    #     # Ensure all are torch tensors on GPU
+    #     motion_curve = motion_curve.to(self.t_device)
+    #     tx = tx.to(self.t_device)
+    #     ty = ty.to(self.t_device)
+    #     phi = phi.to(self.t_device)
+    #     line_idx = line_idx.to(self.t_device)
+
+    #     # Bin edges based on PC1
+    #     min_val = motion_curve.min()
+    #     max_val = motion_curve.max()
+    #     bins = torch.linspace(min_val, max_val, Nbins + 1, device=self.t_device)
+
+    #     # Digitize (bucketize) using PC1
+    #     bin_ids = torch.bucketize(motion_curve, bins) - 1
+    #     bin_ids = torch.clamp(bin_ids, 0, Nbins - 1)
+
+    #     binned_indices = [None] * Nbins
+    #     bin_centers_tx = torch.zeros(Nbins, device=self.t_device)
+    #     bin_centers_ty = torch.zeros(Nbins, device=self.t_device)
+    #     bin_centers_phi = torch.zeros(Nbins, device=self.t_device)
+
+    #     for b in range(Nbins):
+    #         mask = (bin_ids == b)
+
+    #         # Save line indices
+    #         binned_indices[b] = line_idx[mask]
+
+    #         if mask.any():
+    #             bin_centers_tx[b]  = tx[mask].mean()
+    #             bin_centers_ty[b]  = ty[mask].mean()
+    #             bin_centers_phi[b] = phi[mask].mean()
+    #         else:
+    #             bin_centers_tx[b]  = float('nan')
+    #             bin_centers_ty[b]  = float('nan')
+    #             bin_centers_phi[b] = float('nan')
+
+    #     return binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi
 
 
         
