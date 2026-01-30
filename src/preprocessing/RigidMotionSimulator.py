@@ -30,9 +30,6 @@ class RigidMotionSimulator:
         return self.navigator, self.tx, self.ty, self.phi, self.event_times
     
     def create_motion_curves(self, params):
-        # Set random seed for reproducibility
-        torch.manual_seed(params.seed)
-
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny, device=self.t_device, dtype=torch.float32)
 
@@ -98,8 +95,12 @@ class RigidMotionSimulator:
         # Normalize curve to [-1, 1] for stability
         curve = curve / curve.abs().max()
 
+        # save debug plots
+        if params.debug_flag:
+            self.save_debug_plots(self.navigator, self.tx, self.ty, self.phi, self.event_times)
+
         # Return the motion curve, parameter curves, and event times
-        return curve, tx, ty, phi, event_times
+        return curve, tx, ty, phi
 
 
     def save_debug_plots(self, motion_curve, tx, ty, phi, event_times):
@@ -152,26 +153,19 @@ class RigidMotionSimulator:
         self.ky_idx, self.nex_idx, ky_per_mot_state_idx = self.build_ky_nex_and_motion_states(params)
         self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
             build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        # self.simulate_kspace_sampling(params)
-
-        # idx_ky = self.generate_line_idx(params)
 
         # generate motion curves and parameters
-        self.navigator, self.tx, self.ty, self.phi, self.event_times = self.create_motion_curves(params)
-
-        # save debug plots
-        if params.debug_flag:
-            self.save_debug_plots(self.navigator, self.tx, self.ty, self.phi, self.event_times)
+        self.navigator, self.tx, self.ty, self.phi = self.create_motion_curves(params)
 
         # build alpha matrix
-        alpha = torch.zeros(5, len(self.sampling_idx), device=self.t_device)
+        alpha = torch.zeros(3, len(self.sampling_idx), device=self.t_device)
         alpha[0, :] = self.tx
         alpha[1, :] = self.ty
         alpha[2, :] = self.phi
 
         centers = torch.zeros((2, len(self.sampling_idx)), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + 60 * torch.ones(len(self.sampling_idx), device=self.t_device)
-        centers[1, :] = self.Ny / 2 + 10 * torch.randn(len(self.sampling_idx), device=self.t_device)
+        centers[0, :] = self.Nx / 2 + params.max_center_x * torch.ones(len(self.sampling_idx), device=self.t_device)
+        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.randn(len(self.sampling_idx), device=self.t_device)
 
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, centers)
 
@@ -188,7 +182,6 @@ class RigidMotionSimulator:
         img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=-1)
 
-        
 
     def build_ky_nex_and_motion_states(self, params):
         Nshots = self.Ny
