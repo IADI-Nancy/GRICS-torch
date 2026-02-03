@@ -4,6 +4,10 @@ class Parameters:
     debug_flag = True
     debug_folder = "debug_outputs/"
 
+    # Initial data parameters
+    data_type = 'fastMRI'  # 'shepp-logan', 'fastMRI' or 'real-world'
+    path_to_data = 'data/kspace.npz'  # used if data_type is 'fastMRI' or 'real-world'
+
     # Sampling simulation parameters
     NshotsPerNex = 4
     Nex = 1 # TODO : add multiple excitations support

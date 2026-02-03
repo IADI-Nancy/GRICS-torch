@@ -66,7 +66,8 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
     ismrmrd==1.14.2 \
     GitPython==3.1.46 \
-    pandas==2.3.3
+    pandas==2.3.3 \
+    scikit-image==0.26.0
 
 
 

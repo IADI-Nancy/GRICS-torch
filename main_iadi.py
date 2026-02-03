@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import time
 
 from src.preprocessing.DataLoader import DataLoader
-from src.utils.Data import Data
 from src.Parameters import Parameters
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
@@ -55,7 +54,7 @@ if params.debug_flag:
 
 
 
-data = DataLoader("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
+data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
 image_ground_truth = data.image_ground_truth.clone()
 show_slice_and_save(image_ground_truth, 'img_ground_truth')
 
@@ -70,41 +69,6 @@ TotalKspaceSamples_prev = data.TotalKspaceSamples
 sampling_idx_prev = data.sampling_idx
 nex_offset_prev = data.nex_offset
 jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
-start = time.time()
-jointReconstructor.run()
-end = time.time()
-print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
-
-
-# Load data and simulate motion
-# data = Data("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
-# image_ground_truth = data.image_no_moco.clone()
-# show_slice_and_save(image_ground_truth, 'img_ground_truth')
-
-# data.create_motion_corrupted_dataset(params=params)
-# image_corrupted = data.image_no_moco.clone()
-# kspace_corrupted = data.kspace
-# show_slice_and_save(image_corrupted, 'img_corrupted')
-
-
-# Reconstruction with known motion
-# Ax = b
-# EH E x = Eh s
-
-E = EncodingOperator(data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, data.MotionOperator)
-b = E.adjoint(kspace_corrupted)
-x0 = image_corrupted.flatten()
-
-solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=True)
-start = time.time()
-image_recon = solver.solve_cg(b.flatten(), x0=x0, max_iter=params.max_iter_recon, tol=params.tol_recon)
-end = time.time()
-print(f"Elapsed time image only reconstruction: {end - start:.2f} s")
-show_slice_and_save(image_recon.reshape(data.Nx, data.Ny, data.Nsli), 'reconstructed_image')
-
-# Joint reconstruction
-
-jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.SamplingIndices, data.KspaceOffset, params)
 start = time.time()
 jointReconstructor.run()
 end = time.time()

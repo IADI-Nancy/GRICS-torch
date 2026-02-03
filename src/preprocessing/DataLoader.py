@@ -1,6 +1,9 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from skimage.data import shepp_logan_phantom
+from skimage.transform import resize
+import math
 
 from src.utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
 from src.utils.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
@@ -14,10 +17,17 @@ from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimens
 
 
 class DataLoader:
-    def __init__(self, path_to_data, params, sp_device=None, t_device=None):
+    def __init__(self, params, sp_device=None, t_device=None):
         self.sp_device = sp_device
-        self.t_device = t_device    
-        self.load_rigid_data(path_to_data, params)
+        self.t_device = t_device
+
+        if params.data_type == 'fastMRI':
+            self.load_fastMRI_data(params.path_to_data, params)
+        elif params.data_type == 'shepp-logan':    
+            self.generate_shepp_logan(N=128, Ncoils=16, Nz=1, random_phase=True)
+        elif params.data_type == 'real-world':
+            self.load_nonrigid_data(params.path_to_data)
+        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         # Calculate ESPIRiT maps and non-corrected image
         self.smaps = from_espirit_to_grics_dims(calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device))
@@ -40,17 +50,58 @@ class DataLoader:
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
 
 
-    def load_rigid_data(self, path_to_mri_data, params):
+    def load_fastMRI_data(self, path_to_mri_data, params):
         self.kspace = np.load(path_to_mri_data)['arr_0']
-        self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
-        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape    
-          
+        self.kspace = torch.from_numpy(self.kspace).to(self.t_device)  
+
+    # N coils should be perfect square for coil map generation
+    def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
+        # --- 1. Create phantom ---
+        phantom_np_2d = resize(shepp_logan_phantom(), (N, N))
+        phantom_img_2d = torch.tensor(phantom_np_2d, dtype=torch.float32, device=self.t_device)
+        phantom_img = phantom_img_2d.unsqueeze(-1).repeat(1, 1, Nz)  # NxNxNz
+
+        # --- 2. Create coil sensitivity maps ---
+        X, Y = torch.meshgrid(
+            torch.arange(1, N+1, device=self.t_device),
+            torch.arange(1, N+1, device=self.t_device),
+            indexing='ij'
+        )
+        sigma = N / 4
+
+        # Generate coil centers on a grid
+        grid_size = math.ceil(math.sqrt(Ncoils))  # minimal square grid to hold all coils
+        xs = torch.linspace(N/4, 3*N/4, grid_size, device=self.t_device)
+        ys = torch.linspace(N/4, 3*N/4, grid_size, device=self.t_device)
+        centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]  # pick exactly Ncoils
+
+        sensitivity_maps_2d = torch.zeros((N, N, Ncoils), dtype=torch.cfloat, device=self.t_device)
+        for c, (x0, y0) in enumerate(centers):
+            profile = torch.exp(-((X-x0)**2 + (Y-y0)**2) / (2*sigma**2))
+            phase = torch.exp(1j * 2 * math.pi * torch.rand(1, device=self.t_device)) if random_phase else 1.0
+            sensitivity_maps_2d[:, :, c] = profile * phase
+
+        # Repeat along Nz dimension to create full 3D coil maps
+        sensitivity_maps = sensitivity_maps_2d.unsqueeze(2).repeat(1, 1, Nz, 1)  # Nx x Ny x Nz x Ncoils
+
+        # --- 3. Generate k-space (vectorized) ---
+        # Add coil dimension to phantom: Nx x Ny x Nz x 1
+        phantom_exp = phantom_img.unsqueeze(-1)
+
+        # Multiply by coil maps: Nx x Ny x Nz x Ncoils
+        coil_imgs = phantom_exp * sensitivity_maps
+
+        # Permute to Ncoils x Nx x Ny x Nz
+        coil_imgs = coil_imgs.permute(3, 0, 1, 2)
+
+        # Compute k-space using fftnc (assumes fftnc supports 4D input)
+        self.kspace = fftnc(coil_imgs)  # Ncoils x Nx x Ny x Nz          
 
     def load_nonrigid_data(self, path_to_data):
         data = DataReader.read_kspace_and_motion_data_from_h5(path_to_data)
         self.kspace = data['kspace']
         self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
-        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        # self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # data['motion_data'] = f['motion_data'][:]
         #     data['prior_image'] = f['prior_image'][:]
         #     data['line_idx'] = f['line_idx'][:]
