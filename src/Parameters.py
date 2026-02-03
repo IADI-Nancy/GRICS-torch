@@ -17,7 +17,7 @@ class Parameters:
     max_center_x = 60.0  # maximum variation in center x (pixels)
     max_center_y = 10.0  # maximum variation in center y (pixels)
     seed = 3
-    motion_tau = 5.0  # transition width of motion events (in ky lines)
+    motion_tau = 2  # transition width of motion events (in ky lines)
 
     # Espirits parameters
     acs = 48

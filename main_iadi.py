@@ -49,9 +49,9 @@ if params.debug_flag:
         torch.cuda.manual_seed(params.seed)
         torch.cuda.manual_seed_all(params.seed)
     # Make cuDNN deterministic (may slow training)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True)
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
+    # torch.use_deterministic_algorithms(True)
 
 
 
@@ -77,14 +77,14 @@ print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
 
 
 # Load data and simulate motion
-data = Data("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
-image_ground_truth = data.image_no_moco.clone()
-show_slice_and_save(image_ground_truth, 'img_ground_truth')
+# data = Data("data/kspace.npz", params=params, t_device=t_device, sp_device=sp_device)
+# image_ground_truth = data.image_no_moco.clone()
+# show_slice_and_save(image_ground_truth, 'img_ground_truth')
 
-data.create_motion_corrupted_dataset(params=params)
-image_corrupted = data.image_no_moco.clone()
-kspace_corrupted = data.kspace
-show_slice_and_save(image_corrupted, 'img_corrupted')
+# data.create_motion_corrupted_dataset(params=params)
+# image_corrupted = data.image_no_moco.clone()
+# kspace_corrupted = data.kspace
+# show_slice_and_save(image_corrupted, 'img_corrupted')
 
 
 # Reconstruction with known motion

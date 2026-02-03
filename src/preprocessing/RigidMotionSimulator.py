@@ -45,6 +45,8 @@ class RigidMotionSimulator:
         # Motion transition sharpness (smaller tau -> faster motion)
         tau = params.motion_tau
 
+        
+
         # -------------------------------
         # 2) Generate random amplitudes for each event
         # -------------------------------
@@ -62,12 +64,43 @@ class RigidMotionSimulator:
         ty  = torch.zeros(self.Ny, device=self.t_device)
         phi = torch.zeros(self.Ny, device=self.t_device)
 
+        # Full time axis
+        t = torch.arange(self.Ny, device=self.t_device, dtype=torch.float32)
+
         for i, ti in enumerate(event_times):
-            # Smooth step function: tanh((t-ti)/tau)
-            # This creates a rapid but smooth transition at each event time
-            tx  += A_tx[i]  * torch.tanh((t - ti) / tau)
-            ty  += A_ty[i]  * torch.tanh((t - ti) / tau)
-            phi += A_phi[i] * torch.tanh((t - ti) / tau)
+            ti = event_times[i].item()
+            t_end = min(ti + tau, self.Ny)
+
+            # Normalized time for the transition
+            alpha = np.linspace(0.0, 1.0, t_end - ti)
+            # Raised cosine ramp (finite, smooth)
+            s = 0.5 * (1.0 - np.cos(np.pi * alpha))
+
+            f = torch.zeros(self.Ny, device=self.t_device)
+            f[ti:t_end] = torch.from_numpy(s).to(self.t_device)
+            if t_end < self.Ny:
+                f[t_end:] = 1.0
+
+            # Add motion contribution (same logic as tanh version)
+            tx  += A_tx[i]  * f
+            ty  += A_ty[i]  * f
+            phi += A_phi[i] * f
+
+
+        # for i, ti in enumerate(event_times):
+        #     # Event start time (already integer)
+        #     ti = event_times[i].item()
+        #     t_end = min(ti + tau, self.Ny)
+
+        #     # Normalized time for the transition
+        #     alpha = np.linspace(0.0, 1.0, t_end - ti)
+        #     # Raised cosine ramp (finite, smooth)
+        #     s = 0.5 * (1.0 - np.cos(np.pi * alpha))
+        #     # Smooth step function: tanh((t-ti)/tau)
+        #     # This creates a rapid but smooth transition at each event time
+        #     tx  += A_tx[i]  * torch.from_numpy(s).to(self.t_device)      
+        #     ty  += A_ty[i]  * torch.from_numpy(s).to(self.t_device)
+        #     phi += A_phi[i] * torch.from_numpy(s).to(self.t_device) # torch.tanh((t - ti) / tau)
 
         # -------------------------------
         # 4) Compute PCA to obtain a single 1D motion curve (simulation of MRI navigators)
