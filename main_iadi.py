@@ -63,11 +63,6 @@ image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
 
-kspace_prev = data.kspace
-smaps_prev = data.smaps
-TotalKspaceSamples_prev = data.TotalKspaceSamples
-sampling_idx_prev = data.sampling_idx
-nex_offset_prev = data.nex_offset
 jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
 start = time.time()
 jointReconstructor.run()

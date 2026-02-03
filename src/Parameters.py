@@ -5,8 +5,15 @@ class Parameters:
     debug_folder = "debug_outputs/"
 
     # Initial data parameters
-    data_type = 'fastMRI'  # 'shepp-logan', 'fastMRI' or 'real-world'
-    path_to_data = 'data/kspace.npz'  # used if data_type is 'fastMRI' or 'real-world'
+    data_type = 'real-world'  # 'shepp-logan', 'fastMRI' or 'real-world'
+    # path_to_data = 'data/kspace.npz'  # used if data_type is 'fastMRI' or 'real-world'
+    path_to_data = 'data/breast_motion_data.h5'
+    N_SheppLogan = 128
+    Ncoils_SheppLogan = 16
+    Nz_SheppLogan = 1
+
+    # Simulation parameters
+    simulation_type = 'none'  # 'rigid', 'non-rigid' or 'none'
 
     # Sampling simulation parameters
     NshotsPerNex = 4

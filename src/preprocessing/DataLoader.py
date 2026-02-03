@@ -20,13 +20,14 @@ class DataLoader:
     def __init__(self, params, sp_device=None, t_device=None):
         self.sp_device = sp_device
         self.t_device = t_device
+        self.params = params
 
         if params.data_type == 'fastMRI':
             self.load_fastMRI_data(params.path_to_data, params)
         elif params.data_type == 'shepp-logan':    
-            self.generate_shepp_logan(N=128, Ncoils=16, Nz=1, random_phase=True)
+            self.generate_shepp_logan(N=params.N_SheppLogan, Ncoils=params.Ncoils_SheppLogan, Nz=params.Nz_SheppLogan, random_phase=True)
         elif params.data_type == 'real-world':
-            self.load_nonrigid_data(params.path_to_data)
+            self.load_realworld_data(params.path_to_data, slice_idx=15)
         self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         # Calculate ESPIRiT maps and non-corrected image
@@ -35,19 +36,29 @@ class DataLoader:
         self.img_cplx = ifftnc(kspace_perm, dims=(-4, -3, -2))
         self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1).to(self.t_device)
 
-        # Simulate motion-corrupted dataset
-        simulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
-        self.ky_idx, self.nex_idx, self.TotalKspaceSamples = simulator.get_simulated_sampling()
-        self.kspace = simulator.get_corrupted_kspace()
-        self.image_no_moco = simulator.get_corrupted_image()
-        navigator, tx, ty, phi = simulator.get_motion_information()
+        if params.simulation_type == 'none':
+            self.kspace = from_espirit_to_grics_dims(self.kspace).to(self.t_device)
+            self.TotalKspaceSamples = self.kspace.shape[-2] * self.kspace.shape[-1]
+            self.nex_idx = torch.zeros(self.Ny, device=self.t_device, dtype=torch.int32)
+            self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
+                build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+            self.image_no_moco = self.image_ground_truth.clone()
+            # TODO include multiple Nex support        
+            self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
+        elif params.simulation_type == 'rigid':
+            # Simulate motion-corrupted dataset
+            simulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
+            self.ky_idx, self.nex_idx, self.TotalKspaceSamples = simulator.get_simulated_sampling()
+            self.kspace = simulator.get_corrupted_kspace()
+            self.image_no_moco = simulator.get_corrupted_image()
+            navigator, tx, ty, phi = simulator.get_motion_information()
 
-        self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
+            self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
 
-        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-            build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        # TODO include multiple Nex support        
-        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
+            self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
+                build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+            # TODO include multiple Nex support        
+            self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
 
 
     def load_fastMRI_data(self, path_to_mri_data, params):
@@ -97,10 +108,24 @@ class DataLoader:
         # Compute k-space using fftnc (assumes fftnc supports 4D input)
         self.kspace = fftnc(coil_imgs)  # Ncoils x Nx x Ny x Nz          
 
-    def load_nonrigid_data(self, path_to_data):
+    def load_realworld_data(self, path_to_data, slice_idx=0):
         data = DataReader.read_kspace_and_motion_data_from_h5(path_to_data)
-        self.kspace = data['kspace']
-        self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
+        kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)
+        self.kspace = from_grics_to_espirit_dims(kspace)[:, :, :, [slice_idx]]
+        ky_dx = data['line_idx'][slice_idx]
+        self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
+        motion_data = data['motion_data'][slice_idx, :]
+        plt.figure()
+        plt.plot(motion_data)
+        plt.xlabel("Line index")
+        plt.title("Motion Curve")
+        plt.savefig("debug_outputs/motion_curve.png")
+        plt.close()
+        motion_data = torch.from_numpy(motion_data).to(self.t_device)
+        self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
+        tmp = 0
+
+
         # self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # data['motion_data'] = f['motion_data'][:]
         #     data['prior_image'] = f['prior_image'][:]
@@ -150,51 +175,6 @@ class DataLoader:
             plt.close()
 
         return binned_indices
-
-
-    # def bin_motion_rigid(self, motion_curve, tx, ty, phi, line_idx, num_motion_events):
-    #     # TODO include multiple Nex support
-    #     # line_idx = line_idx[0, :]
-
-    #     Nbins = num_motion_events + 1
-
-    #     # Ensure all are torch tensors on GPU
-    #     motion_curve = motion_curve.to(self.t_device)
-    #     tx = tx.to(self.t_device)
-    #     ty = ty.to(self.t_device)
-    #     phi = phi.to(self.t_device)
-    #     line_idx = line_idx.to(self.t_device)
-
-    #     # Bin edges based on PC1
-    #     min_val = motion_curve.min()
-    #     max_val = motion_curve.max()
-    #     bins = torch.linspace(min_val, max_val, Nbins + 1, device=self.t_device)
-
-    #     # Digitize (bucketize) using PC1
-    #     bin_ids = torch.bucketize(motion_curve, bins) - 1
-    #     bin_ids = torch.clamp(bin_ids, 0, Nbins - 1)
-
-    #     binned_indices = [None] * Nbins
-    #     bin_centers_tx = torch.zeros(Nbins, device=self.t_device)
-    #     bin_centers_ty = torch.zeros(Nbins, device=self.t_device)
-    #     bin_centers_phi = torch.zeros(Nbins, device=self.t_device)
-
-    #     for b in range(Nbins):
-    #         mask = (bin_ids == b)
-
-    #         # Save line indices
-    #         binned_indices[b] = line_idx[mask]
-
-    #         if mask.any():
-    #             bin_centers_tx[b]  = tx[mask].mean()
-    #             bin_centers_ty[b]  = ty[mask].mean()
-    #             bin_centers_phi[b] = phi[mask].mean()
-    #         else:
-    #             bin_centers_tx[b]  = float('nan')
-    #             bin_centers_ty[b]  = float('nan')
-    #             bin_centers_phi[b] = float('nan')
-
-    #     return binned_indices, bin_centers_tx, bin_centers_ty, bin_centers_phi
 
 
         
