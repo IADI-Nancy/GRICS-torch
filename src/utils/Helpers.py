@@ -7,26 +7,26 @@ def resize_img_2D(img, new_size):
     Bilinear resize for complex or real images.
     Supports:
         - img: [H, W] (real or complex)
-        - img: [H, W, C] (real or complex)
+        - img: [C, H, W] (real or complex)
     """
     is_complex = img.is_complex()
 
     # ---------- Helper: interpolate real/imag ----------
     def interp_part(x):
-        """Interpolate real-valued tensor of shape [H,W] or [H,W,C]."""
+        """Interpolate real-valued tensor of shape [H,W] or [C,H,W]."""
         if x.ndim == 2:
             x = x.unsqueeze(0).unsqueeze(0)   # [1,1,H,W]
             out = F.interpolate(x, size=new_size, mode="bilinear", align_corners=False)
             return out[0, 0]
 
         elif x.ndim == 3:
-            C = x.shape[2]
+            C = x.shape[0]
             out_list = []
             for c in range(C):
-                xc = x[:, :, c].unsqueeze(0).unsqueeze(0)
+                xc = x[c].unsqueeze(0).unsqueeze(0)
                 rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
                 out_list.append(rc[0, 0])
-            return torch.stack(out_list, dim=2)
+            return torch.stack(out_list, dim=0)
 
         else:
             raise ValueError(f"Unexpected shape {x.shape}")

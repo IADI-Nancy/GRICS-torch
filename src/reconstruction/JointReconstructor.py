@@ -18,7 +18,7 @@ def show_slice_and_save(image, image_name):
 class JointReconstructor:
 
     def __init__(self, KspaceData, smaps, Nsamples, SamplingIndices, KspaceOffset, params):
-        Nx_full, Ny_full, Nsli, Ncoils = smaps.shape
+        Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
         self.Ncoils = Ncoils

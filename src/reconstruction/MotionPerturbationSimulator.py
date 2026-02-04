@@ -41,7 +41,7 @@ class MotionPerturbationSimulator:
         return gx, gy
 
     def forward(self, MotionModelPerturbation):
-        Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
+        Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
         Nshots = len(self.SamplingIndices)
 
         # reshape 3×Nshots perturbation vector
@@ -49,7 +49,7 @@ class MotionPerturbationSimulator:
         MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nshots)
 
         # output k-space residual
-        ResidualKspace = torch.zeros((self.Nsamples, Ncoils),
+        ResidualKspace = torch.zeros((Ncoils, self.Nsamples),
                                      dtype=torch.complex64,
                                      device=self.device)
 
@@ -74,7 +74,7 @@ class MotionPerturbationSimulator:
             # 5) Loop over coils
             for coil in range(Ncoils):
                 # apply coil sensitivities
-                WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[:, :, :, coil].squeeze()
+                WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil].squeeze()
 
                 # FFT
                 ImFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
@@ -83,7 +83,7 @@ class MotionPerturbationSimulator:
                 sampled = ImFT.flatten()[SamplingIndices]
 
                 # store in global vector
-                ResidualKspace[KspaceOffset + SamplingIndices, coil] = sampled
+                ResidualKspace[coil, KspaceOffset + SamplingIndices] = sampled
 
         return ResidualKspace.flatten()
     
@@ -97,10 +97,10 @@ class MotionPerturbationSimulator:
             MotionModelAdjoint: shape [2, Nshots]
         """
 
-        Nx, Ny, Nsli, Ncoils = self.SensitivityMaps.shape
+        Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
         Nshots = len(self.SamplingIndices)
 
-        ResidualKspace = ResidualKspace.reshape(self.Nsamples, Ncoils)
+        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nsamples)
 
         # output: 2 × Nshots (dux and duy)
         MotionModelPerturbation = torch.zeros((self.Nalpha, Nshots),
@@ -135,7 +135,7 @@ class MotionPerturbationSimulator:
                 ImageSeenByCoil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
 
                 # 6) Apply coil sensitivity adjoint (complex conjugate)
-                ResidualImage += ImageSeenByCoil * self.SensitivityMaps[:, :, :, coil].conj().squeeze(-1)
+                ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
 
             # 7) Inner products with Gx and Gy → scalar dux, duy contributions
             du_x = (ResidualImage * Gx.conj())

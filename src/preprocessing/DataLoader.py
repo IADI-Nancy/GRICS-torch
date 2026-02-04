@@ -28,36 +28,40 @@ class DataLoader:
             self.load_fastMRI_data(params.path_to_data, params)
         elif params.data_type == 'real-world': # Real-world data with acquisition order and motion data
             self.load_realworld_data(params.path_to_data, slice_idx=16)
+        else:
+            raise ValueError("Unknown data_type")
 
         # Calculate ESPIRiT maps and input image
-        self.smaps = from_espirit_to_grics_dims(calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device))
-        self.kspace = from_espirit_dims(self.kspace)
-        self.img_cplx = ifftnc(self.kspace, dims=(-4, -3, -2))
-        self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1).to(self.t_device)
+        self.smaps = calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device)
+        self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
+        self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=0).to(self.t_device)
 
         motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
                                             params, sp_device=self.sp_device, t_device=self.t_device)
         
         if params.simulation_type == 'as-it-is':
             self.image_no_moco = self.image_ground_truth.clone()
-        if params.simulation_type == 'no-motion':
-            motionSimulator.simulate_no_motion()
-            self.image_no_moco = self.image_ground_truth.clone()
-            params.N_mot_states = 1
-        else:      
-            if params.simulation_type == 'discrete-rigid':
-                motionSimulator.simulate_discrete_rigid_motion()
-            elif params.simulation_type == 'rigid':
-                motionSimulator.simulate_realistic_rigid_motion()
-            self.kspace = motionSimulator.get_corrupted_kspace()
-            self.image_no_moco = motionSimulator.get_corrupted_image()
+        else:
+            if params.simulation_type == 'no-motion':
+                motionSimulator.simulate_no_motion()
+                self.image_no_moco = self.image_ground_truth.clone()
+                params.N_mot_states = 1
+            else:      
+                if params.simulation_type == 'discrete-rigid':
+                    motionSimulator.simulate_discrete_rigid_motion()
+                elif params.simulation_type == 'rigid':
+                    motionSimulator.simulate_realistic_rigid_motion()
+                else:
+                    raise ValueError("Unknown simulation_type")
+                self.kspace = motionSimulator.get_corrupted_kspace()
+                self.image_no_moco = motionSimulator.get_corrupted_image()
 
-        navigator, tx, ty, phi = motionSimulator.get_motion_information()
-        self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
+            navigator, tx, ty, phi = motionSimulator.get_motion_information()
+            self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
 
         self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
             build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        # TODO include multiple Nex support        
+        # TODO include multiple Nex support
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
 
 
@@ -68,51 +72,65 @@ class DataLoader:
         samplingSimulator = SamplingSimulator(params, self.Ny, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
 
-    # N coils should be perfect square for coil map generation
+    # Ncoils should be a perfect square (or close) for coil map generation
     def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
-        # --- 1. Create phantom ---
+        # 1. Create phantom (Nx, Ny, Nz)
         phantom_np_2d = resize(shepp_logan_phantom(), (N, N))
-        phantom_img_2d = torch.tensor(phantom_np_2d, dtype=torch.float32, device=self.t_device)
-        phantom_img = phantom_img_2d.unsqueeze(-1).repeat(1, 1, Nz)  # NxNxNz
-
-        # --- 2. Create coil sensitivity maps ---
-        X, Y = torch.meshgrid(
-            torch.arange(1, N+1, device=self.t_device),
-            torch.arange(1, N+1, device=self.t_device),
-            indexing='ij'
+        phantom_2d = torch.tensor(
+            phantom_np_2d,
+            dtype=torch.float32,
+            device=self.t_device
         )
+
+        phantom = phantom_2d.unsqueeze(-1).expand(N, N, Nz)  # (Nx, Ny, Nz)
+
+        # 2. Create coil sensitivity maps (Ncoils, Nx, Ny, Nz)
+        X, Y = torch.meshgrid(
+            torch.arange(1, N + 1, device=self.t_device),
+            torch.arange(1, N + 1, device=self.t_device),
+            indexing="ij"
+        )
+
         sigma = N / 4
 
-        # Generate coil centers on a grid
-        grid_size = math.ceil(math.sqrt(Ncoils))  # minimal square grid to hold all coils
-        xs = torch.linspace(N/4, 3*N/4, grid_size, device=self.t_device)
-        ys = torch.linspace(N/4, 3*N/4, grid_size, device=self.t_device)
-        centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]  # pick exactly Ncoils
+        # Coil centers on (approximately) square grid
+        grid_size = math.ceil(math.sqrt(Ncoils))
+        xs = torch.linspace(N / 4, 3 * N / 4, grid_size, device=self.t_device)
+        ys = torch.linspace(N / 4, 3 * N / 4, grid_size, device=self.t_device)
+        centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]
 
-        sensitivity_maps_2d = torch.zeros((N, N, Ncoils), dtype=torch.cfloat, device=self.t_device)
+        # Allocate coil maps directly in (Ncoils, Nx, Ny)
+        smaps_2d = torch.empty(
+            (Ncoils, N, N),
+            dtype=torch.cfloat,
+            device=self.t_device
+        )
+
         for c, (x0, y0) in enumerate(centers):
-            profile = torch.exp(-((X-x0)**2 + (Y-y0)**2) / (2*sigma**2))
-            phase = torch.exp(1j * 2 * math.pi * torch.rand(1, device=self.t_device)) if random_phase else 1.0
-            sensitivity_maps_2d[:, :, c] = profile * phase
+            profile = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2 * sigma ** 2))
+            phase = (
+                torch.exp(1j * 2 * math.pi * torch.rand(1, device=self.t_device))
+                if random_phase else 1.0
+            )
+            smaps_2d[c] = profile * phase
 
-        # Repeat along Nz dimension to create full 3D coil maps
-        sensitivity_maps = sensitivity_maps_2d.unsqueeze(2).repeat(1, 1, Nz, 1)  # Nx x Ny x Nz x Ncoils
+        # Expand to Nz: (Ncoils, Nx, Ny, Nz)
+        smaps = smaps_2d.unsqueeze(-1).expand(Ncoils, N, N, Nz)
 
-        # --- 3. Generate k-space (vectorized) ---
-        # Add coil dimension to phantom: Nx x Ny x Nz x 1
-        phantom_exp = phantom_img.unsqueeze(-1)
+        # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
+        phantom = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
+        coil_imgs = phantom * smaps             # (Ncoils, Nx, Ny, Nz)
 
-        # Multiply by coil maps: Nx x Ny x Nz x Ncoils
-        coil_imgs = phantom_exp * sensitivity_maps
+        coil_imgs = coil_imgs.contiguous()       # important for FFT speed
 
-        # Permute to Ncoils x Nx x Ny x Nz
-        coil_imgs = coil_imgs.permute(3, 0, 1, 2)
-
-        # Compute k-space using fftnc (assumes fftnc supports 4D input)
-        self.kspace = fftnc(coil_imgs)  # Ncoils x Nx x Ny x Nz   
+        # 4. FFT → k-space (Ncoils, Nx, Ny, Nz)
+        self.kspace = fftnc(coil_imgs, dims=(1, 2, 3))
         self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        samplingSimulator = SamplingSimulator(self.params, self.Ny)
-        self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()       
+
+        # 5. Sampling
+        samplingSimulator = SamplingSimulator(self.params, self.Ny, self.t_device)
+        self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
+ 
 
     def load_realworld_data(self, path_to_data, slice_idx=0):
         data = DataReader.read_kspace_and_motion_data_from_h5(path_to_data)
@@ -120,6 +138,7 @@ class DataLoader:
         self.kspace = from_grics_to_espirit_dims(kspace)[:, :, :, [slice_idx]]
         ky_dx = data['line_idx'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
+        self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         plt.figure()
         plt.plot(motion_data)
@@ -128,7 +147,7 @@ class DataLoader:
         plt.savefig("debug_outputs/motion_curve.png")
         plt.close()
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
+        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
         self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # TODO include multiple Nex support        
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)

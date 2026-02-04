@@ -21,9 +21,9 @@ class EncodingOperator:
 
     def forward(self, image):
          # ---- Sizes ----
-        Nx, Ny, Nsli, Ncoils = self.smaps.shape
+        Ncoils, Nx, Ny, Nsli = self.smaps.shape
         Nshots         = len(self.SamplingIndices)
-        KspaceData = torch.zeros((self.Nsamples, Ncoils), dtype=torch.complex64, device=self.device)
+        KspaceData = torch.zeros((Ncoils, self.Nsamples), dtype=torch.complex64, device=self.device)
 
         # ---- Loop over shots ----
         for shot in range(Nshots):
@@ -37,13 +37,13 @@ class EncodingOperator:
             # ---- Loop over coils ----
             for coil in range(Ncoils):
                 # Coil sensitivity
-                WarpedImageSeenByCoil = WarpedImage * self.smaps[:, :, :, coil].squeeze(-1)
+                WarpedImageSeenByCoil = WarpedImage * self.smaps[coil].squeeze(-1)
 
                 # Fourier encoding: fftshift(fft2(ifftshift)) in 2D
                 WarpedImageFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
 
                 # Sampling operator
-                KspaceData[KspaceOffset + SamplingIndices, coil] = WarpedImageFT.flatten()[SamplingIndices]
+                KspaceData[coil, KspaceOffset + SamplingIndices] = WarpedImageFT.flatten()[SamplingIndices]
 
         return KspaceData.flatten()
 
@@ -51,9 +51,9 @@ class EncodingOperator:
 
     def adjoint(self, KspaceData):
         device = self.device
-        Nx, Ny, Nsli, Ncoils = self.smaps.shape
+        Ncoils, Nx, Ny, Nsli = self.smaps.shape
         Nshots = len(self.SamplingIndices)
-        KspaceData = KspaceData.reshape(self.Nsamples, Ncoils)
+        KspaceData = KspaceData.reshape(Ncoils, self.Nsamples)
         Image = torch.zeros((Nx, Ny), dtype=torch.complex64, device=device)
 
         for shot in range(Nshots):
@@ -64,13 +64,13 @@ class EncodingOperator:
             for coil in range(Ncoils):
                 # Sampling operator
                 FullKspaceDataCoil = torch.zeros(Nx*Ny, dtype=KspaceData.dtype, device=self.device)
-                FullKspaceDataCoil[SamplingIndices] = KspaceData[KspaceOffset + SamplingIndices, coil]
+                FullKspaceDataCoil[SamplingIndices] = KspaceData[coil, KspaceOffset + SamplingIndices]
                 FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
                 # Adjoint FFT: fftshift → ifft2 → ifftshift
                 image_coil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
 
                 # Adjoint coil sensitivity: multiply by conj(smap)
-                smap = self.smaps[:, :, :, coil].squeeze()
+                smap = self.smaps[coil].squeeze()
                 WarpedImage += image_coil * torch.conj(smap)
 
             # Adjoint motion operator

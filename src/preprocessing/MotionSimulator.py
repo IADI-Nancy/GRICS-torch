@@ -16,7 +16,7 @@ class MotionSimulator:
         self.ky_per_shot = ky_per_shot
         self.sp_device = sp_device
         self.t_device = t_device
-        self.Nx, self.Ny, self.Nsli, self.Ncha = smaps.shape  
+        self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  
         self.params = params 
 
     # def create_motion_curves(self, params):
@@ -92,10 +92,10 @@ class MotionSimulator:
             self.MotionOperator
         )
         kspace_corruped = E.forward(self.image)
-        self.kspace = kspace_corruped.reshape(params.Nex, self.Nx, self.Ny, self.Nsli, self.Ncha)
+        self.kspace = kspace_corruped.reshape(params.Nex, self.Ncha, self.Nx, self.Ny, self.Nsli)
 
-        img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
-        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=-1)
+        img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(1, 2, 3)).to(self.t_device)
+        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=0)
 
     # -------------------------------------------------------
     #------------------ Simulate zero motion ----------------
