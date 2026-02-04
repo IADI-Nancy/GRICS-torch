@@ -10,8 +10,7 @@ from src.utils.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.RawDataReader import DataReader
-from src.preprocessing.RigidMotionSimulator import RigidMotionSimulator
-from src.preprocessing.RigidMotionSimulatorShots import RigidMotionSimulatorShots
+from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.Helpers import build_sampling_from_motion_states, kmeans_torch
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
@@ -32,31 +31,28 @@ class DataLoader:
 
         # Calculate ESPIRiT maps and input image
         self.smaps = from_espirit_to_grics_dims(calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device))
-        kspace_perm = from_espirit_dims(self.kspace)
-        self.img_cplx = ifftnc(kspace_perm, dims=(-4, -3, -2))
+        self.kspace = from_espirit_dims(self.kspace)
+        self.img_cplx = ifftnc(self.kspace, dims=(-4, -3, -2))
         self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1).to(self.t_device)
 
-        motionSimulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
+        motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
                                             params, sp_device=self.sp_device, t_device=self.t_device)
-        if params.simulation_type == 'none':
-            self.kspace = from_espirit_to_grics_dims(self.kspace).to(self.t_device)
-            self.nex_idx = torch.zeros(self.Ny, device=self.t_device, dtype=torch.int32)
-            self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-                build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        
+        if params.simulation_type == 'as-it-is':
             self.image_no_moco = self.image_ground_truth.clone()
-            # TODO include multiple Nex support        
-            self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
-            self.TotalKspaceSamples = np.prod(self.ky_idx.shape)
-        elif params.simulation_type == 'discrete-rigid':
-            motionSimulator.simulate_discrete_rigid_motion()
-        elif params.simulation_type == 'rigid':
-            # Simulate motion-corrupted dataset
-            motionSimulator.simulate_realistic_rigid_motion()
-        self.ky_idx, self.nex_idx, self.TotalKspaceSamples = motionSimulator.get_simulated_sampling()
-        self.kspace = motionSimulator.get_corrupted_kspace()
-        self.image_no_moco = motionSimulator.get_corrupted_image()
-        navigator, tx, ty, phi = motionSimulator.get_motion_information()
+        if params.simulation_type == 'no-motion':
+            motionSimulator.simulate_no_motion()
+            self.image_no_moco = self.image_ground_truth.clone()
+            params.N_mot_states = 1
+        else:      
+            if params.simulation_type == 'discrete-rigid':
+                motionSimulator.simulate_discrete_rigid_motion()
+            elif params.simulation_type == 'rigid':
+                motionSimulator.simulate_realistic_rigid_motion()
+            self.kspace = motionSimulator.get_corrupted_kspace()
+            self.image_no_moco = motionSimulator.get_corrupted_image()
 
+        navigator, tx, ty, phi = motionSimulator.get_motion_information()
         self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
 
         self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
@@ -134,6 +130,9 @@ class DataLoader:
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
         self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        # TODO include multiple Nex support        
+        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
+        self.TotalKspaceSamples = np.prod(self.ky_idx.shape)
 
 
         # self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
@@ -147,7 +146,7 @@ class DataLoader:
 
 
     def bin_motion_rigid(self, motion_curve, line_idx, params):
-        Nbins = params.num_motion_events + 1
+        Nbins = params.N_mot_states
 
         # Ensure tensors on device
         motion_curve = motion_curve.to(self.t_device)

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from src.utils.Helpers import build_sampling_from_motion_states
 
 
-class RigidMotionSimulator:
+class MotionSimulator:
     def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_shot, params, sp_device=None, t_device=None):
         self.image = image
         self.smaps = smaps
@@ -31,6 +31,10 @@ class RigidMotionSimulator:
 
     def get_motion_information(self):
         return self.navigator, self.tx, self.ty, self.phi
+    
+    # -------------------------------------------------------
+    #------------------- Common functions -------------------
+    # -------------------------------------------------------
     
     def save_debug_plots(self, motion_curve, tx, ty, phi, event_times=None):
         plt.figure()
@@ -92,6 +96,36 @@ class RigidMotionSimulator:
 
         img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(0, 1, 2)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=-1)
+
+    # -------------------------------------------------------
+    #------------------ Simulate zero motion ----------------
+    # -------------------------------------------------------
+    
+    def simulate_no_motion(self):
+        """
+        Simulate acquisition with NO motion:
+        tx = ty = phi = 0 everywhere
+        navigator = 0
+        """
+        # Use shot-wise sampling (same as discrete motion)
+        ky_per_mot_state_idx = self.ky_idx.unsqueeze(0)
+
+        # Build sampling
+        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
+            build_sampling_from_motion_states(
+                ky_per_mot_state_idx,
+                self.ky_idx,
+                self.nex_idx,
+                self.Nx,
+                self.Ny,
+                self.t_device
+            )
+
+        # Expand zero motion to ky (chronological)
+        self.tx        = torch.zeros(self.Ny, device=self.t_device)
+        self.ty        = torch.zeros(self.Ny, device=self.t_device)
+        self.phi       = torch.zeros(self.Ny, device=self.t_device)
+        self.navigator = torch.zeros(self.Ny, device=self.t_device)
 
 
     # -------------------------------------------------------

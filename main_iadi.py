@@ -57,11 +57,10 @@ if params.debug_flag:
 data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
 image_ground_truth = data.image_ground_truth.clone()
 show_slice_and_save(image_ground_truth, 'img_ground_truth')
-
-# data.create_motion_corrupted_dataset(params=params)
 image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted, 'img_corrupted')
+params = data.params
 
 jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
 start = time.time()

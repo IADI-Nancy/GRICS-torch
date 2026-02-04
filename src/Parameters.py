@@ -13,7 +13,7 @@ class Parameters:
     Nz_SheppLogan = 1
 
     # Simulation parameters
-    simulation_type = 'discrete-rigid'  # 'discrete-rigid', 'rigid', 'non-rigid' or 'none'
+    simulation_type = 'no-motion'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
 
     # Sampling simulation parameters
     NshotsPerNex = 4
