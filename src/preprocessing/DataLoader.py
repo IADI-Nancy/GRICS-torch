@@ -14,6 +14,7 @@ from src.preprocessing.RigidMotionSimulator import RigidMotionSimulator
 from src.preprocessing.RigidMotionSimulatorShots import RigidMotionSimulatorShots
 from src.utils.Helpers import build_sampling_from_motion_states, kmeans_torch
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
+from src.preprocessing.SamplingSimulator import SamplingSimulator
 
 
 class DataLoader:
@@ -21,49 +22,55 @@ class DataLoader:
         self.sp_device = sp_device
         self.t_device = t_device
         self.params = params
-
-        if params.data_type == 'fastMRI':
-            self.load_fastMRI_data(params.path_to_data, params)
-        elif params.data_type == 'shepp-logan':    
+        
+        if params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=params.N_SheppLogan, Ncoils=params.Ncoils_SheppLogan, Nz=params.Nz_SheppLogan, random_phase=True)
-        elif params.data_type == 'real-world':
-            self.load_realworld_data(params.path_to_data, slice_idx=15)
-        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        elif params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
+            self.load_fastMRI_data(params.path_to_data, params)
+        elif params.data_type == 'real-world': # Real-world data with acquisition order and motion data
+            self.load_realworld_data(params.path_to_data, slice_idx=16)
 
-        # Calculate ESPIRiT maps and non-corrected image
+        # Calculate ESPIRiT maps and input image
         self.smaps = from_espirit_to_grics_dims(calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device))
         kspace_perm = from_espirit_dims(self.kspace)
         self.img_cplx = ifftnc(kspace_perm, dims=(-4, -3, -2))
         self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=-1).to(self.t_device)
 
+        motionSimulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
+                                            params, sp_device=self.sp_device, t_device=self.t_device)
         if params.simulation_type == 'none':
             self.kspace = from_espirit_to_grics_dims(self.kspace).to(self.t_device)
-            self.TotalKspaceSamples = self.kspace.shape[-2] * self.kspace.shape[-1]
             self.nex_idx = torch.zeros(self.Ny, device=self.t_device, dtype=torch.int32)
             self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
                 build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
             self.image_no_moco = self.image_ground_truth.clone()
             # TODO include multiple Nex support        
             self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
+            self.TotalKspaceSamples = np.prod(self.ky_idx.shape)
+        elif params.simulation_type == 'discrete-rigid':
+            motionSimulator.simulate_discrete_rigid_motion()
         elif params.simulation_type == 'rigid':
             # Simulate motion-corrupted dataset
-            simulator = RigidMotionSimulator(self.image_ground_truth, self.smaps, params, sp_device=self.sp_device, t_device=self.t_device)
-            self.ky_idx, self.nex_idx, self.TotalKspaceSamples = simulator.get_simulated_sampling()
-            self.kspace = simulator.get_corrupted_kspace()
-            self.image_no_moco = simulator.get_corrupted_image()
-            navigator, tx, ty, phi = simulator.get_motion_information()
+            motionSimulator.simulate_realistic_rigid_motion()
+        self.ky_idx, self.nex_idx, self.TotalKspaceSamples = motionSimulator.get_simulated_sampling()
+        self.kspace = motionSimulator.get_corrupted_kspace()
+        self.image_no_moco = motionSimulator.get_corrupted_image()
+        navigator, tx, ty, phi = motionSimulator.get_motion_information()
 
-            self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
+        self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
 
-            self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-                build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-            # TODO include multiple Nex support        
-            self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
+        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
+            build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        # TODO include multiple Nex support        
+        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
 
 
     def load_fastMRI_data(self, path_to_mri_data, params):
         self.kspace = np.load(path_to_mri_data)['arr_0']
-        self.kspace = torch.from_numpy(self.kspace).to(self.t_device)  
+        self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
+        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        samplingSimulator = SamplingSimulator(params, self.Ny, self.t_device)
+        self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
 
     # N coils should be perfect square for coil map generation
     def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
@@ -106,7 +113,10 @@ class DataLoader:
         coil_imgs = coil_imgs.permute(3, 0, 1, 2)
 
         # Compute k-space using fftnc (assumes fftnc supports 4D input)
-        self.kspace = fftnc(coil_imgs)  # Ncoils x Nx x Ny x Nz          
+        self.kspace = fftnc(coil_imgs)  # Ncoils x Nx x Ny x Nz   
+        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        samplingSimulator = SamplingSimulator(self.params, self.Ny)
+        self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()       
 
     def load_realworld_data(self, path_to_data, slice_idx=0):
         data = DataReader.read_kspace_and_motion_data_from_h5(path_to_data)
@@ -123,7 +133,7 @@ class DataLoader:
         plt.close()
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
-        tmp = 0
+        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
 
         # self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
