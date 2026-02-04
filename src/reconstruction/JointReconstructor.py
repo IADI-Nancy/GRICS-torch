@@ -77,8 +77,9 @@ class JointReconstructor:
         # create mask
         mask = torch.zeros((Nx_full, Ny_full), dtype=torch.bool, device=kspace_full.device)
         mask[x0:x0+Nx_res, y0:y0+Ny_res] = True
-        kspace_reshaped = kspace_full.reshape(Nex, Nx_full, Ny_full, -1)
-        kspace_res = kspace_reshaped[:, mask, :].reshape(-1, kspace_full.shape[-1])
+        # kspace_reshaped = kspace_full.reshape(Nex, Nx_full, Ny_full, -1)
+        # kspace_res = kspace_reshaped[:, mask, :].reshape(-1, kspace_full.shape[-1])
+        kspace_res = kspace_full[:, :, mask, :].reshape(kspace_full.shape[1], -1)
 
         return kspace_res   
 
@@ -93,19 +94,19 @@ class JointReconstructor:
         Data_res["Nx"] = Nx
         Data_res["Ny"] = Ny
         
-        Data_res["SensitivityMaps"] = resize_img_2D(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(2)
+        Data_res["SensitivityMaps"] = resize_img_2D(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
         Data_res["SamplingIndices"] = self.downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny)
         Data_res["KspaceData"] = self.downsample_kspace(Nx, Ny)
         Data_res["KspaceOffset"] = []
         for shot in range(len(Data_res["SamplingIndices"])):
             Data_res["KspaceOffset"].append(int(self.Data_full["KspaceOffset"][shot]/self.Data_full["Nx"]/self.Data_full["Ny"] * (Nx*Ny)))
-        Data_res["Nsamples"] = Data_res["KspaceData"].shape[0]
+        Data_res["Nsamples"] = Data_res["KspaceData"].shape[1]
 
         return Data_res
     
     def upsample_data(self, Data_prev, Data_res):
         img_prev = Data_prev["ReconstructedImage"]
-        img_res = resize_img_2D(img_prev.unsqueeze(-1), (Data_res["Nx"], Data_res["Ny"])).squeeze(-1)
+        img_res = resize_img_2D(img_prev, (Data_res["Nx"], Data_res["Ny"]))
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]

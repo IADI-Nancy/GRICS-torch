@@ -127,7 +127,8 @@ class MotionPerturbationSimulator:
 
                 # 4) Extract coil residual samples and place them back into k-space
                 FullKspaceDataCoil = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
-                FullKspaceDataCoil[SamplingIndices] = ResidualKspace[KspaceOffset + SamplingIndices, coil]
+                torch.max(SamplingIndices)
+                FullKspaceDataCoil[SamplingIndices] = ResidualKspace[coil, KspaceOffset + SamplingIndices]
 
                 FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
 
