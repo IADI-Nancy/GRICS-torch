@@ -5,11 +5,11 @@ from skimage.data import shepp_logan_phantom
 from skimage.transform import resize
 import math
 
+from src.preprocessing.RawDataReader import RawDataReader
 from src.utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
 from src.utils.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
-from src.preprocessing.RawDataReader import DataReader
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.Helpers import build_sampling_from_motion_states, kmeans_torch
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
@@ -25,22 +25,27 @@ class DataLoader:
         if params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=params.N_SheppLogan, Ncoils=params.Ncoils_SheppLogan, Nz=params.Nz_SheppLogan, random_phase=True)
         elif params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
-            self.load_fastMRI_data(params.path_to_data, params)
+            self.load_fastMRI_data(params.path_to_fastMRI_data, params)
         elif params.data_type == 'real-world': # Real-world data with acquisition order and motion data
-            self.load_realworld_data(params.path_to_data, slice_idx=16)
+            self.load_realworld_data(params.path_to_realworld_data, slice_idx=16)
+        elif params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
+            self.load_realworld_data_from_ismrm_and_saec(params.ismrmrd_file, params.saec_file, slice_idx=16)
         else:
             raise ValueError("Unknown data_type")
 
         # Calculate ESPIRiT maps and input image
         self.smaps = calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device)
         self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
-        self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=0).to(self.t_device)
+        self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=1).to(self.t_device)
 
         motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
                                             params, sp_device=self.sp_device, t_device=self.t_device)
         
         if params.simulation_type == 'as-it-is':
-            self.image_no_moco = self.image_ground_truth.clone()
+            if params.data_type in ['real-world', 'raw-data']:
+                self.image_no_moco = self.image_ground_truth.clone()
+            else:
+                raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
         else:
             if params.simulation_type == 'no-motion':
                 motionSimulator.simulate_no_motion()
@@ -58,7 +63,9 @@ class DataLoader:
 
             navigator, tx, ty, phi = motionSimulator.get_motion_information()
             self.binned_indices = self.bin_motion_rigid(navigator, self.ky_idx, params)
-
+        
+        # if len(self.kspace.shape) == 4: # add Nex dimension if missing
+        #     self.kspace = self.kspace.unsqueeze(0)
         self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
             build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
         # TODO include multiple Nex support
@@ -130,12 +137,25 @@ class DataLoader:
         # 5. Sampling
         samplingSimulator = SamplingSimulator(self.params, self.Ny, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
- 
+
+    def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
+        data = RawDataReader.read_data_from_rawdata(path_to_ismrm, path_to_saec)
+        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
+        # self.kspace = from_grics_to_espirit_dims(self.kspace)[:, :, :, [slice_idx]]
+        self.ky_idx = torch.from_numpy(data['line_idx'][slice_idx]).to(self.t_device, dtype=torch.int64)
+        self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
+        motion_data = data['motion_data'][slice_idx, :]
+        motion_data = torch.from_numpy(motion_data).to(self.t_device)
+        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
+        _, self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        # TODO include multiple Nex support        
+        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
+        self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
 
     def load_realworld_data(self, path_to_data, slice_idx=0):
-        data = DataReader.read_kspace_and_motion_data_from_h5(path_to_data)
-        kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)
-        self.kspace = from_grics_to_espirit_dims(kspace)[:, :, :, [slice_idx]]
+        data = RawDataReader.read_kspace_and_motion_data_from_h5(path_to_data)
+        kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
+        # self.kspace = from_grics_to_espirit_dims(kspace)[:, :, :, [slice_idx]]
         ky_dx = data['line_idx'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)

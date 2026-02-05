@@ -8,7 +8,6 @@ from src.Parameters import Parameters
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.JointReconstructor import JointReconstructor
-from src.preprocessing.RawDataReader import DataReader
 from src.utils.show_slice import show_slice
 
 
@@ -47,12 +46,6 @@ if params.debug_flag:
     if torch.cuda.is_available():
         torch.cuda.manual_seed(params.seed)
         torch.cuda.manual_seed_all(params.seed)
-    # Make cuDNN deterministic (may slow training)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
-    # torch.use_deterministic_algorithms(True)
-
-
 
 data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
 image_ground_truth = data.image_ground_truth.clone()
@@ -69,36 +62,36 @@ end = time.time()
 print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
 
 
-# Test DataReader
-saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
-ismrmrd_file = 'data/t2_1724.h5'
-data = DataReader.read_kspace_and_motion_data_from_rawdata(ismrmrd_file, saec_file, \
-                                                    sensor_type='BELT', Nbins=8,\
-                                                    h5filename='data/breast_motion_data.h5')
-# Read the data
-data = DataReader.read_kspace_and_motion_data_from_h5('data/breast_motion_data.h5')
+# # Test DataReader
+# saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
+# ismrmrd_file = 'data/t2_1724.h5'
+# data = DataReader.read_kspace_and_motion_data_from_rawdata(ismrmrd_file, saec_file, \
+#                                                     sensor_type='BELT', Nbins=8,\
+#                                                     h5filename='data/breast_motion_data.h5')
+# # Read the data
+# data = DataReader.read_kspace_and_motion_data_from_h5('data/breast_motion_data.h5')
 
-# Access individual datasets
-motion_data = data['motion_data']
-prior_image = data['prior_image']
-line_idx = data['line_idx']
-kspace = data['kspace']
-smap = data['smap']
-bin_centers = data['bin_centers']
-binned_indices = data['binned_indices']
+# # Access individual datasets
+# motion_data = data['motion_data']
+# prior_image = data['prior_image']
+# line_idx = data['line_idx']
+# kspace = data['kspace']
+# smap = data['smap']
+# bin_centers = data['bin_centers']
+# binned_indices = data['binned_indices']
 
-# Print shapes to verify
-print(f"motion_data shape: {motion_data.shape}")
-print(f"prior_image shape: {prior_image.shape}")
-print(f"line_idx shape: {line_idx.shape}")
-print(f"kspace shape: {kspace.shape}")
-print(f"smap shape: {smap.shape}")
-print(f"bin_centers shape: {bin_centers.shape}")
-print(f"binned_indices shape: {binned_indices.shape}")
+# # Print shapes to verify
+# print(f"motion_data shape: {motion_data.shape}")
+# print(f"prior_image shape: {prior_image.shape}")
+# print(f"line_idx shape: {line_idx.shape}")
+# print(f"kspace shape: {kspace.shape}")
+# print(f"smap shape: {smap.shape}")
+# print(f"bin_centers shape: {bin_centers.shape}")
+# print(f"binned_indices shape: {binned_indices.shape}")
 
-# Access a specific binned index array
-print(f"\nExample - binned_indices[0, 0]: {binned_indices[0, 0]}")
-print(f"Type: {type(binned_indices[0, 0])}")
+# # Access a specific binned index array
+# print(f"\nExample - binned_indices[0, 0]: {binned_indices[0, 0]}")
+# print(f"Type: {type(binned_indices[0, 0])}")
 
 
 
