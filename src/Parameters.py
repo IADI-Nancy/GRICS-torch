@@ -15,13 +15,13 @@ class Parameters:
     Nz_SheppLogan = 1
 
     # Sampling simulation parameters
-    NshotsPerNex = 50
+    NshotsPerNex = 4
     Nex = 1 # TODO : add multiple excitations support
     kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
     simulation_type = 'rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
-    num_motion_events = 2
+    num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_phi = 10.0  # maximum rotation (degrees)

@@ -60,6 +60,8 @@ class EncodingOperator:
             WarpedImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=device)
             SamplingIndices = self.SamplingIndices[shot]
             KspaceOffset = self.KspaceOffset[shot]
+            if SamplingIndices.numel() == 0:
+                continue
 
             for coil in range(Ncoils):
                 # Sampling operator

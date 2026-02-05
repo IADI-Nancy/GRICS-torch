@@ -112,6 +112,8 @@ class MotionPerturbationSimulator:
             SamplingIndices = self.SamplingIndices[shot]
             KspaceOffset  = self.KspaceOffset[shot]
             MotionOp     = self.motionOperator.get_sparse_operator(shot)
+            if SamplingIndices.numel() == 0:
+                continue
 
             # 1) Warp image with shot operator
             WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
@@ -127,7 +129,7 @@ class MotionPerturbationSimulator:
 
                 # 4) Extract coil residual samples and place them back into k-space
                 FullKspaceDataCoil = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
-                torch.max(SamplingIndices)
+
                 FullKspaceDataCoil[SamplingIndices] = ResidualKspace[coil, KspaceOffset + SamplingIndices]
 
                 FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
