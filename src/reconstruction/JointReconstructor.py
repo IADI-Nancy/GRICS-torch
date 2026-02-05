@@ -79,7 +79,7 @@ class JointReconstructor:
         mask[x0:x0+Nx_res, y0:y0+Ny_res] = True
         # kspace_reshaped = kspace_full.reshape(Nex, Nx_full, Ny_full, -1)
         # kspace_res = kspace_reshaped[:, mask, :].reshape(-1, kspace_full.shape[-1])
-        kspace_res = kspace_full[:, :, mask, :].reshape(kspace_full.shape[1], -1)
+        kspace_res = kspace_full[:, :, mask, :].reshape(kspace_full.shape[0], -1)
 
         return kspace_res   
 

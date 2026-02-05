@@ -15,7 +15,7 @@ try:
         if sp_device is None:
             sp_device = sp.Device(0 if use_gpu else -1)
 
-        _, nCha, nX, nY, nSlices = kspace.shape
+        nCha, _, nX, nY, nSlices = kspace.shape
 
         espirit_maps = torch.zeros(
             (nCha, nX, nY, nSlices),
@@ -27,7 +27,7 @@ try:
 
             # ---- GPU path ----
             if use_gpu:
-                kspace_cp = cp.asarray(kspace[0, :, :, :, i].squeeze().contiguous())
+                kspace_cp = cp.asarray(kspace[:, 0, :, :, i].squeeze().contiguous())
                 maps_cp = spmri.app.EspiritCalib(
                     kspace_cp, calib_width=acs,
                     kernel_width=kernel_width,
@@ -39,7 +39,7 @@ try:
 
             # ---- CPU path ----
             else:
-                kspace_np = kspace[0, :, :, :, i].squeeze().cpu().numpy()
+                kspace_np = kspace[:, 0, :, :, i].squeeze().cpu().numpy()
                 maps_np = spmri.app.EspiritCalib(
                     kspace_np, calib_width=acs,
                     kernel_width=kernel_width,

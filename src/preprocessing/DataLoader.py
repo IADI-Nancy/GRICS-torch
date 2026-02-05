@@ -6,8 +6,7 @@ from skimage.transform import resize
 import math
 
 from src.preprocessing.RawDataReader import RawDataReader
-from src.utils.espiritmaps import calc_espirit_maps, from_espirit_dims, to_espirit_dims
-from src.utils.Helpers import from_espirit_to_grics_dims, from_grics_to_espirit_dims
+from src.utils.espiritmaps import calc_espirit_maps
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.MotionSimulator import MotionSimulator
@@ -36,7 +35,8 @@ class DataLoader:
         # Calculate ESPIRiT maps and input image
         self.smaps = calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device)
         self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
-        self.image_ground_truth = torch.sum(self.img_cplx*self.smaps.conj(), dim=1).to(self.t_device)
+        smaps_replicated = self.smaps.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1)
+        self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
 
         motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
                                             params, sp_device=self.sp_device, t_device=self.t_device)
@@ -139,7 +139,7 @@ class DataLoader:
         self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
 
     def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
-        data = RawDataReader.read_data_from_rawdata(path_to_ismrm, path_to_saec) #, h5filename='data/breast_motion_data.h5'
+        data = RawDataReader.read_data_from_rawdata(path_to_ismrm, path_to_saec, h5filename='data/breast_motion_data.h5') #
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
         # self.kspace = from_grics_to_espirit_dims(self.kspace)[:, :, :, [slice_idx]]
         self.ky_idx = torch.from_numpy(data['line_idx'][slice_idx]).to(self.t_device, dtype=torch.int64)
@@ -147,7 +147,7 @@ class DataLoader:
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
-        _, self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # TODO include multiple Nex support        
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
         self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
@@ -168,7 +168,7 @@ class DataLoader:
         plt.close()
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
-        _, self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # TODO include multiple Nex support        
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
         self.TotalKspaceSamples = np.prod(self.ky_idx.shape)

@@ -73,8 +73,8 @@ class RawDataReader:
         Ny = Ry * math.ceil(float(Ny) / float(Ry))
         number_of_channels, number_of_samples = dset.read_acquisition(0).data.shape
         kspace = np.zeros(
-                (Nex,
-                number_of_channels,
+                (number_of_channels,
+                Nex,
                 number_of_samples,
                 Ny,                
                 N_SLI),
@@ -90,7 +90,7 @@ class RawDataReader:
             timestamp = (np.float64(acq.acquisition_time_stamp) - first_timestamp) * 2.5e-3
             timestamps.append(timestamp)
             slices.append(acq.idx.slice)
-            kspace[0, :, :, acq.idx.kspace_encode_step_1, acq.idx.slice] = acq.data # TODO replace 0 with acq.idx.average for multiple Nex support
+            kspace[:, 0, :, acq.idx.kspace_encode_step_1, acq.idx.slice] = acq.data # TODO replace 0 with acq.idx.average for multiple Nex support
             idx_ky.append(acq.idx.kspace_encode_step_1)
             idx_kz.append(acq.idx.kspace_encode_step_2)
             idx_nex.append(acq.idx.average)
@@ -104,15 +104,21 @@ class RawDataReader:
         return interpolator(time_target)
 
     @staticmethod
-    def reshape_resp_data(respiratory_data_interpolated, slices, idx_ky):
+    def reshape_resp_data(respiratory_data_interpolated, slices, idx_ky, idx_kz=None, idx_nex=None):
         N_SLI = np.max(slices) + 1
         motion_data = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
-        line_idx = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
+        line_idx_y = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
+        line_idx_z = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
+        line_idx_nex = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
         for i_sli in range(N_SLI):
             tmp = respiratory_data_interpolated[np.array(slices) == i_sli]
             motion_data[i_sli] = np.squeeze(tmp)
-            line_idx[i_sli] = idx_ky[np.array(slices) == i_sli]
-        return motion_data, line_idx
+            line_idx_y[i_sli] = idx_ky[np.array(slices) == i_sli]
+            if idx_kz is not None:
+                line_idx_z[i_sli] = idx_kz[np.array(slices) == i_sli]
+            if idx_nex is not None:
+                line_idx_nex[i_sli] = idx_nex[np.array(slices) == i_sli]
+        return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
     @staticmethod
     def read_motion_and_kspace(ismrmrd_path, saec_path, sensor_type='BELT'):
@@ -125,34 +131,30 @@ class RawDataReader:
         # Interpolate physiological signal to k-space timestamps
         respiratory_data_interpolated = RawDataReader.interpolate_signal(time_saec, respiratory_data_filtered, time_kspace)
 
-        motion_data, line_idx = RawDataReader.reshape_resp_data(respiratory_data_interpolated, slices, idx_ky)
+        motion_data, idx_ky, idx_kz, idx_nex = RawDataReader.reshape_resp_data(respiratory_data_interpolated, slices, idx_ky, idx_kz, idx_nex)
 
-        return motion_data, line_idx, kspace
-
-    @staticmethod
-    def extract_central_kspace(kspace, size=32):
-        nx, ny = kspace.shape[:2]
-        cx, cy = nx // 2, ny // 2  # center indices
-        half = size // 2
-        kspace_central = kspace[cx - half:cx + half, cy - half:cy + half, :, :]
-        return kspace_central
+        return kspace, motion_data, idx_ky, idx_kz, idx_nex
     
     @staticmethod
     def read_data_from_rawdata(ismrmrd_file, saec_file, sensor_type='BELT', h5filename=None):
-        motion_data, line_idx, kspace = RawDataReader.read_motion_and_kspace(ismrmrd_file, saec_file, sensor_type)
+        kspace, motion_data, idx_ky, idx_kz, idx_nex = RawDataReader.read_motion_and_kspace(ismrmrd_file, saec_file, sensor_type)
         kspace = RawDataReader.remove_oversampling(kspace)
 
             # Prepare data dictionary
         data = {
-            'motion_data': motion_data,
-            'line_idx': line_idx,
             'kspace': kspace,
+            'motion_data': motion_data,
+            'line_idx': idx_ky,
+            'idx_kz': idx_kz,
+            'idx_nex': idx_nex
         }
         
         if h5filename is not None:
             with h5py.File(h5filename, 'w') as f:
                 f.create_dataset('motion_data', data=motion_data)
-                f.create_dataset('line_idx', data=line_idx)
+                f.create_dataset('line_idx', data=idx_ky)
+                f.create_dataset('idx_kz', data=idx_kz)
+                f.create_dataset('idx_nex', data=idx_nex)
                 f.create_dataset('kspace', data=kspace)
         return data
 
