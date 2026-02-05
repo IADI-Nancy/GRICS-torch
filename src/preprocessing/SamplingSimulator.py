@@ -8,7 +8,7 @@ class SamplingSimulator:
 
     def build_ky_and_nex(self):
         params = self.params
-        Nshots = params.N_mot_states
+        Nshots = params.Nshots
         Nex    = params.Nex
 
         ky_list      = []   # chronological chunks

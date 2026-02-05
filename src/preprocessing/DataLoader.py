@@ -75,7 +75,8 @@ class DataLoader:
     def load_fastMRI_data(self, path_to_mri_data, params):
         self.kspace = np.load(path_to_mri_data)['arr_0']
         self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
-        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.kspace = self.kspace.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1) # add Nex dimension
+        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         samplingSimulator = SamplingSimulator(params, self.Ny, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
 
@@ -127,12 +128,13 @@ class DataLoader:
         # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
         phantom = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
         coil_imgs = phantom * smaps             # (Ncoils, Nx, Ny, Nz)
+        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
 
         coil_imgs = coil_imgs.contiguous()       # important for FFT speed
 
         # 4. FFT → k-space (Ncoils, Nx, Ny, Nz)
-        self.kspace = fftnc(coil_imgs, dims=(1, 2, 3))
-        self.Ncha, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.kspace = fftnc(coil_imgs, dims=(-3, -2, -1))
+        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         # 5. Sampling
         samplingSimulator = SamplingSimulator(self.params, self.Ny, self.t_device)
@@ -198,6 +200,30 @@ class DataLoader:
         for b in range(Nbins):
             mask = labels == b
             binned_indices[b] = line_idx[mask]
+        # ---- Plot (chronological order) ----
+        if params.debug_flag:
+            motion_cpu = motion_curve.detach().cpu()
+            labels_cpu = labels.detach().cpu()
+
+            # Chronological index (acquisition order)
+            time_idx = torch.arange(len(motion_cpu))
+
+            plt.figure(figsize=(10, 4))
+            scatter = plt.scatter(
+                time_idx,
+                motion_cpu,
+                c=labels_cpu,
+                s=10,
+                cmap="tab10",
+            )
+
+            plt.xlabel("Time / acquisition order")
+            plt.ylabel("Motion amplitude")
+            plt.title("Chronological motion curve with K-means clustering")
+            plt.colorbar(scatter, label="Motion bin")
+            plt.tight_layout()
+            plt.savefig("debug_outputs/clustered_curve.png")
+            plt.close()
 
         # ---- Plot ----
         if params.debug_flag:

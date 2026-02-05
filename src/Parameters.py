@@ -5,7 +5,7 @@ class Parameters:
     debug_folder = "debug_outputs/"
 
     # Data loading/generation parameters
-    data_type = 'real-world'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
+    data_type = 'fastMRI'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
     path_to_fastMRI_data = 'data/kspace.npz'
     path_to_realworld_data = 'data/breast_motion_data.h5'
     saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
@@ -15,13 +15,13 @@ class Parameters:
     Nz_SheppLogan = 1
 
     # Sampling simulation parameters
-    NshotsPerNex = 4
+    NshotsPerNex = 50
     Nex = 1 # TODO : add multiple excitations support
     kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
-    simulation_type = 'as-it-is'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
-    num_motion_events = 4
+    simulation_type = 'rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
+    num_motion_events = 2
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_phi = 10.0  # maximum rotation (degrees)

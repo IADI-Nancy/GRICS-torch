@@ -92,9 +92,9 @@ class MotionSimulator:
             self.MotionOperator
         )
         kspace_corruped = E.forward(self.image)
-        self.kspace = kspace_corruped.reshape(params.Nex, self.Ncha, self.Nx, self.Ny, self.Nsli)
+        self.kspace = kspace_corruped.reshape(self.Ncha, params.Nex, self.Nx, self.Ny, self.Nsli)
 
-        img_cplx = ifftnc(self.kspace[0,:,:,:,:], dims=(1, 2, 3)).to(self.t_device)
+        img_cplx = ifftnc(self.kspace[:,0,:,:,:], dims=(-3, -2, -1)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=0)
 
     # -------------------------------------------------------
