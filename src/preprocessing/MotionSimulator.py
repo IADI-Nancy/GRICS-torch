@@ -4,7 +4,7 @@ from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 import matplotlib.pyplot as plt
-from src.utils.Helpers import build_sampling_from_motion_states
+from src.utils.Helpers import build_sampling_per_nex_per_motion #build_sampling_from_motion_states
 
 
 class MotionSimulator:
@@ -111,15 +111,18 @@ class MotionSimulator:
         ky_per_mot_state_idx = self.ky_idx.unsqueeze(0)
 
         # Build sampling
-        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-            build_sampling_from_motion_states(
-                ky_per_mot_state_idx,
-                self.ky_idx,
-                self.nex_idx,
-                self.Nx,
-                self.Ny,
-                self.t_device
-            )
+        # self.sampling_idx = \
+        #     build_sampling_from_motion_states(
+        #         ky_per_mot_state_idx,
+        #         self.ky_idx,
+        #         self.nex_idx,
+        #         self.Nx,
+        #         self.Ny,
+        #         self.t_device
+        #     )
+        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.t_device)
+        
+        self.TotalKspaceSamples = (self.ky_idx.numel() // self.params.Nex) * self.Nx
 
         # Expand zero motion to ky (chronological)
         self.tx        = torch.zeros(self.Ny, device=self.t_device)
@@ -134,11 +137,11 @@ class MotionSimulator:
     
     def create_realistic_motion_curves(self, params):
         # Time axis: one value per k-space line (Ny)
-        t = torch.arange(self.Ny, device=self.t_device, dtype=torch.float32)
+        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float32)
 
         # 1) Generate random motion event times
         event_times = torch.sort(
-            torch.randint(0, self.Ny, (params.num_motion_events,), device=self.t_device)
+            torch.randint(0, self.Ny*params.Nex, (params.num_motion_events,), device=self.t_device)
         ).values
 
         # Motion transition sharpness (smaller tau -> faster motion)
@@ -150,25 +153,24 @@ class MotionSimulator:
         A_phi = params.max_phi * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1) * (torch.pi/180)
 
         # 3) Build independent motion curves
-        tx  = torch.zeros(self.Ny, device=self.t_device)
-        ty  = torch.zeros(self.Ny, device=self.t_device)
-        phi = torch.zeros(self.Ny, device=self.t_device)
+        tx  = torch.zeros(self.Ny*params.Nex, device=self.t_device)
+        ty  = torch.zeros(self.Ny*params.Nex, device=self.t_device)
+        phi = torch.zeros(self.Ny*params.Nex, device=self.t_device)
 
         # Full time axis
-        t = torch.arange(self.Ny, device=self.t_device, dtype=torch.float32)
+        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float32)
 
         for i, ti in enumerate(event_times):
             ti = event_times[i].item()
-            t_end = min(ti + tau, self.Ny)
-
+            t_end = min(ti + tau, self.Ny*params.Nex)
             # Normalized time for the transition
             alpha = np.linspace(0.0, 1.0, t_end - ti)
             # Raised cosine ramp (finite, smooth)
             s = 0.5 * (1.0 - np.cos(np.pi * alpha))
 
-            f = torch.zeros(self.Ny, device=self.t_device)
+            f = torch.zeros(self.Ny*params.Nex, device=self.t_device)
             f[ti:t_end] = torch.from_numpy(s).to(self.t_device)
-            if t_end < self.Ny:
+            if t_end < self.Ny*params.Nex:
                 f[t_end:] = 1.0
 
             # Add motion contribution (same logic as tanh version)
@@ -202,23 +204,25 @@ class MotionSimulator:
         params = self.params
         # Each kspace line is its own motion state
         ky_per_mot_state_idx = [
-            ky_line.unsqueeze(0) for ky_line in self.ky_idx
+            ky_line.unsqueeze(-1) for ky_line in self.ky_idx
         ]
-        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-            build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        # self.sampling_idx = \
+        #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        self.sampling_idx = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.t_device)
 
+        self.TotalKspaceSamples = self.Ny * self.Nx
         # generate motion curves and parameters
         self.navigator, self.tx, self.ty, self.phi = self.create_realistic_motion_curves(params)
 
         # Apply simulated motion
-        alpha = torch.zeros(3, len(self.sampling_idx), device=self.t_device)
+        alpha = torch.zeros(3, self.Ny * params.Nex, device=self.t_device)
         alpha[0, :] = self.tx
         alpha[1, :] = self.ty
         alpha[2, :] = self.phi
 
-        centers = torch.zeros((2, len(self.sampling_idx)), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + params.max_center_x * torch.ones(len(self.sampling_idx), device=self.t_device)
-        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.randn(len(self.sampling_idx), device=self.t_device)
+        centers = torch.zeros((2, self.Ny * params.Nex), device=self.t_device)
+        centers[0, :] = self.Nx / 2 + params.max_center_x * torch.ones(self.Ny * params.Nex, device=self.t_device)
+        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.randn(self.Ny * params.Nex, device=self.t_device)
 
         self.apply_motion(alpha, centers)
 
@@ -308,8 +312,11 @@ class MotionSimulator:
         # Each shot is its own motion state
         ky_per_mot_state_idx = self.ky_per_shot
 
-        self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-            build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        # self.sampling_idx = \
+        #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
+        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.t_device)  # ← for debugging only, ignore output
+        
+        self.TotalKspaceSamples = (self.ky_idx.numel() // self.params.Nex) * self.Nx
 
         self.navigator, alpha, centers = self.create_discrete_motion_curves(ky_per_mot_state_idx, params)
 

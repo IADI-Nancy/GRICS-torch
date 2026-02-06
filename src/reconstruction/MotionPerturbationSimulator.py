@@ -54,10 +54,13 @@ class MotionPerturbationSimulator:
 
         # ---- Loop over shots ----
         for motion_state in range(N_mot_states):
-            SamplingIndices = self.SamplingIndices[motion_state]    
+              
             MotionOp = self.motionOperator.get_sparse_operator(motion_state)
 
             for nex in range(self.Nex):
+                SamplingIndices = self.SamplingIndices[nex][motion_state]
+                if SamplingIndices.numel() == 0:
+                    continue
                 image_nex = self.image[nex]
                 # 1) Warp the image using the motion operator
                 WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
@@ -109,12 +112,14 @@ class MotionPerturbationSimulator:
 
         # --- Loop over shots -----------------------------------------------------
         for motion_state in range(N_mot_states):
-            SamplingIndices = self.SamplingIndices[motion_state]
+            
             MotionOp     = self.motionOperator.get_sparse_operator(motion_state)
-            if SamplingIndices.numel() == 0:
-                continue
+            
 
             for nex in range(self.Nex):
+                SamplingIndices = self.SamplingIndices[nex][motion_state]
+                if SamplingIndices.numel() == 0:
+                    continue
                 image_nex = self.image[nex]
                 # 1) Warp image with shot operator
                 WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)

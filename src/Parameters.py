@@ -16,7 +16,7 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 4
-    Nex = 1 # TODO : add multiple excitations support
+    Nex = 2 # TODO : add multiple excitations support
     kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
 
     # Motion simulation parameters

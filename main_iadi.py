@@ -55,7 +55,7 @@ kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted.squeeze(0), 'img_corrupted')
 params = data.params
 
-jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.TotalKspaceSamples, data.sampling_idx, data.nex_offset, params)
+jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.sampling_idx, params)
 start = time.time()
 jointReconstructor.run()
 end = time.time()

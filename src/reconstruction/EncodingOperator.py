@@ -28,10 +28,11 @@ class EncodingOperator:
 
         # ---- Loop over shots ----
         for motion_state in range(N_mot_states):
-            SamplingIndices = self.SamplingIndices[motion_state]
+            
             MotionOp = self.motionOperator.get_sparse_operator(motion_state)
 
             for nex in range(self.Nex):
+                SamplingIndices = self.SamplingIndices[nex][motion_state]
                 image_nex = image[nex]
                 # Apply motion operator -> reshape to image
                 WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
@@ -59,10 +60,10 @@ class EncodingOperator:
         Image = torch.zeros((self.Nex, Nx, Ny), dtype=torch.complex64, device=device)
 
         for motion_state in range(N_mot_states):
-            SamplingIndices = self.SamplingIndices[motion_state]
-            if SamplingIndices.numel() == 0:
-                continue
             for nex in range(self.Nex):
+                SamplingIndices = self.SamplingIndices[nex][motion_state]
+                if SamplingIndices.numel() == 0:
+                    continue
                 WarpedImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=device)
                 
                 for coil in range(Ncoils):

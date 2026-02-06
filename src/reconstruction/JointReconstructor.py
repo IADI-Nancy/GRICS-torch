@@ -18,7 +18,7 @@ def show_slice_and_save(image, image_name):
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, Nsamples, SamplingIndices, KspaceOffset, params):
+    def __init__(self, KspaceData, smaps, SamplingIndices, params):
         Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
@@ -33,9 +33,11 @@ class JointReconstructor:
         self.Data_full["Ny"] = Ny_full
         self.Data_full["SensitivityMaps"] = smaps
         self.Data_full["KspaceData"] = KspaceData
-        self.Data_full["Nsamples"] = Nsamples
+        self.Data_full["Nsamples"] = sum(
+            SamplingIndices[0][ms].numel()
+            for ms in range(len(SamplingIndices[0]))
+        )
         self.Data_full["SamplingIndices"] = SamplingIndices
-        self.Data_full["KspaceOffset"] = KspaceOffset
 
     def resize_img_2D(self, img, new_size):
         """
@@ -85,22 +87,24 @@ class JointReconstructor:
 
         Sampling_res = []
 
-        for indices in Sampling_full:
-            # compute x,y coordinates
-            x = indices // Ny_full
-            y = indices % Ny_full
+        for nex in range(self.params.Nex):
+            Sampling_res.append([])
+            for indices in Sampling_full[nex]:
+                # compute x,y coordinates
+                x = indices // Ny_full
+                y = indices % Ny_full
 
-            # mask inside central region
-            mask = (x >= x0) & (x < x0 + Nx_res) & (y >= y0) & (y < y0 + Ny_res)
+                # mask inside central region
+                mask = (x >= x0) & (x < x0 + Nx_res) & (y >= y0) & (y < y0 + Ny_res)
 
-            # keep only those indices
-            x_crop = x[mask] - x0
-            y_crop = y[mask] - y0
+                # keep only those indices
+                x_crop = x[mask] - x0
+                y_crop = y[mask] - y0
 
-            # re-flatten for Nx_res × Ny_res grid
-            new_inds = x_crop * Ny_res + y_crop
+                # re-flatten for Nx_res × Ny_res grid
+                new_inds = x_crop * Ny_res + y_crop
 
-            Sampling_res.append(new_inds)
+                Sampling_res[nex].append(new_inds)
 
         return Sampling_res
 
@@ -118,7 +122,7 @@ class JointReconstructor:
         mask[x0:x0+Nx_res, y0:y0+Ny_res] = True
         # kspace_reshaped = kspace_full.reshape(Nex, Nx_full, Ny_full, -1)
         # kspace_res = kspace_reshaped[:, mask, :].reshape(-1, kspace_full.shape[-1])
-        kspace_res = kspace_full[:, :, mask, :].reshape(kspace_full.shape[0], -1)
+        kspace_res = kspace_full[:, :, mask, :].reshape(kspace_full.shape[0], kspace_full.shape[1], -1)
 
         return kspace_res   
 
@@ -136,10 +140,7 @@ class JointReconstructor:
         Data_res["SensitivityMaps"] = self.resize_img_2D(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
         Data_res["SamplingIndices"] = self.downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny)
         Data_res["KspaceData"] = self.downsample_kspace(Nx, Ny)
-        Data_res["KspaceOffset"] = []
-        for shot in range(len(Data_res["SamplingIndices"])):
-            Data_res["KspaceOffset"].append(int(self.Data_full["KspaceOffset"][shot]/self.Data_full["Nx"]/self.Data_full["Ny"] * (Nx*Ny)))
-        Data_res["Nsamples"] = Data_res["KspaceData"].shape[1]
+        Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
         return Data_res
     
