@@ -17,10 +17,10 @@ where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, KspaceOffset, image, motionOperator):
+    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator):
         self.device = smaps.device
         self.SensitivityMaps = smaps
-        self.KspaceOffset = KspaceOffset
+        self.Nex = Nex
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
@@ -29,7 +29,7 @@ class MotionPerturbationSimulator:
         
 
     def set_image(self, image):
-        self.image = image
+        self.image = image.reshape(self.Nex, self.SensitivityMaps.shape[1], self.SensitivityMaps.shape[2])
 
     def gradient_2d(self, img):
         gx = torch.zeros_like(img)
@@ -42,48 +42,48 @@ class MotionPerturbationSimulator:
 
     def forward(self, MotionModelPerturbation):
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        Nshots = len(self.SamplingIndices)
+        N_mot_states = len(self.SamplingIndices)
 
         # reshape 3×Nshots perturbation vector
         # MotionModelPerturbation: shape [3*Nshots]
-        MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nshots)
-
+        MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_mot_states)
         # output k-space residual
-        ResidualKspace = torch.zeros((Ncoils, self.Nsamples),
+        ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
                                      dtype=torch.complex64,
                                      device=self.device)
 
         # ---- Loop over shots ----
-        for shot in range(Nshots):
-            SamplingIndices = self.SamplingIndices[shot]    
-            KspaceOffset = self.KspaceOffset[shot]
-            MotionOp = self.motionOperator.get_sparse_operator(shot)
+        for motion_state in range(N_mot_states):
+            SamplingIndices = self.SamplingIndices[motion_state]    
+            MotionOp = self.motionOperator.get_sparse_operator(motion_state)
 
-            # 1) Warp the image using the motion operator
-            WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
+            for nex in range(self.Nex):
+                image_nex = self.image[nex]
+                # 1) Warp the image using the motion operator
+                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
-            # 2) Spatial gradients ∂I/∂x, ∂I/∂y
-            Gx, Gy = self.gradient_2d(WarpedImage)
+                # 2) Spatial gradients ∂I/∂x, ∂I/∂y
+                Gx, Gy = self.gradient_2d(WarpedImage)
 
-            # 3) motion model and displacement field perturbations
-            dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, shot], shot)
+                # 3) motion model and displacement field perturbations
+                dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, motion_state], motion_state)
 
-            # 4) optical-flow first-order perturbation
-            WarpedImageError = Gx * dux + Gy * duy
+                # 4) optical-flow first-order perturbation
+                WarpedImageError = Gx * dux + Gy * duy
 
-            # 5) Loop over coils
-            for coil in range(Ncoils):
-                # apply coil sensitivities
-                WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil].squeeze()
+                # 5) Loop over coils
+                for coil in range(Ncoils):
+                    # apply coil sensitivities
+                    WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil].squeeze()
 
-                # FFT
-                ImFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
+                    # FFT
+                    ImFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
 
-                # Sampling operator: extract measured samples
-                sampled = ImFT.flatten()[SamplingIndices]
+                    # Sampling operator: extract measured samples
+                    sampled = ImFT.flatten()[SamplingIndices]
 
-                # store in global vector
-                ResidualKspace[coil, KspaceOffset + SamplingIndices] = sampled
+                    # store in global vector
+                    ResidualKspace[coil, nex, SamplingIndices] = sampled
 
         return ResidualKspace.flatten()
     
@@ -98,54 +98,55 @@ class MotionPerturbationSimulator:
         """
 
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        Nshots = len(self.SamplingIndices)
+        N_mot_states = len(self.SamplingIndices)
 
-        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nsamples)
+        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
 
         # output: 2 × Nshots (dux and duy)
-        MotionModelPerturbation = torch.zeros((self.Nalpha, Nshots),
+        MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
                                         dtype=torch.float32,
                                         device=self.device)
 
         # --- Loop over shots -----------------------------------------------------
-        for shot in range(Nshots):
-            SamplingIndices = self.SamplingIndices[shot]
-            KspaceOffset  = self.KspaceOffset[shot]
-            MotionOp     = self.motionOperator.get_sparse_operator(shot)
+        for motion_state in range(N_mot_states):
+            SamplingIndices = self.SamplingIndices[motion_state]
+            MotionOp     = self.motionOperator.get_sparse_operator(motion_state)
             if SamplingIndices.numel() == 0:
                 continue
 
-            # 1) Warp image with shot operator
-            WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
+            for nex in range(self.Nex):
+                image_nex = self.image[nex]
+                # 1) Warp image with shot operator
+                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
-            # 2) Gradients of warped image
-            Gx, Gy = self.gradient_2d(WarpedImage)
+                # 2) Gradients of warped image
+                Gx, Gy = self.gradient_2d(WarpedImage)
 
-            # 3) Allocate adjoint image accumulator (summed over coils)
-            ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=self.device)
+                # 3) Allocate adjoint image accumulator (summed over coils)
+                ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=self.device)
 
-            # --- Coil loop --------------------------------------------------------
-            for coil in range(Ncoils):
+                # --- Coil loop --------------------------------------------------------
+                for coil in range(Ncoils):
 
-                # 4) Extract coil residual samples and place them back into k-space
-                FullKspaceDataCoil = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
+                    # 4) Extract coil residual samples and place them back into k-space
+                    FullKspaceDataCoil = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
 
-                FullKspaceDataCoil[SamplingIndices] = ResidualKspace[coil, KspaceOffset + SamplingIndices]
+                    FullKspaceDataCoil[SamplingIndices] = ResidualKspace[coil, nex, SamplingIndices]
 
-                FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
+                    FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
 
-                # 5) Inverse FFT to go back to image domain
-                ImageSeenByCoil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
+                    # 5) Inverse FFT to go back to image domain
+                    ImageSeenByCoil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
 
-                # 6) Apply coil sensitivity adjoint (complex conjugate)
-                ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
+                    # 6) Apply coil sensitivity adjoint (complex conjugate)
+                    ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
 
-            # 7) Inner products with Gx and Gy → scalar dux, duy contributions
-            du_x = (ResidualImage * Gx.conj())
-            du_y = (ResidualImage * Gy.conj())
+                # 7) Inner products with Gx and Gy → scalar dux, duy contributions
+                du_x = (ResidualImage * Gx.conj())
+                du_y = (ResidualImage * Gy.conj())
 
-            # Apply the adjoint Jacobian
-            MotionModelPerturbation[:, shot] = self.motionOperator.apply_JH(du_x, du_y, shot)
+                # Apply the adjoint Jacobian
+                MotionModelPerturbation[:, motion_state] = self.motionOperator.apply_JH(du_x, du_y, motion_state)
             
         return MotionModelPerturbation.flatten()
     

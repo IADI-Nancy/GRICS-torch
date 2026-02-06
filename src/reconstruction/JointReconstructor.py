@@ -1,11 +1,12 @@
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
-from src.utils.Helpers import resize_img_2D
+# from src.utils.Helpers import resize_img_2D
 from src.utils.show_slice import show_slice
 
 def show_slice_and_save(image, image_name):
@@ -35,6 +36,44 @@ class JointReconstructor:
         self.Data_full["Nsamples"] = Nsamples
         self.Data_full["SamplingIndices"] = SamplingIndices
         self.Data_full["KspaceOffset"] = KspaceOffset
+
+    def resize_img_2D(self, img, new_size):
+        """
+        Bilinear resize for complex or real images.
+        Supports:
+            - img: [H, W] (real or complex)
+            - img: [C, H, W] (real or complex)
+        """
+        is_complex = img.is_complex()
+
+        # ---------- Helper: interpolate real/imag ----------
+        def interp_part(x):
+            """Interpolate real-valued tensor of shape [H,W] or [C,H,W]."""
+            if x.ndim == 2:
+                x = x.unsqueeze(0).unsqueeze(0)   # [1,1,H,W]
+                out = F.interpolate(x, size=new_size, mode="bilinear", align_corners=False)
+                return out[0, 0]
+
+            elif x.ndim == 3:
+                C = x.shape[0]
+                out_list = []
+                for c in range(C):
+                    xc = x[c].unsqueeze(0).unsqueeze(0)
+                    rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
+                    out_list.append(rc[0, 0])
+                return torch.stack(out_list, dim=0)
+
+            else:
+                raise ValueError(f"Unexpected shape {x.shape}")
+
+        # ---------- Real tensor case ----------
+        if not is_complex:
+            return interp_part(img)
+
+        # ---------- Complex case ----------
+        real = interp_part(img.real)
+        imag = interp_part(img.imag)
+        return torch.complex(real, imag)
         
 
     def downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res):
@@ -94,7 +133,7 @@ class JointReconstructor:
         Data_res["Nx"] = Nx
         Data_res["Ny"] = Ny
         
-        Data_res["SensitivityMaps"] = resize_img_2D(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
+        Data_res["SensitivityMaps"] = self.resize_img_2D(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
         Data_res["SamplingIndices"] = self.downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny)
         Data_res["KspaceData"] = self.downsample_kspace(Nx, Ny)
         Data_res["KspaceOffset"] = []
@@ -106,7 +145,7 @@ class JointReconstructor:
     
     def upsample_data(self, Data_prev, Data_res):
         img_prev = Data_prev["ReconstructedImage"]
-        img_res = resize_img_2D(img_prev, (Data_res["Nx"], Data_res["Ny"]))
+        img_res = self.resize_img_2D(img_prev, (Data_res["Nx"], Data_res["Ny"]))
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]
@@ -130,7 +169,7 @@ class JointReconstructor:
             Data_res["SensitivityMaps"],
             Data_res["Nsamples"],
             Data_res["SamplingIndices"],
-            Data_res["KspaceOffset"],
+            self.params.Nex,
             Data_res["MotionOperator"]
         )
         return E
@@ -140,7 +179,7 @@ class JointReconstructor:
             Data_res["SensitivityMaps"],
             Data_res["Nsamples"],
             Data_res["SamplingIndices"],
-            Data_res["KspaceOffset"],
+            self.params.Nex,
             Data_res["ReconstructedImage"],
             Data_res["MotionOperator"]
         )
@@ -150,7 +189,7 @@ class JointReconstructor:
     # Solve linear system for image
     # ----------------------------------------------------------------------
     def solve_image(self, Data_res):
-        x0 = Data_res["ReconstructedImage"].flatten()
+        x0 = Data_res["ReconstructedImage"]
         x0 = x0.to(self.device)
         E = Data_res["E"]
 
@@ -159,12 +198,12 @@ class JointReconstructor:
 
         img_vec = solver.solve_cg(
             b.flatten(),
-            x0=x0,
+            x0=x0.flatten(),
             max_iter=self.params.max_iter_recon,
             tol=self.params.tol_recon,
         )
 
-        img = img_vec.reshape(Data_res["Nx"], Data_res["Ny"])
+        img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
 
     # # ----------------------------------------------------------------------
@@ -179,7 +218,7 @@ class JointReconstructor:
 
         mot_pert_vec = solver.solve_cg_keep_best(
             b.flatten(),
-            x0=x0,
+            x0=x0.flatten(),
             max_iter=self.params.max_iter_motion,
             tol=self.params.tol_motion,
         )
@@ -203,7 +242,7 @@ class JointReconstructor:
 
             # Initialize image and motion model
             if idx_res == 0:
-                Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
+                Data_res["ReconstructedImage"] = torch.zeros((self.params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
                 Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
             else:
                 self.upsample_data(Data_prev, Data_res)
@@ -239,6 +278,6 @@ class JointReconstructor:
 
                 Data_prev = Data_res
 
-            show_slice_and_save(Data_res["ReconstructedImage"].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
+            show_slice_and_save(Data_res["ReconstructedImage"].squeeze(0).unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]
