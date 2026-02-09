@@ -16,18 +16,18 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 4
-    Nex = 2 # TODO : add multiple excitations support
+    Nex = 1 # TODO : add multiple excitations support
     kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
-    simulation_type = 'rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
+    simulation_type = 'discrete-rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
     num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_phi = 10.0  # maximum rotation (degrees)
     max_center_x = 60.0  # maximum variation in center x (pixels)
     max_center_y = 10.0  # maximum variation in center y (pixels)
-    seed = 3
+    seed = 1
     motion_tau = 2  # transition width of motion events (in ky lines)
 
     # Espirits sensitivity map calculation parameters
@@ -52,4 +52,9 @@ class Parameters:
         if self.debug_flag and not os.path.exists(self.debug_folder):
             os.makedirs(self.debug_folder)
         self.Nshots = self.NshotsPerNex * self.Nex
-        self.N_mot_states = self.num_motion_events + 1
+        if self.simulation_type == 'discrete-rigid':
+            self.N_mot_states = self.Nshots  # each shot is a separate motion state
+        elif self.simulation_type in ['rigid', 'non-rigid', 'as-it-is']:
+            self.N_mot_states = self.num_motion_events + 1
+        elif self.simulation_type in ['no-motion']:
+            self.N_mot_states = 1

@@ -59,20 +59,22 @@ class EncodingOperator:
         KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples)
         Image = torch.zeros((self.Nex, Nx, Ny), dtype=torch.complex64, device=device)
 
-        for motion_state in range(N_mot_states):
-            for nex in range(self.Nex):
+        
+        for nex in range(self.Nex):
+
+            for motion_state in range(N_mot_states):
+                WarpedImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=device)
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                WarpedImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=device)
                 
                 for coil in range(Ncoils):
                     # Sampling operator
-                    FullKspaceDataCoil = torch.zeros(Nx*Ny, dtype=KspaceData.dtype, device=self.device)
-                    FullKspaceDataCoil[SamplingIndices] = KspaceData[coil, nex, SamplingIndices]
-                    FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
+                    KspaceDataCoilNex = torch.zeros(Nx*Ny, dtype=KspaceData.dtype, device=self.device)
+                    KspaceDataCoilNex[SamplingIndices] = KspaceData[coil, nex, SamplingIndices]
+                    KspaceDataCoilNex = KspaceDataCoilNex.reshape(Nx, Ny)
                     # Adjoint FFT: fftshift → ifft2 → ifftshift
-                    image_coil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
+                    image_coil = ifftnc(KspaceDataCoilNex, dims=(0, 1))
 
                     # Adjoint coil sensitivity: multiply by conj(smap)
                     smap = self.smaps[coil].squeeze()

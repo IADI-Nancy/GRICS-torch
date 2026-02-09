@@ -122,7 +122,7 @@ class MotionSimulator:
         #     )
         self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
         
-        self.TotalKspaceSamples = (self.ky_idx.numel() // self.params.Nex) * self.Nx
+        self.TotalKspaceSamples = self.Nx * self.Ny
 
         # Expand zero motion to ky (chronological)
         self.tx        = torch.zeros(self.Ny, device=self.t_device)
@@ -237,30 +237,35 @@ class MotionSimulator:
         """
 
         # Total number of ky lines
-        Ny_total = sum(ky.numel() for ky in ky_per_mot_state_idx)
-
-        assert Ny_total == self.Ny, "Total ky count does not match Ny"
+        # Ny_total = sum(ky.numel() for ky in ky_per_mot_state_idx)
+        Ny_total = 0
+        for ky_list in ky_per_mot_state_idx:
+            for ky in ky_list:
+                Ny_total += ky.numel()
 
         # Allocate
-        self.tx        = torch.empty(self.Ny, device=self.t_device)
-        self.ty        = torch.empty(self.Ny, device=self.t_device)
-        self.phi       = torch.empty(self.Ny, device=self.t_device)
-        self.navigator = torch.empty(self.Ny, device=self.t_device)
+        self.tx        = torch.empty(Ny_total, device=self.t_device)
+        self.ty        = torch.empty(Ny_total, device=self.t_device)
+        self.phi       = torch.empty(Ny_total, device=self.t_device)
+        self.navigator = torch.empty(Ny_total, device=self.t_device)
 
         ptr = 0  # write pointer (chronological)
 
-        for m, ky in enumerate(ky_per_mot_state_idx):
-            n = ky.numel()
+        m = 0  # motion state index
+        for ky_list in ky_per_mot_state_idx:      # loop over Nex
+            for ky in ky_list:                    # loop over shots
+                n = ky.numel()
 
-            self.tx[ptr:ptr+n]        = self.tx_mot_state[m]
-            self.ty[ptr:ptr+n]        = self.ty_mot_state[m]
-            self.phi[ptr:ptr+n]       = self.phi_mot_state[m]
-            self.navigator[ptr:ptr+n] = self.navigator_mot_state[m]
+                self.tx[ptr:ptr+n]        = self.tx_mot_state[m]
+                self.ty[ptr:ptr+n]        = self.ty_mot_state[m]
+                self.phi[ptr:ptr+n]       = self.phi_mot_state[m]
+                self.navigator[ptr:ptr+n] = self.navigator_mot_state[m]
 
-            ptr += n
+                ptr += n
+                m += 1
 
     def create_discrete_motion_curves(self, ky_per_mot_state_idx, params):
-        Nshots = params.N_mot_states
+        Nshots = params.Nshots
 
         alpha = torch.zeros((3, Nshots), device=self.t_device)
 
@@ -314,9 +319,9 @@ class MotionSimulator:
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)  # ← for debugging only, ignore output
+        self.sampling_idx = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device) # ← for debugging only, ignore output
         
-        self.TotalKspaceSamples = (self.ky_idx.numel() // self.params.Nex) * self.Nx
+        self.TotalKspaceSamples = self.Ny * self.Nx
 
         self.navigator, alpha, centers = self.create_discrete_motion_curves(ky_per_mot_state_idx, params)
 

@@ -51,7 +51,6 @@ class DataLoader:
             if params.simulation_type == 'no-motion':
                 motionSimulator.simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth.clone()
-                params.N_mot_states = 1
             else:      
                 if params.simulation_type == 'discrete-rigid':
                     motionSimulator.simulate_discrete_rigid_motion()

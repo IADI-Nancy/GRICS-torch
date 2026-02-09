@@ -11,16 +11,17 @@ class SamplingSimulator:
         Nshots = params.NshotsPerNex
         Nex    = params.Nex
 
-        
-        ky_per_shot  = []   # motion-state / shot-wise ky
-        ky_idx       = []   # motion-state / shot-wise flattened ky indices
-        nex_idx      = []   # motion-state / shot-wise flattened nex indices
+        # ky_per_shot[nex][shot]
+        ky_per_shot = [[] for _ in range(Nex)]
 
-        for nex in range(params.Nex):
-            ky_list      = []   # chronological chunks
-            nex_list     = []
+        ky_idx  = []   # motion-state / shot-wise flattened ky indices
+        nex_idx = []   # motion-state / shot-wise flattened nex indices
+
+        for nex in range(Nex):
+            ky_list  = []   # chronological chunks (per Nex)
+            nex_list = []
+
             for shot in range(Nshots):
-                # TODO: multi-Nex support later
                 shot_in_nex = shot
 
                 # ----- ky selection -----
@@ -42,10 +43,10 @@ class SamplingSimulator:
                 else:
                     raise ValueError("Unknown kspace_sampling_type")
 
-                # shot-wise storage (motion state)
-                ky_per_shot.append(ky)
+                # ---- shot-wise storage (nested by Nex) ----
+                ky_per_shot[nex].append(ky)
 
-                # chronological storage
+                # ---- chronological storage ----
                 ky_list.append(ky)
                 nex_list.append(
                     torch.full_like(ky, nex, dtype=torch.int32)
@@ -55,4 +56,5 @@ class SamplingSimulator:
             nex_idx.append(torch.cat(nex_list, dim=0))
 
         return ky_idx, nex_idx, ky_per_shot
+
     

@@ -110,12 +110,10 @@ class MotionPerturbationSimulator:
                                         dtype=torch.float32,
                                         device=self.device)
 
-        # --- Loop over shots -----------------------------------------------------
         for motion_state in range(N_mot_states):
             
             MotionOp     = self.motionOperator.get_sparse_operator(motion_state)
             
-
             for nex in range(self.Nex):
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
@@ -134,14 +132,13 @@ class MotionPerturbationSimulator:
                 for coil in range(Ncoils):
 
                     # 4) Extract coil residual samples and place them back into k-space
-                    FullKspaceDataCoil = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
+                    KspaceDataCoilNex = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
 
-                    FullKspaceDataCoil[SamplingIndices] = ResidualKspace[coil, nex, SamplingIndices]
+                    KspaceDataCoilNex[SamplingIndices] = ResidualKspace[coil, nex, SamplingIndices]
 
-                    FullKspaceDataCoil = FullKspaceDataCoil.reshape(Nx, Ny)
-
+                    KspaceDataCoilNex = KspaceDataCoilNex.reshape(Nx, Ny)
                     # 5) Inverse FFT to go back to image domain
-                    ImageSeenByCoil = ifftnc(FullKspaceDataCoil, dims=(0, 1))
+                    ImageSeenByCoil = ifftnc(KspaceDataCoilNex, dims=(0, 1))
 
                     # 6) Apply coil sensitivity adjoint (complex conjugate)
                     ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
