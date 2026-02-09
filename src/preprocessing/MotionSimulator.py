@@ -120,7 +120,7 @@ class MotionSimulator:
         #         self.Ny,
         #         self.t_device
         #     )
-        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.t_device)
+        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
         
         self.TotalKspaceSamples = (self.ky_idx.numel() // self.params.Nex) * self.Nx
 
@@ -208,7 +208,7 @@ class MotionSimulator:
         ]
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.t_device)
+        self.sampling_idx = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
 
         self.TotalKspaceSamples = self.Ny * self.Nx
         # generate motion curves and parameters
@@ -314,7 +314,7 @@ class MotionSimulator:
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.t_device)  # ← for debugging only, ignore output
+        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)  # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = (self.ky_idx.numel() // self.params.Nex) * self.Nx
 

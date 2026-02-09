@@ -43,7 +43,7 @@ def from_grics_to_espirit_dims(data):
 #     return sampling_idx
 def build_sampling_per_nex_per_motion(
     binned_ky_indices,  # [Nex][Nmotion]
-    Nx,
+    Nx, Ny,
     device,
 ):
     Nex = len(binned_ky_indices)
@@ -68,8 +68,8 @@ def build_sampling_per_nex_per_motion(
 
             # Build flattened (kx, ky) sampling
             samp = (
-                kx[:, None]
-                + Nx * ky[None, :]
+                ky[:, None]
+                + Ny * kx[None, :]
             ).reshape(-1)
 
             Sampling[nex][ms] = samp

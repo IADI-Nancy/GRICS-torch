@@ -67,7 +67,7 @@ class DataLoader:
         
         self.sampling_idx = build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
-            self.Nx,
+            self.Nx, self.Ny,
             self.t_device
         )
         # TODO include multiple Nex support
