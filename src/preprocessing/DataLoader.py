@@ -65,10 +65,6 @@ class DataLoader:
             navigator, tx, ty, phi = motionSimulator.get_motion_information()
             self.binned_indices = self.bin_motion_rigid(navigator)
         
-        # if len(self.kspace.shape) == 4: # add Nex dimension if missing
-        #     self.kspace = self.kspace.unsqueeze(0)
-        # self.sampling_idx, self.nex_offset, self.TotalKspaceSamples = \
-        #     build_sampling_from_motion_states(self.binned_indices, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
         self.sampling_idx = build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
             self.Nx,

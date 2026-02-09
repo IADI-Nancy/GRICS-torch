@@ -279,6 +279,6 @@ class JointReconstructor:
 
                 Data_prev = Data_res
 
-            show_slice_and_save(Data_res["ReconstructedImage"].squeeze(0).unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
+            show_slice_and_save(Data_res["ReconstructedImage"][0].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]

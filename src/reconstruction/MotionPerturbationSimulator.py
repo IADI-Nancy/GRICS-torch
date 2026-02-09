@@ -42,7 +42,7 @@ class MotionPerturbationSimulator:
 
     def forward(self, MotionModelPerturbation):
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        N_mot_states = len(self.SamplingIndices)
+        N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
 
         # reshape 3×Nshots perturbation vector
         # MotionModelPerturbation: shape [3*Nshots]
@@ -101,7 +101,7 @@ class MotionPerturbationSimulator:
         """
 
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        N_mot_states = len(self.SamplingIndices)
+        N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
 
         ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
 
