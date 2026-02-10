@@ -1,13 +1,14 @@
 import torch
+from Parameters import Parameters
+params = Parameters()
 
 class SamplingSimulator:
-    def __init__(self, params, Ny, t_device='cpu'):
+    def __init__(self, Ny, t_device='cpu'):
         self.params = params
         self.Ny = Ny
         self.t_device = t_device
 
     def build_ky_and_nex(self):
-        params = self.params
         Nshots = params.NshotsPerNex
         Nex    = params.Nex
 

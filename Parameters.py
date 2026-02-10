@@ -3,6 +3,7 @@ import os
 class Parameters:
     debug_flag = True
     debug_folder = "debug_outputs/"
+    debug_convergence_folder = "debug_outputs/convergence/"
 
     # Data loading/generation parameters
     data_type = 'fastMRI'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
@@ -58,3 +59,7 @@ class Parameters:
             self.N_mot_states = self.num_motion_events + 1
         elif self.simulation_type in ['no-motion']:
             self.N_mot_states = 1
+
+        
+        os.makedirs("debug_outputs", exist_ok=True)
+        os.makedirs("debug_outputs/convergence", exist_ok=True)

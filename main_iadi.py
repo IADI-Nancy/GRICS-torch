@@ -3,8 +3,8 @@ import sigpy as sp
 import matplotlib.pyplot as plt
 import time
 
+from Parameters import Parameters
 from src.preprocessing.DataLoader import DataLoader
-from src.Parameters import Parameters
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.JointReconstructor import JointReconstructor
@@ -47,14 +47,14 @@ if params.debug_flag:
         torch.cuda.manual_seed(params.seed)
         torch.cuda.manual_seed_all(params.seed)
 
-data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
+data = DataLoader(t_device=t_device, sp_device=sp_device)
 image_ground_truth = data.image_ground_truth.clone()
 show_slice_and_save(image_ground_truth[0], 'img_ground_truth')
 image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_slice_and_save(image_corrupted[0], 'img_corrupted')
 
-jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.sampling_idx, params)
+jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.sampling_idx)
 start = time.time()
 jointReconstructor.run()
 end = time.time()

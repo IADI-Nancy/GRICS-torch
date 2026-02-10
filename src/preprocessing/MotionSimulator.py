@@ -1,14 +1,17 @@
 import numpy as np
 import torch
+
+from Parameters import Parameters
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 import matplotlib.pyplot as plt
 from src.utils.Helpers import build_sampling_per_nex_per_motion #build_sampling_from_motion_states
 
+params = Parameters()
 
 class MotionSimulator:
-    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_shot, params, sp_device=None, t_device=None):
+    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_shot, sp_device=None, t_device=None):
         self.image = image
         self.smaps = smaps
         self.ky_idx = ky_idx
@@ -17,9 +20,7 @@ class MotionSimulator:
         self.sp_device = sp_device
         self.t_device = t_device
         self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  
-        self.params = params 
 
-    # def create_motion_curves(self, params):
     def get_simulated_sampling(self):
         return self.ky_idx, self.nex_idx, self.TotalKspaceSamples
     
@@ -81,7 +82,6 @@ class MotionSimulator:
         plt.close()
 
     def apply_motion(self, alpha, centers):
-        params = self.params
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, centers)
 
         E = EncodingOperator(
@@ -95,7 +95,7 @@ class MotionSimulator:
         self.kspace = kspace_corruped.reshape(self.Ncha, params.Nex, self.Nx, self.Ny, self.Nsli)
 
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
-        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
+        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, params.Nex, -1, -1, -1), dim=0)
 
     # -------------------------------------------------------
     #------------------ Simulate zero motion ----------------
@@ -110,16 +110,6 @@ class MotionSimulator:
         # Use shot-wise sampling (same as discrete motion)
         ky_per_mot_state_idx = self.ky_idx.unsqueeze(0)
 
-        # Build sampling
-        # self.sampling_idx = \
-        #     build_sampling_from_motion_states(
-        #         ky_per_mot_state_idx,
-        #         self.ky_idx,
-        #         self.nex_idx,
-        #         self.Nx,
-        #         self.Ny,
-        #         self.t_device
-        #     )
         self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
         
         self.TotalKspaceSamples = self.Nx * self.Ny
@@ -135,7 +125,7 @@ class MotionSimulator:
     #---------- Realistic motion curves generation ----------
     # -------------------------------------------------------
     
-    def create_realistic_motion_curves(self, params):
+    def create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float32)
 
@@ -201,7 +191,6 @@ class MotionSimulator:
         return navigator, tx, ty, phi
 
     def simulate_realistic_rigid_motion(self):
-        params = self.params
         # Each kspace line is its own motion state
         ky_per_mot_state_idx = [
             ky_line.unsqueeze(-1) for ky_line in self.ky_idx
@@ -212,7 +201,7 @@ class MotionSimulator:
 
         self.TotalKspaceSamples = self.Ny * self.Nx
         # generate motion curves and parameters
-        self.navigator, self.tx, self.ty, self.phi = self.create_realistic_motion_curves(params)
+        self.navigator, self.tx, self.ty, self.phi = self.create_realistic_motion_curves()
 
         # Apply simulated motion
         alpha = torch.zeros(3, self.Ny * params.Nex, device=self.t_device)
@@ -264,7 +253,7 @@ class MotionSimulator:
                 ptr += n
                 m += 1
 
-    def create_discrete_motion_curves(self, ky_per_mot_state_idx, params):
+    def create_discrete_motion_curves(self, ky_per_mot_state_idx):
         Nshots = params.Nshots
 
         alpha = torch.zeros((3, Nshots), device=self.t_device)
@@ -313,7 +302,6 @@ class MotionSimulator:
         return self.navigator, alpha, centers
 
     def simulate_discrete_rigid_motion(self):
-        params = self.params
         # Each shot is its own motion state
         ky_per_mot_state_idx = self.ky_per_shot
 
@@ -323,7 +311,7 @@ class MotionSimulator:
         
         self.TotalKspaceSamples = self.Ny * self.Nx
 
-        self.navigator, alpha, centers = self.create_discrete_motion_curves(ky_per_mot_state_idx, params)
+        self.navigator, alpha, centers = self.create_discrete_motion_curves(ky_per_mot_state_idx)
 
         self.apply_motion(alpha, centers)
 

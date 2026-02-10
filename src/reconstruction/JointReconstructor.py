@@ -8,22 +8,54 @@ from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
 # from src.utils.Helpers import resize_img_2D
 from src.utils.show_slice import show_slice
+from Parameters import Parameters
+
+params = Parameters()
 
 def show_slice_and_save(image, image_name):
     show_slice(image, max_images=1, headline=image_name)
-    plt.savefig('debug_outputs/' + image_name + '.png')
+    plt.savefig(params.debug_folder + image_name + '.png')
+
+def log_motion_parameters(alpha, res_level, gn_iter):
+    """
+    alpha: [Nalpha, N_mot_states]
+    """
+    fname = f"{params.debug_convergence_folder}motion_params_res{res_level}.txt"
+    with open(fname, "a") as f:
+        f.write(f"\nGN iteration {gn_iter}\n")
+        f.write("alpha shape: {}\n".format(tuple(alpha.shape)))
+        for a in range(alpha.shape[0]):
+            vals = alpha[a].detach().cpu().numpy()
+            f.write(f"  alpha[{a}]: {vals}\n")
+
+def save_residual_convergence(residual_norms, title, res_level):
+    plt.figure()
+    plt.plot(residual_norms, marker="o")
+    plt.xlabel("GN iteration")
+    plt.ylabel("||residual||₂")
+    plt.title(f"Residual convergence ({title}, resolution level {res_level})")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f"{params.debug_convergence_folder}residual_convergence_{title}_res{res_level}.png")
+    plt.close()
+
+    # Optional: save raw values
+    with open(f"{params.debug_convergence_folder}residual_convergence_{title}_res{res_level}.txt", "w") as f:
+        for i, v in enumerate(residual_norms):
+            f.write(f"{i+1}\t{v}\n")
+
+
 
 # --------------------------------------------------------------------------
 # Class that performs joint image–motion reconstruction
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, SamplingIndices, params):
+    def __init__(self, KspaceData, smaps, SamplingIndices):
         Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
         self.Ncoils = Ncoils
-        self.params = params
         self.device = KspaceData.device
         self.Nalpha = 3  # number of motion parameters (t_x, t_y, phi)
 
@@ -87,7 +119,7 @@ class JointReconstructor:
 
         Sampling_res = []
 
-        for nex in range(self.params.Nex):
+        for nex in range(params.Nex):
             Sampling_res.append([])
             for indices in Sampling_full[nex]:
                 # compute x,y coordinates
@@ -111,7 +143,7 @@ class JointReconstructor:
     def downsample_kspace(self, Nx_res, Ny_res):
         Nx_full, Ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
         kspace_full = self.Data_full["KspaceData"]
-        Nex = self.params.Nex
+        Nex = params.Nex
 
         # central crop coordinates
         x0 = (Nx_full - Nx_res) // 2
@@ -150,7 +182,7 @@ class JointReconstructor:
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]
-        Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
+        Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
         Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
         Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
         Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
@@ -170,7 +202,7 @@ class JointReconstructor:
             Data_res["SensitivityMaps"],
             Data_res["Nsamples"],
             Data_res["SamplingIndices"],
-            self.params.Nex,
+            params.Nex,
             Data_res["MotionOperator"]
         )
         return E
@@ -180,7 +212,7 @@ class JointReconstructor:
             Data_res["SensitivityMaps"],
             Data_res["Nsamples"],
             Data_res["SamplingIndices"],
-            self.params.Nex,
+            params.Nex,
             Data_res["ReconstructedImage"],
             Data_res["MotionOperator"]
         )
@@ -195,36 +227,36 @@ class JointReconstructor:
         E = Data_res["E"]
 
         b = E.adjoint(Data_res["KspaceData"])
-        solver = ConjugateGradientSolver(E, reg_lambda=self.params.lambda_r, verbose=True)
+        solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=True)
 
         img_vec = solver.solve_cg(
             b.flatten(),
             x0=x0.flatten(),
-            max_iter=self.params.max_iter_recon,
-            tol=self.params.tol_recon,
+            max_iter=params.max_iter_recon,
+            tol=params.tol_recon,
         )
 
-        img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
+        img = img_vec.reshape(params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
 
     # # ----------------------------------------------------------------------
     # # Solve for motion model update
     # # ----------------------------------------------------------------------
     def solve_motion(self, Data_res, residual):
-        x0 = torch.zeros(self.Nalpha * self.params.N_mot_states, dtype=torch.float32, device=residual.device)
+        x0 = torch.zeros(self.Nalpha * params.N_mot_states, dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b = J.adjoint(residual)
         
-        solver = ConjugateGradientSolver(J, reg_lambda=self.params.lambda_m, verbose=True)
+        solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=True)
 
         mot_pert_vec = solver.solve_cg_keep_best(
             b.flatten(),
             x0=x0.flatten(),
-            max_iter=self.params.max_iter_motion,
-            tol=self.params.tol_motion,
+            max_iter=params.max_iter_motion,
+            tol=params.tol_motion,
         )
 
-        motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_mot_states)
+        motion_perturb = mot_pert_vec.reshape(self.Nalpha, params.N_mot_states)
         return motion_perturb
 
 
@@ -232,8 +264,8 @@ class JointReconstructor:
     # Perform full multi-resolution Gauss–Newton joint reconstruction
     # ----------------------------------------------------------------------
     def run(self):
-        ResLevels = self.params.ResolutionLevels
-        GN_iter = self.params.GN_iterations_per_level
+        ResLevels = params.ResolutionLevels
+        GN_iter = params.GN_iterations_per_level
 
         for idx_res, r in enumerate(ResLevels):
             print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
@@ -243,10 +275,13 @@ class JointReconstructor:
 
             # Initialize image and motion model
             if idx_res == 0:
-                Data_res["ReconstructedImage"] = torch.zeros((self.params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
+                Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
             else:
                 self.upsample_data(Data_prev, Data_res)
+
+            residual_recon_norms = []
+            residual_motion_norms = []
 
             # Gauss–Newton iterations
             for it in range(GN_iter):
@@ -268,6 +303,11 @@ class JointReconstructor:
                 x = img.flatten()
                 y = Data_res["E"].forward(x)
                 residual = Data_res["KspaceData"].flatten() - y
+                res_norm = torch.linalg.norm(residual).item()
+                residual_recon_norms.append(res_norm)
+
+                print(f"    Residual norm: {res_norm:.4e}")
+
 
                 # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
                 Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
@@ -277,8 +317,20 @@ class JointReconstructor:
                 dm = self.solve_motion(Data_res, residual)
                 Data_res["MotionModel"] += dm
 
+                dm_norm = torch.linalg.norm(dm.flatten()).item()
+                residual_motion_norms.append(dm_norm)
+                print(f"    Motion update norm: {dm_norm:.4e}")
+
+                log_motion_parameters(
+                    Data_res["MotionModel"],
+                    res_level=idx_res + 1,
+                    gn_iter=it + 1
+                )
+
                 Data_prev = Data_res
 
             show_slice_and_save(Data_res["ReconstructedImage"][0].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
+            save_residual_convergence(residual_recon_norms, 'recon', idx_res + 1)
+            save_residual_convergence(residual_motion_norms, 'motion', idx_res + 1)
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]

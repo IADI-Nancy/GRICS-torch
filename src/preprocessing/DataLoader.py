@@ -6,6 +6,7 @@ from skimage.transform import resize
 import math
 from matplotlib.colors import Normalize
 
+from Parameters import Parameters
 from src.preprocessing.RawDataReader import RawDataReader
 from src.utils.espiritmaps import calc_espirit_maps
 from src.reconstruction.EncodingOperator import EncodingOperator
@@ -15,17 +16,18 @@ from src.utils.Helpers import kmeans_torch, build_sampling_per_nex_per_motion #b
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 
+params = Parameters()
+
 
 class DataLoader:
-    def __init__(self, params, sp_device=None, t_device=None):
+    def __init__(self, sp_device=None, t_device=None):
         self.sp_device = sp_device
         self.t_device = t_device
-        self.params = params
         
         if params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=params.N_SheppLogan, Ncoils=params.Ncoils_SheppLogan, Nz=params.Nz_SheppLogan, random_phase=True)
         elif params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
-            self.load_fastMRI_data(params.path_to_fastMRI_data, params)
+            self.load_fastMRI_data(params.path_to_fastMRI_data)
         elif params.data_type == 'real-world': # Real-world data with acquisition order and motion data
             self.load_realworld_data(params.path_to_realworld_data, slice_idx=16)
         elif params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
@@ -40,7 +42,7 @@ class DataLoader:
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
 
         motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
-                                            params, sp_device=self.sp_device, t_device=self.t_device)
+                                            sp_device=self.sp_device, t_device=self.t_device)
         
         if params.simulation_type == 'as-it-is':
             if params.data_type in ['real-world', 'raw-data']:
@@ -73,12 +75,12 @@ class DataLoader:
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
 
 
-    def load_fastMRI_data(self, path_to_mri_data, params):
+    def load_fastMRI_data(self, path_to_mri_data):
         self.kspace = np.load(path_to_mri_data)['arr_0']
         self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
         self.kspace = self.kspace.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1) # add Nex dimension
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        samplingSimulator = SamplingSimulator(params, self.Ny, self.t_device)
+        samplingSimulator = SamplingSimulator(self.Ny, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
 
     # Ncoils should be a perfect square (or close) for coil map generation
@@ -138,7 +140,7 @@ class DataLoader:
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         # 5. Sampling
-        samplingSimulator = SamplingSimulator(self.params, self.Ny, self.t_device)
+        samplingSimulator = SamplingSimulator(self.Ny, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
 
     def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
@@ -149,7 +151,7 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
+        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # TODO include multiple Nex support        
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
@@ -170,7 +172,7 @@ class DataLoader:
         plt.savefig("debug_outputs/motion_curve.png")
         plt.close()
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx, self.params)
+        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         # TODO include multiple Nex support        
         self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
@@ -182,9 +184,8 @@ class DataLoader:
         nex_idx = self.nex_idx
         motion_curve = motion_curve.to(self.t_device)
 
-        params = self.params
         Nbins = params.N_mot_states
-        Nex = self.params.Nex
+        Nex = params.Nex
         norm_color = Normalize(vmin=0, vmax=Nbins - 1)
 
         # ---- K-means clustering (global, across all Nex) ----
