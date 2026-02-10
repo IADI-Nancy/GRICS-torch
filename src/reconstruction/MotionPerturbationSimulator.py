@@ -107,7 +107,7 @@ class MotionPerturbationSimulator:
 
         # output: 2 × Nshots (dux and duy)
         MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
-                                        dtype=torch.float32,
+                                        dtype=torch.complex64,
                                         device=self.device)
 
         for motion_state in range(N_mot_states):
@@ -148,7 +148,7 @@ class MotionPerturbationSimulator:
                 du_y = (ResidualImage * Gy.conj())
 
                 # Apply the adjoint Jacobian
-                MotionModelPerturbation[:, motion_state] = self.motionOperator.apply_JH(du_x, du_y, motion_state)
+                MotionModelPerturbation[:, motion_state] += self.motionOperator.apply_JH(du_x, du_y, motion_state)
             
         return MotionModelPerturbation.flatten()
     

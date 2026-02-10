@@ -36,6 +36,7 @@ def save_residual_convergence(residual_norms, title, res_level):
     plt.title(f"Residual convergence ({title}, resolution level {res_level})")
     plt.grid(True)
     plt.tight_layout()
+    plt.ylim(bottom=0)
     plt.savefig(f"{params.debug_convergence_folder}residual_convergence_{title}_res{res_level}.png")
     plt.close()
 
@@ -306,31 +307,33 @@ class JointReconstructor:
                 res_norm = torch.linalg.norm(residual).item()
                 residual_recon_norms.append(res_norm)
 
-                print(f"    Residual norm: {res_norm:.4e}")
-
-
                 # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
                 Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
 
                 # 4) Solve for motion update
                 print("    Solving for motion update...")
                 dm = self.solve_motion(Data_res, residual)
-                Data_res["MotionModel"] += dm
+                Data_res["MotionModel"] += dm.real
 
                 dm_norm = torch.linalg.norm(dm.flatten()).item()
                 residual_motion_norms.append(dm_norm)
-                print(f"    Motion update norm: {dm_norm:.4e}")
 
                 log_motion_parameters(
                     Data_res["MotionModel"],
                     res_level=idx_res + 1,
                     gn_iter=it + 1
                 )
+                if it > 2 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
+                    print("    Residual increased — stopping GN at this resolution")
+                    break
 
                 Data_prev = Data_res
+                
 
-            show_slice_and_save(Data_res["ReconstructedImage"][0].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
-            save_residual_convergence(residual_recon_norms, 'recon', idx_res + 1)
-            save_residual_convergence(residual_motion_norms, 'motion', idx_res + 1)
+
+            if params.debug_flag:
+                show_slice_and_save(Data_res["ReconstructedImage"][0].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
+                save_residual_convergence(residual_recon_norms, 'recon', idx_res + 1)
+                save_residual_convergence(residual_motion_norms, 'motion', idx_res + 1)
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]
