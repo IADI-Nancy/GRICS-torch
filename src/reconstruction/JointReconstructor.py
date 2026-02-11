@@ -12,6 +12,40 @@ from Parameters import Parameters
 
 params = Parameters()
 
+def test_J_singularity(motionSimulator):
+
+    Nalpha = motionSimulator.Nalpha
+    Nshots = len(motionSimulator.SamplingIndices[0])
+
+    dim = Nalpha * Nshots
+
+    # Build JHJ matrix explicitly (small system only!)
+    JHJ = torch.zeros((dim, dim), device=motionSimulator.device)
+
+    for i in range(dim):
+        e = torch.zeros(dim, device=motionSimulator.device)
+        e[i] = 1.0
+
+        Je = motionSimulator.forward(e)
+        JHJe = motionSimulator.adjoint(Je)
+
+        JHJ[:, i] = JHJe.real  # JHJ should be real symmetric
+
+    # SVD
+    U, S, V = torch.linalg.svd(JHJ)
+
+    print("Singular values of JHJ:")
+    print(S)
+
+    print("Smallest singular value:", S[-1])
+    print("Condition number:", S[0] / S[-1])
+
+    print("Null-space direction (last right singular vector):")
+    print(V[-1])
+
+    return S, V
+
+
 def show_slice_and_save(image, image_name):
     show_slice(image, max_images=1, headline=image_name)
     plt.savefig(params.debug_folder + image_name + '.png')
@@ -259,7 +293,74 @@ class JointReconstructor:
 
         motion_perturb = mot_pert_vec.reshape(self.Nalpha, params.N_mot_states)
         return motion_perturb
+    
+    def solve_motion_scaled(self, Data_res, residual):
+        Nparams = self.Nalpha * params.N_mot_states
+        with torch.no_grad():
+            diag_JHJ = torch.zeros(Nparams, device=self.device)
 
+            for i in range(Nparams):
+                e = torch.zeros(Nparams, device=self.device)
+                e[i] = 1.0
+                Je = Data_res["J"].forward(e)
+                JHJe = Data_res["J"].adjoint(Je)
+                diag_JHJ[i] = torch.real(JHJe[i])
+
+            # Avoid division by zero
+            eps = 1e-8
+            scale = torch.sqrt(diag_JHJ + eps)
+
+        # Nparams = self.Nalpha * params.N_mot_states
+        device = residual.device
+
+        J = Data_res["J"]
+
+        # ---- Define scaled operator J̃ = J S^{-1} ----
+        class ScaledJacobian:
+            def __init__(self, J, scale):
+                self.J = J
+                self.scale = scale
+                self.device = J.device
+
+            def forward(self, v):
+                # J (S^{-1} v)
+                return self.J.forward(v / self.scale)
+
+            def adjoint(self, w):
+                # S^{-1} J^H w
+                return self.J.adjoint(w) / self.scale
+
+            def normal(self, v):
+                return self.adjoint(self.forward(v))
+
+        J_scaled = ScaledJacobian(J, scale)
+
+        # ---- Build RHS in scaled space ----
+        b_scaled = J_scaled.adjoint(residual)
+
+        # ---- Initial guess ----
+        x0 = torch.zeros(Nparams, dtype=torch.float32, device=device)
+
+        # ---- Solve in scaled variables ----
+        solver = ConjugateGradientSolver(
+            J_scaled,
+            reg_lambda=params.lambda_m,
+            verbose=True
+        )
+
+        delta_tilde = solver.solve_cg_keep_best(
+            b_scaled.flatten(),
+            x0=x0,
+            max_iter=params.max_iter_motion,
+            tol=params.tol_motion,
+        )
+
+        # ---- Unscale back to physical parameters ----
+        delta = delta_tilde / scale
+
+        motion_perturb = delta.reshape(self.Nalpha, params.N_mot_states)
+
+        return motion_perturb
 
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
@@ -309,10 +410,18 @@ class JointReconstructor:
 
                 # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
                 Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
+                # S, V = test_J_singularity(Data_res["J"])
 
                 # 4) Solve for motion update
                 print("    Solving for motion update...")
-                dm = self.solve_motion(Data_res, residual)
+                # dm = self.solve_motion(Data_res, residual)
+                if params.use_scaled_motion_update:
+                    dm = self.solve_motion_scaled(Data_res, residual)
+                else:
+                    dm = self.solve_motion(Data_res, residual)
+                
+                # dm = self.solve_motion_regularized(Data_res, residual)
+
                 Data_res["MotionModel"] += dm.real
 
                 dm_norm = torch.linalg.norm(dm.flatten()).item()
@@ -323,13 +432,11 @@ class JointReconstructor:
                     res_level=idx_res + 1,
                     gn_iter=it + 1
                 )
-                if it > 2 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
+                if it > 0 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
                     print("    Residual increased — stopping GN at this resolution")
                     break
 
                 Data_prev = Data_res
-                
-
 
             if params.debug_flag:
                 show_slice_and_save(Data_res["ReconstructedImage"][0].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   

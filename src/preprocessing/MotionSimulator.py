@@ -273,7 +273,7 @@ class MotionSimulator:
         # Centers
         centers = torch.zeros((2, Nshots), device=self.t_device)
         centers[0, :] = self.Nx / 2 + params.max_center_x * torch.ones(Nshots, device=self.t_device)
-        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.rand(Nshots, device=self.t_device)
+        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
 
         # -------------------------------------------------
         # Build navigator = first principal component

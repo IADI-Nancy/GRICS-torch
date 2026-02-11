@@ -21,14 +21,14 @@ class Parameters:
     kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
 
     # Motion simulation parameters
-    simulation_type = 'discrete-rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
+    simulation_type = 'rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
     num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_phi = 10.0  # maximum rotation (degrees)
-    max_center_x = 60.0  # maximum variation in center x (pixels)
-    max_center_y = 10.0  # maximum variation in center y (pixels)
-    seed = 1
+    max_center_x = 0 # 60.0  # maximum variation in center x (pixels)
+    max_center_y = 0 # 10.0  # maximum variation in center y (pixels)
+    seed = 3
     motion_tau = 2  # transition width of motion events (in ky lines)
 
     # Espirits sensitivity map calculation parameters
@@ -36,6 +36,7 @@ class Parameters:
     kernel_width = 12
 
     # General reconstruction parameters
+    use_scaled_motion_update = True  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
     GN_iterations_per_level = 16
 
