@@ -39,13 +39,13 @@ class MotionOperator:
 
         self.sparseMotionOperator = []
 
-        for shot in range(alpha.shape[1]):
+        for motion_state in range(alpha.shape[1]):
             # --- Motion parameters ---
-            tx = alpha[0, shot]     # translation x
-            ty = alpha[1, shot]     # translation y
-            phi = alpha[2, shot]     # rotation (radians)
-            cx = centers[0, shot]     # center x
-            cy = centers[1, shot]     # center y
+            tx = alpha[0, motion_state]     # translation x
+            ty = alpha[1, motion_state]     # translation y
+            phi = alpha[2, motion_state]     # rotation (radians)
+            cx = centers[0, motion_state]     # center x
+            cy = centers[1, motion_state]     # center y
 
             cos_phi = torch.cos(phi)
             sin_phi = torch.sin(phi)
@@ -66,8 +66,8 @@ class MotionOperator:
             MotionOp = MotionOperator.create_sparse_motion_operator(Ux, Uy)
             self.sparseMotionOperator.append(MotionOp)
 
-    def get_sparse_operator(self, shot):
-        return self.sparseMotionOperator[shot]
+    def get_sparse_operator(self, motion_state):
+        return self.sparseMotionOperator[motion_state]
 
     # ---------------------------------------------------------
     # Geometric derivatives
@@ -79,10 +79,10 @@ class MotionOperator:
         return (ones, zeros), (zeros, ones)
 
 
-    def phi_derivative(self, shot):
-        phi = self.alpha[2,shot] 
-        xmc = self.X - self.centers[0,shot]
-        ymc = self.Y - self.centers[1,shot]
+    def phi_derivative(self, motion_state):
+        phi = self.alpha[2,motion_state] 
+        xmc = self.X - self.centers[0,motion_state]
+        ymc = self.Y - self.centers[1,motion_state]
 
         st = torch.sin(phi)
         ct = torch.cos(phi)
@@ -96,7 +96,7 @@ class MotionOperator:
     # FULL JACOBIAN OPERATOR J * δᾱ_j = sum_j(∂x_i/∂ᾱ_j) δᾱ_j = δu_i
     # ---------------------------------------------------------
 
-    def apply_J(self, delta_alpha, shot):
+    def apply_J(self, delta_alpha, motion_state):
         """
         delta_alpha : (3,) tensor [dt_x, dt_y, dphi, dc_x, dc_y]
         returns:
@@ -106,7 +106,7 @@ class MotionOperator:
 
         # Derivative fields
         (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
-        dX_dphi, dY_dphi = self.phi_derivative(shot)
+        dX_dphi, dY_dphi = self.phi_derivative(motion_state)
 
         # Combine linearly
         du_x = (
@@ -128,7 +128,7 @@ class MotionOperator:
     # ADJOINT (TRANSPOSE–CONJUGATE) JACOBIAN   JH * δu_i = sum_i(∂x_i/∂ᾱ_j) δu_i = δᾱ_j
     # ---------------------------------------------------------
 
-    def apply_JH(self, du_x, du_y, shot):
+    def apply_JH(self, du_x, du_y, motion_state):
         """
         Applies J^H to (du_x, du_y).
         Returns
@@ -137,7 +137,7 @@ class MotionOperator:
         # zeros = torch.zeros((self.Nx, self.Ny), device=self.device)
 
         (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
-        dX_dphi, dY_dphi = self.phi_derivative(shot)
+        dX_dphi, dY_dphi = self.phi_derivative(motion_state)
 
         # Each parameter is a scalar product <v_m, du>
         dt_x  = torch.sum(dX_dtx * du_x + dY_dtx * du_y)

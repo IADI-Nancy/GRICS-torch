@@ -13,11 +13,10 @@ from Parameters import Parameters
 params = Parameters()
 
 def test_J_singularity(motionSimulator):
-
     Nalpha = motionSimulator.Nalpha
-    Nshots = len(motionSimulator.SamplingIndices[0])
+    N_mot_states = len(motionSimulator.SamplingIndices[0])
 
-    dim = Nalpha * Nshots
+    dim = Nalpha * N_mot_states
 
     # Build JHJ matrix explicitly (small system only!)
     JHJ = torch.zeros((dim, dim), device=motionSimulator.device)

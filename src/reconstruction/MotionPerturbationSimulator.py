@@ -44,15 +44,14 @@ class MotionPerturbationSimulator:
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
         N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
 
-        # reshape 3×Nshots perturbation vector
-        # MotionModelPerturbation: shape [3*Nshots]
+        # MotionModelPerturbation: shape [3, N_mot_states]
         MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_mot_states)
         # output k-space residual
         ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
                                      dtype=torch.complex64,
                                      device=self.device)
 
-        # ---- Loop over shots ----
+        # ---- Loop over motion states ----
         for motion_state in range(N_mot_states):
               
             MotionOp = self.motionOperator.get_sparse_operator(motion_state)
@@ -97,7 +96,7 @@ class MotionPerturbationSimulator:
         Input:
             ResidualKspace: flattened k-space residual, shape [Nsamples*Ncoils]
         Output:
-            MotionModelAdjoint: shape [2, Nshots]
+            MotionModelAdjoint: shape [2, N_mot_states]
         """
 
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
@@ -105,7 +104,7 @@ class MotionPerturbationSimulator:
 
         ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
 
-        # output: 2 × Nshots (dux and duy)
+        # output: 2 × N_mot_states (dux and duy)
         MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
                                         dtype=torch.complex64,
                                         device=self.device)
@@ -119,7 +118,7 @@ class MotionPerturbationSimulator:
                 if SamplingIndices.numel() == 0:
                     continue
                 image_nex = self.image[nex]
-                # 1) Warp image with shot operator
+                # 1) Warp image with motion state operator
                 WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
                 # 2) Gradients of warped image

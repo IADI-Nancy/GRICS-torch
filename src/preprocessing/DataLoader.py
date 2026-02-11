@@ -38,7 +38,7 @@ class DataLoader:
         smaps_replicated = self.smaps.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1)
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
 
-        motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_shot, \
+        motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_motion, \
                                             sp_device=self.sp_device, t_device=self.t_device)
         
         if params.simulation_type == 'as-it-is':
@@ -60,25 +60,23 @@ class DataLoader:
                 self.kspace = motionSimulator.get_corrupted_kspace()
                 self.image_no_moco = motionSimulator.get_corrupted_image()
 
-            navigator, tx, ty, phi = motionSimulator.get_motion_information()
-            self.binned_indices = MotionBinner.bin_motion(navigator, self.ky_idx, self.nex_idx, self.t_device)
+            motion_curve, _, _, _ = motionSimulator.get_motion_information()
+            self.binned_indices = MotionBinner.bin_motion(motion_curve, self.ky_idx, self.nex_idx, self.t_device)
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
             self.Nx, self.Ny,
             self.t_device
         )
-        # TODO include multiple Nex support
-        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
 
 
     def load_fastMRI_data(self, path_to_mri_data):
         self.kspace = np.load(path_to_mri_data)['arr_0']
         self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
-        self.kspace = self.kspace.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1) # add Nex dimension
+        self.kspace = self.kspace.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
         samplingSimulator = SamplingSimulator(self.Ny, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
+        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
     # Ncoils should be a perfect square (or close) for coil map generation
     def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
@@ -138,7 +136,7 @@ class DataLoader:
 
         # 5. Sampling
         samplingSimulator = SamplingSimulator(self.Ny, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_shot = samplingSimulator.build_ky_and_nex()
+        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
     def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
         data = RawDataReader.read_data_from_rawdata(path_to_ismrm, path_to_saec, h5filename='data/breast_motion_data.h5') #
@@ -148,11 +146,10 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx)
+        self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        # TODO include multiple Nex support        
-        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
-        self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
+       
+        # self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
 
     def load_realworld_data(self, path_to_data, slice_idx=0):
         data = RawDataReader.read_kspace_and_motion_data_from_h5(path_to_data)
@@ -169,11 +166,9 @@ class DataLoader:
         plt.savefig("debug_outputs/motion_curve.png")
         plt.close()
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_shot = self.binned_indices = self.bin_motion_rigid(motion_data, self.ky_idx)
+        self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        # TODO include multiple Nex support        
-        self.nex_offset = torch.zeros(len(self.binned_indices), device=self.t_device)
-        self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
+        # self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
 
 
 

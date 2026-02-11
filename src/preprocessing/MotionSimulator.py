@@ -11,12 +11,12 @@ import matplotlib.pyplot as plt
 params = Parameters()
 
 class MotionSimulator:
-    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_shot, sp_device=None, t_device=None):
+    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, sp_device=None, t_device=None):
         self.image = image
         self.smaps = smaps
         self.ky_idx = ky_idx
         self.nex_idx = nex_idx
-        self.ky_per_shot = ky_per_shot
+        self.ky_per_motion_state = ky_per_motion_state
         self.sp_device = sp_device
         self.t_device = t_device
         self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  

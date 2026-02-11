@@ -26,7 +26,7 @@ class EncodingOperator:
         KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex64, device=self.device)
         image = image.reshape(self.Nex, Nx, Ny)
 
-        # ---- Loop over shots ----
+        # ---- Loop over motion states ----
         for motion_state in range(N_mot_states):
             
             MotionOp = self.motionOperator.get_sparse_operator(motion_state)
