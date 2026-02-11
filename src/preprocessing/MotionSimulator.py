@@ -4,9 +4,9 @@ import torch
 from Parameters import Parameters
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
+from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 import matplotlib.pyplot as plt
-from src.utils.Helpers import build_sampling_per_nex_per_motion #build_sampling_from_motion_states
 
 params = Parameters()
 
@@ -32,7 +32,7 @@ class MotionSimulator:
 
     def get_motion_information(self):
         return self.navigator, self.tx, self.ty, self.phi
-    
+        
     # -------------------------------------------------------
     #------------------- Common functions -------------------
     # -------------------------------------------------------
@@ -110,7 +110,7 @@ class MotionSimulator:
         # Use shot-wise sampling (same as discrete motion)
         ky_per_mot_state_idx = self.ky_idx.unsqueeze(0)
 
-        self.sampling_idx_per_nex = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
+        self.sampling_idx_per_nex = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
         
         self.TotalKspaceSamples = self.Nx * self.Ny
 
@@ -197,7 +197,7 @@ class MotionSimulator:
         ]
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
+        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
 
         self.TotalKspaceSamples = self.Ny * self.Nx
         # generate motion curves and parameters
@@ -307,7 +307,7 @@ class MotionSimulator:
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device) # ← for debugging only, ignore output
+        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device) # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = self.Ny * self.Nx
 

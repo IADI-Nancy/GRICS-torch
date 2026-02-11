@@ -57,5 +57,41 @@ class SamplingSimulator:
             nex_idx.append(torch.cat(nex_list, dim=0))
 
         return ky_idx, nex_idx, ky_per_shot
+    
+    @staticmethod
+    def build_sampling_per_nex_per_motion(
+        binned_ky_indices,  # [Nex][Nmotion]
+        Nx, Ny,
+        device,
+    ):
+        Nex = len(binned_ky_indices)
+        Nmotion = len(binned_ky_indices[0])
+
+        kx = torch.arange(Nx, device=device, dtype=torch.int64)
+
+        Sampling = [
+            [None for _ in range(Nmotion)]
+            for _ in range(Nex)
+        ]
+
+        for nex in range(Nex):
+            for ms in range(Nmotion):
+                ky = binned_ky_indices[nex][ms]
+
+                if ky.numel() == 0:
+                    Sampling[nex][ms] = torch.empty(
+                        0, dtype=torch.int64, device=device
+                    )
+                    continue
+
+                # Build flattened (kx, ky) sampling
+                samp = (
+                    ky[:, None]
+                    + Ny * kx[None, :]
+                ).reshape(-1)
+
+                Sampling[nex][ms] = samp
+
+        return Sampling
 
     

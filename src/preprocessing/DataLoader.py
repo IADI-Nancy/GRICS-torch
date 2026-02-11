@@ -4,18 +4,15 @@ import matplotlib.pyplot as plt
 from skimage.data import shepp_logan_phantom
 from skimage.transform import resize
 import math
-from matplotlib.colors import Normalize
 
-from Parameters import Parameters
 from src.preprocessing.RawDataReader import RawDataReader
 from src.utils.espiritmaps import calc_espirit_maps
-from src.reconstruction.EncodingOperator import EncodingOperator
-from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.MotionSimulator import MotionSimulator
-from src.utils.Helpers import kmeans_torch, build_sampling_per_nex_per_motion #build_sampling_from_motion_states
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
+from src.preprocessing.MotionBinner import MotionBinner
 
+from Parameters import Parameters
 params = Parameters()
 
 
@@ -64,9 +61,9 @@ class DataLoader:
                 self.image_no_moco = motionSimulator.get_corrupted_image()
 
             navigator, tx, ty, phi = motionSimulator.get_motion_information()
-            self.binned_indices = self.bin_motion_rigid(navigator)
+            self.binned_indices = MotionBinner.bin_motion(navigator, self.ky_idx, self.nex_idx, self.t_device)
         
-        self.sampling_idx = build_sampling_per_nex_per_motion(
+        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
             self.Nx, self.Ny,
             self.t_device
@@ -179,111 +176,7 @@ class DataLoader:
         self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
 
 
-    def bin_motion_rigid(self, motion_curve):
-        ky_idx = self.ky_idx
-        nex_idx = self.nex_idx
-        motion_curve = motion_curve.to(self.t_device)
 
-        Nbins = params.N_mot_states
-        Nex = params.Nex
-        norm_color = Normalize(vmin=0, vmax=Nbins - 1)
-
-        # ---- K-means clustering (global, across all Nex) ----
-        labels, centers = kmeans_torch(motion_curve.unsqueeze(1), Nbins)
-
-        # ---- Allocate output: [Nex][Nbins] ----
-        binned_indices = [
-            [torch.empty(0, dtype=ky_idx[0].dtype, device=self.t_device) for _ in range(Nbins)]
-            for _ in range(Nex)
-        ]
-        ky_idx = torch.cat([k.reshape(-1) for k in ky_idx], dim=0)
-        nex_idx = torch.cat([nex.reshape(-1) for nex in nex_idx], dim=0)
-
-        # ---- Fill bins ----
-        for nex in range(Nex):
-            nex_mask = nex_idx == nex
-
-            for b in range(Nbins):
-                mask = nex_mask & (labels == b)
-                binned_indices[nex][b] = ky_idx[mask]
-
-        # ---- Debug plots ----
-        if params.debug_flag:
-            markers = ["o", "x", "s", "^", "v", "D", "+", "*", "<", ">"]
-            motion_cpu = motion_curve.detach().cpu()
-            labels_cpu = labels.detach().cpu()
-            nex_cpu = nex_idx.detach().cpu()
-            time_idx = torch.arange(len(motion_cpu))
-            ky_idx_cpu = ky_idx.detach().cpu()
-
-            # chronological plot
-            fig, ax = plt.subplots(figsize=(10, 4))
-
-            for nex in torch.unique(nex_cpu):
-                mask = nex_cpu == nex
-                sc = ax.scatter(
-                    time_idx[mask],
-                    motion_cpu[mask],
-                    c=labels_cpu[mask],
-                    s=12,
-                    cmap="tab10",
-                    norm=norm_color,                      # ← IMPORTANT
-                    marker=markers[int(nex) % len(markers)],
-                    label=f"Nex {int(nex)}",
-                )
-
-            ax.set_xlabel("Time / acquisition order")
-            ax.set_ylabel("Motion amplitude")
-            ax.set_title("Chronological motion curve (color = motion state, marker = Nex)")
-            ax.legend(title="Nex", loc="best")
-
-            # Proper colorbar (global)
-            sm = plt.cm.ScalarMappable(cmap="tab10", norm=norm_color)
-            sm.set_array([])
-            cbar = fig.colorbar(sm, ax=ax)
-            cbar.set_label("Motion bin")
-            cbar.set_ticks(range(Nbins))
-
-            fig.tight_layout()
-            fig.savefig("debug_outputs/clustered_curve_chronological.png")
-            plt.close(fig)
-
-
-
-            # ky-sorted plot        
-            fig, ax = plt.subplots(figsize=(10, 4))
-
-            for nex in torch.unique(nex_cpu):
-                mask = nex_cpu == nex
-                sc = ax.scatter(
-                    ky_idx_cpu[mask],
-                    motion_cpu[mask],
-                    c=labels_cpu[mask],
-                    s=12,
-                    cmap="tab10",
-                    norm=norm_color,                      # ← IMPORTANT
-                    marker=markers[int(nex) % len(markers)],
-                    label=f"Nex {int(nex)}",
-                )
-
-            ax.set_xlabel("Line index (ky)")
-            ax.set_ylabel("Motion amplitude")
-            ax.set_title("Motion curve vs ky (color = motion state, marker = Nex)")
-            ax.legend(title="Nex", loc="best")
-
-            sm = plt.cm.ScalarMappable(cmap="tab10", norm=norm_color)
-            sm.set_array([])
-            cbar = fig.colorbar(sm, ax=ax)
-            cbar.set_label("Motion bin")
-            cbar.set_ticks(range(Nbins))
-
-            fig.tight_layout()
-            fig.savefig("debug_outputs/clustered_curve_sorted_ky.png")
-            plt.close(fig)
-
-
-
-        return binned_indices
 
 
 

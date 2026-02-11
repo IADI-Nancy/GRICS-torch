@@ -432,7 +432,7 @@ class JointReconstructor:
                     res_level=idx_res + 1,
                     gn_iter=it + 1
                 )
-                if it > 0 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
+                if it > 1 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
                     print("    Residual increased — stopping GN at this resolution")
                     break
 
