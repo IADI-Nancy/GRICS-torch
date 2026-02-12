@@ -1,16 +1,10 @@
 import h5py
 import numpy as np
 import ismrmrd
-import bart
-import threading
-import matplotlib.pyplot as plt
-import math
-import os
 import torch
+import math
 from src.utils.fftnc import fftnc, ifftnc
 
-# from scipy.signal import butter, filtfilt
-from scipy.interpolate import interp1d
 from src.preprocessing.RespiratoryDataReader import RespiratoryDataReader
 
 def is_noise(acq):
@@ -35,12 +29,9 @@ class RawDataReader:
 
         kspace_cropped = torch.zeros(
             (coils, Nex, cropped_readout, Ny, Nsli),
-            dtype=dtype,
-            device=device
-        )
+            dtype=dtype, device=device)
 
         for iz in range(Nsli):
-
             # Extract slice
             kspace_slice = kspace[..., iz]  # (coils, Nex, readout, Ny)
 
@@ -58,8 +49,7 @@ class RawDataReader:
         return kspace_cropped
 
     @staticmethod
-    def extract_kspace_info_torch(ismrmrd_path, device="cpu"):
-
+    def extract_mri_info(ismrmrd_path, device="cpu"):
         dset = ismrmrd.Dataset(ismrmrd_path, 'dataset', create_if_needed=False)
 
         timestamps = []
@@ -68,50 +58,41 @@ class RawDataReader:
         idx_kz = []
         idx_nex = []
 
-        first_timestamp = 0
-
         header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
 
         N_SLI = header.encoding[0].encodingLimits.slice.maximum + 1
-        Nex = 1
+        Nex = 1 # header.encoding[0].encodingLimits.average.maximum + 1 # workaround to have 1 Nex for the moment TODO
+        Nz = header.encoding[0].encodingLimits.kspace_encoding_step_2.maximum + 1
+        Rz = header.encoding[0].parallelImaging.accelerationFactor.kspace_encoding_step_2
+        Nz = Rz * math.ceil(float(Nz) / float(Rz))
         Ny = header.encoding[0].encodingLimits.kspace_encoding_step_1.maximum + 1
-
+        Ry = header.encoding[0].parallelImaging.accelerationFactor.kspace_encoding_step_1
+        Ny = Ry * math.ceil(float(Ny) / float(Ry))
         number_of_channels, number_of_samples = dset.read_acquisition(0).data.shape
 
-        kspace = torch.zeros(
-            (number_of_channels, Nex, number_of_samples, Ny, N_SLI),
-            dtype=torch.complex64,
-            device=device
-        )
+        kspace = torch.zeros( (number_of_channels, Nex, number_of_samples, Ny, N_SLI), dtype=torch.complex64, device=device)
 
         for i in range(dset.number_of_acquisitions()):
-
             acq = dset.read_acquisition(i)
-
-            if first_timestamp == 0:
-                first_timestamp = acq.acquisition_time_stamp
 
             if acq.isFlagSet(ismrmrd.ACQ_IS_NOISE_MEASUREMENT):
                 continue
 
-            timestamp = (
-                float(acq.acquisition_time_stamp) - first_timestamp
-            ) * 2.5e-3
-
-            timestamps.append(timestamp)
+            timestamps.append(float(acq.acquisition_time_stamp))
             slices.append(acq.idx.slice)
             idx_ky.append(acq.idx.kspace_encode_step_1)
             idx_kz.append(acq.idx.kspace_encode_step_2)
             idx_nex.append(acq.idx.average)
 
-            # Convert acquisition data to torch
             acq_data = torch.from_numpy(acq.data).to(device)
-
             kspace[:, 0, :, acq.idx.kspace_encode_step_1, acq.idx.slice] = acq_data
+
+        timestamps = torch.tensor(timestamps, device=device)
+        timestamps = (timestamps - timestamps[-1]) * 2.5e-3
 
         return (
             kspace,
-            torch.tensor(timestamps, device=device),
+            timestamps,
             torch.tensor(slices, device=device),
             torch.tensor(idx_ky, device=device),
             torch.tensor(idx_kz, device=device),
@@ -123,24 +104,6 @@ class RawDataReader:
         All inputs must be torch tensors
         """
         return torch.interp(time_target, time_original, signal_original)
-
-
-    @staticmethod
-    def reshape_resp_data(respiratory_data_interpolated, slices, idx_ky, idx_kz=None, idx_nex=None):
-        N_SLI = np.max(slices) + 1
-        motion_data = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
-        line_idx_y = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
-        line_idx_z = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
-        line_idx_nex = np.zeros((N_SLI, int(len(respiratory_data_interpolated)/N_SLI)))
-        for i_sli in range(N_SLI):
-            tmp = respiratory_data_interpolated[np.array(slices) == i_sli]
-            motion_data[i_sli] = np.squeeze(tmp)
-            line_idx_y[i_sli] = idx_ky[np.array(slices) == i_sli]
-            if idx_kz is not None:
-                line_idx_z[i_sli] = idx_kz[np.array(slices) == i_sli]
-            if idx_nex is not None:
-                line_idx_nex[i_sli] = idx_nex[np.array(slices) == i_sli]
-        return motion_data, line_idx_y, line_idx_z, line_idx_nex
     
     @staticmethod
     def interp1d_torch(x, y, x_new):
@@ -182,13 +145,7 @@ class RawDataReader:
     
 
     @staticmethod
-    def reshape_resp_data_torch(
-        respiratory_data_interpolated,
-        slices,
-        idx_ky,
-        idx_kz=None,
-        idx_nex=None,
-    ):
+    def reshape_data_slicewise(respiratory_data_interpolated, slices, idx_ky, idx_kz, idx_nex):
         """
         All inputs must be torch tensors.
         slices must be integer tensor.
@@ -203,80 +160,38 @@ class RawDataReader:
         lines_per_slice = respiratory_data_interpolated.numel() // N_SLI
 
         # Allocate outputs
-        motion_data = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=respiratory_data_interpolated.dtype,
-            device=device,
-        )
-
-        line_idx_y = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_ky.dtype,
-            device=device,
-        )
-
-        line_idx_z = None
-        line_idx_nex = None
-
-        if idx_kz is not None:
-            line_idx_z = torch.zeros(
-                (N_SLI, lines_per_slice),
-                dtype=idx_kz.dtype,
-                device=device,
-            )
-
-        if idx_nex is not None:
-            line_idx_nex = torch.zeros(
-                (N_SLI, lines_per_slice),
-                dtype=idx_nex.dtype,
-                device=device,
-            )
+        motion_data = torch.zeros( (N_SLI, lines_per_slice), dtype=respiratory_data_interpolated.dtype, device=device)
+        line_idx_y = torch.zeros( (N_SLI, lines_per_slice), dtype=idx_ky.dtype, device=device)
+        line_idx_z = torch.zeros( (N_SLI, lines_per_slice), dtype=idx_kz.dtype, device=device)
+        line_idx_nex = torch.zeros( (N_SLI, lines_per_slice), dtype=idx_nex.dtype, device=device)
 
         # Fill slice by slice
         for i_sli in range(N_SLI):
-
             mask = (slices == i_sli)
 
             motion_data[i_sli] = respiratory_data_interpolated[mask]
             line_idx_y[i_sli] = idx_ky[mask]
-
-            if idx_kz is not None:
-                line_idx_z[i_sli] = idx_kz[mask]
-
-            if idx_nex is not None:
-                line_idx_nex[i_sli] = idx_nex[mask]
+            line_idx_z[i_sli] = idx_kz[mask]
+            line_idx_nex[i_sli] = idx_nex[mask]
 
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
     @staticmethod
     def read_motion_and_kspace(ismrmrd_file, saec_file, sensor_type='BELT', device="cuda"):
-
         # Load physiological data (still numpy)
-        time_saec, resp = RespiratoryDataReader.read_and_process_data(
-            saec_file, sensor_type, dimension=2
-        )
+        time_saec, resp = RespiratoryDataReader.read_and_process_data(saec_file, sensor_type)
 
         time_saec = torch.tensor(time_saec, device=device)
         resp = torch.tensor(resp, device=device)
 
-        # Load kspace
         kspace, time_kspace, slices, idx_ky, idx_kz, idx_nex = \
-            RawDataReader.extract_kspace_info_torch(ismrmrd_file, device=device)
+            RawDataReader.extract_mri_info(ismrmrd_file, device=device)
 
-        # Interpolate
-        respiratory_interpolated = RawDataReader.interp1d_torch(
-            time_saec, resp, time_kspace
-        )
+        respiratory_interpolated = RawDataReader.interp1d_torch(time_saec, resp, time_kspace)
 
-        motion_data, line_idx_y, line_idx_z, line_idx_nex = RawDataReader.reshape_resp_data_torch(
-        respiratory_interpolated,
-        slices,
-        idx_ky,
-        idx_kz,
-        idx_nex
-        )
+        motion_data, line_idx_y, line_idx_z, line_idx_nex = RawDataReader.reshape_data_slicewise(
+            respiratory_interpolated, slices, idx_ky, idx_kz, idx_nex)
 
-        # Remove oversampling
         kspace = RawDataReader.remove_oversampling(kspace)
 
         return {
@@ -307,7 +222,9 @@ class RawDataReader:
         
         with h5py.File(h5_path, 'r') as f:
             data['motion_data'] = f['motion_data'][:]
-            data['line_idx'] = f['line_idx'][:]
+            data['idx_ky'] = f['idx_ky'][:]
+            data['idx_kz'] = f['idx_kz'][:]
+            data['idx_nex'] = f['idx_nex'][:]
             data['kspace'] = f['kspace'][:]
         
         return data

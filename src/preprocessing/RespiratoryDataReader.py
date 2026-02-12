@@ -7,6 +7,48 @@ import matplotlib.pyplot as plt
 from h5Saec import *
 
 class RespiratoryDataReader:
+
+    import numpy as np
+
+    @staticmethod
+    def find_longest_valid_sequence(starts, stops):
+        """
+        starts, stops: 1D numpy arrays of uint64 timestamps
+
+        Returns:
+            best_start, best_stop, max_duration
+        """
+
+        starts = np.sort(starts.flatten())
+        stops = np.sort(stops.flatten())
+
+        i = 0  # start index
+        j = 0  # stop index
+
+        max_duration = 0
+        best_start = None
+        best_stop = None
+
+        while i < len(starts) and j < len(stops):
+
+            if stops[j] <= starts[i]:
+                # stop before start → skip stop
+                j += 1
+            else:
+                # valid pair
+                duration = stops[j] - starts[i]
+
+                if duration > max_duration:
+                    max_duration = duration
+                    best_start = starts[i]
+                    best_stop = stops[j]
+
+                # Move to next start (each start matched once)
+                i += 1
+                j += 1
+
+        return best_start, best_stop, max_duration
+
     @staticmethod
     def get_respiration_from_saec(filename, sensor_type, flag_LR=False):
         SAECData = h5Saec.from_file(filename.strip())
@@ -29,25 +71,12 @@ class RespiratoryDataReader:
                         print("Accelerometer data was not found for a MARMOT")
 
             if 'SAEC_TRIGGER_SIEMENS' in attr:
-                max_duration = 0
-                # sequence_start = value.SeqStart.timestamp.values[0]
-                for iStart in range(-1, -len(value.SeqStart.timestamp.values) - 1, -1) :
-                    curr_stop = len(value.SeqStart.timestamp.values)
-                    curr_duration = np.double(np.max(np.concatenate(timestampsSAEC, axis=0 ))) - np.double(np.min(np.concatenate(timestampsSAEC, axis=0 )))
-                    for iStop in range(-1, -len(value.SeqStop.timestamp.values) - 1, -1) :
-                        duration = np.double(value.SeqStop.timestamp.values[iStop]) - np.double(value.SeqStart.timestamp.values[iStart])
-                        if duration > 0 and duration < curr_duration :
-                            curr_stop = iStop
-                            curr_duration = duration
-                    if curr_stop < len(value.SeqStart.timestamp.values) :
-                        if np.double(value.SeqStop.timestamp.values[curr_stop]) - np.double(value.SeqStart.timestamp.values[iStart]) > max_duration :
-                            sequence_start = value.SeqStart.timestamp.values[iStart]
-                            sequence_stop = value.SeqStop.timestamp.values[iStop]
-                            max_duration = np.double(value.SeqStop.timestamp.values[curr_stop]) - np.double(value.SeqStart.timestamp.values[iStart])
+                sequence_start, sequence_stop, max_duration = \
+                    RespiratoryDataReader.find_longest_valid_sequence(value.SeqStart.timestamp.values, value.SeqStop.timestamp.values)
 
         timestamps_in_sec = []
         for timestamp in timestampsSAEC:
-            timestamp_in_sec = (np.float64(timestamp) - np.float64(sequence_start)) / ticksTo1s
+            timestamp_in_sec = (np.float64(timestamp) - np.float64(sequence_stop)) / ticksTo1s
             timestamps_in_sec.append(timestamp_in_sec)
 
         return np.asarray(timestamps_in_sec), respiratory_data
@@ -112,7 +141,7 @@ class RespiratoryDataReader:
         return respiratory_data_filtered_hp, sigma
 
     @staticmethod
-    def get_filtered_resp_data(timestamps, respiratory_data, sersor_type, dimension=2, path_to_graph=None):
+    def get_filtered_resp_data(timestamps, respiratory_data, sersor_type, path_to_graph=None):
         if sersor_type == 'BELT' :
             timestamps = np.squeeze(timestamps[0])
             respiratory_data = respiratory_data[0]
@@ -170,7 +199,7 @@ class RespiratoryDataReader:
             Warning("Physiological sensor type is not correct")
 
     @staticmethod
-    def read_and_process_data(saec_filename, sensor_type, dimension, path_to_graph=None):
+    def read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
         timestamps_saec, respiratory_data_saec = RespiratoryDataReader.get_respiration_from_saec(saec_filename, sensor_type)
-        respiratory_data_filtered = RespiratoryDataReader.get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, dimension=dimension, path_to_graph=path_to_graph)
+        respiratory_data_filtered = RespiratoryDataReader.get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
         return np.squeeze(timestamps_saec), np.squeeze(respiratory_data_filtered)
