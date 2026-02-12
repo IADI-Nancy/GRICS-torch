@@ -11,7 +11,7 @@ class Parameters:
     N_mot_states = 4
 
     # Data loading/generation parameters
-    data_type = 'real-world'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
+    data_type = 'fastMRI'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
     path_to_fastMRI_data = 'data/kspace.npz'
     path_to_realworld_data = 'data/breast_motion_data.h5'
     saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
@@ -22,17 +22,17 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 4    
-    kspace_sampling_type = 'interleaved' # 'linear' or 'interleaved'
+    kspace_sampling_type = 'random' # 'linear', 'interleaved' or 'random'
 
     # Motion simulation parameters
-    simulation_type = 'as-it-is'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
+    simulation_type = 'rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
     num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
     max_phi = 10.0  # maximum rotation (degrees)
     max_center_x = 0 # 60.0  # maximum variation in center x (pixels)
     max_center_y = 0 # 10.0  # maximum variation in center y (pixels)
-    seed = 1
+    seed = 2
     motion_tau = 2  # transition width of motion events (in ky lines)
 
     # Espirits sensitivity map calculation parameters
