@@ -381,6 +381,12 @@ class JointReconstructor:
             residual_recon_norms = []
             residual_motion_norms = []
 
+            # Initialize patience tracking
+            best_metric = float("inf")
+            best_image = None
+            best_motion = None
+            no_improve_counter = 0
+
             # Gauss–Newton iterations
             for it in range(GN_iter):
                 print(f"  GN iteration {it+1}/{GN_iter}")
@@ -415,8 +421,6 @@ class JointReconstructor:
                     dm = self.solve_motion_scaled(Data_res, residual)
                 else:
                     dm = self.solve_motion(Data_res, residual)
-                
-                # dm = self.solve_motion_regularized(Data_res, residual)
 
                 Data_res["MotionModel"] += dm.real
 
@@ -429,8 +433,34 @@ class JointReconstructor:
                         res_level=idx_res + 1,
                         gn_iter=it + 1
                     )
-                if it > 1 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
-                    print("    Residual increased — stopping GN at this resolution")
+                
+                # -------------------------
+                # Metric selection
+                # -------------------------
+                if params.residual_metric_type == "recon":
+                    metric = res_norm
+                elif params.residual_metric_type == "motion":
+                    metric = dm_norm
+                elif params.residual_metric_type == "combined":
+                    metric = res_norm + params.motion_weight * dm_norm
+                else:
+                    raise ValueError("Unknown residual_metric_type")
+
+                # -------------------------
+                # Patience logic
+                # -------------------------
+                if metric < best_metric:
+                    best_metric = metric
+                    best_image = Data_res["ReconstructedImage"].clone()
+                    best_motion = Data_res["MotionModel"].clone()
+                    no_improve_counter = 0
+                else:
+                    no_improve_counter += 1
+                    print(f"    No improvement ({no_improve_counter}/{params.patience})")
+                if no_improve_counter >= params.patience:
+                    print("    Patience exceeded — restoring best solution")
+                    Data_res["ReconstructedImage"] = best_image
+                    Data_res["MotionModel"] = best_motion
                     break
 
                 Data_prev = Data_res

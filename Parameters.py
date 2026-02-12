@@ -32,7 +32,7 @@ class Parameters:
     max_phi = 10.0  # maximum rotation (degrees)
     max_center_x = 0 # 60.0  # maximum variation in center x (pixels)
     max_center_y = 0 # 10.0  # maximum variation in center y (pixels)
-    seed = 2
+    seed = 1
     motion_tau = 2  # transition width of motion events (in ky lines)
 
     # Espirits sensitivity map calculation parameters
@@ -43,6 +43,9 @@ class Parameters:
     use_scaled_motion_update = False  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
     GN_iterations_per_level = 16
+    patience = 3
+    residual_metric_type = "motion"  # "recon", "motion" or "combined"
+    motion_weight = 1.0             # used only if combined
 
     # Image reconstruction parameters
     lambda_r = 2e-3
