@@ -6,6 +6,17 @@ from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 from h5Saec import *
 
+'''
+Code is not very clean for the moment!!!
+The main method is read_and_process_data(saec_filename, sensor_type, path_to_graph=None), which reads the SAEC file, extracts the 
+respiratory signal, applies filtering and drift correction, and returns the processed respiratory signal. The method also includes
+an optional graph saving functionality to visualize the filtered respiratory signal. The class is designed to handle different types
+of physiological sensors, such as BELT and MARMOT, and can be extended to include additional sensor types if needed.
+Itsoutput is a tuple of (timestamps, respiratory_data_filtered), where timestamps are the time points (in sec) corresponding to the 
+respiratory data with 0 corresponding to the *end* (!!!) of the sequence, and respiratory_data_filtered is the processed respiratory signal
+ready for further analysis or integration with MRI data.
+'''
+
 class RespiratoryDataReader:
 
     import numpy as np

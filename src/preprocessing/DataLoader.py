@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from skimage.data import shepp_logan_phantom
 from skimage.transform import resize
 import math
+import h5py
 
 from src.preprocessing.RawDataReader import RawDataReader
 from src.utils.espiritmaps import calc_espirit_maps
@@ -139,36 +140,39 @@ class DataLoader:
         self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
     def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
-        data = RawDataReader.read_data_from_rawdata(path_to_ismrm, path_to_saec, h5filename='data/breast_motion_data.h5') #
+        reader = RawDataReader(
+            ismrmrd_file=path_to_ismrm,
+            saec_file=path_to_saec,
+            sensor_type="BELT",
+            device="cuda"
+        )
+        data = reader.read_data_from_rawdata()
+
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
-        # self.kspace = from_grics_to_espirit_dims(self.kspace)[:, :, :, [slice_idx]]
         self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-       
-        # self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
 
     def load_realworld_data(self, path_to_data, slice_idx=0):
-        data = RawDataReader.read_kspace_and_motion_data_from_h5(path_to_data)
+        data = {}
+        with h5py.File(path_to_data, 'r') as f:
+            data['motion_data'] = f['motion_data'][:]
+            data['idx_ky'] = f['idx_ky'][:]
+            data['idx_kz'] = f['idx_kz'][:]
+            data['idx_nex'] = f['idx_nex'][:]
+            data['kspace'] = f['kspace'][:]
+
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
-        # self.kspace = from_grics_to_espirit_dims(kspace)[:, :, :, [slice_idx]]
-        ky_dx = data['line_idx'][slice_idx]
+        ky_dx = data['idx_ky'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
-        self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
+        self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
         motion_data = data['motion_data'][slice_idx, :]
-        plt.figure()
-        plt.plot(motion_data)
-        plt.xlabel("Line index")
-        plt.title("Motion Curve")
-        plt.savefig("debug_outputs/motion_curve.png")
-        plt.close()
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        # self.TotalKspaceSamples = np.prod(self.ky_idx.shape) 
 
 
 
