@@ -5,9 +5,10 @@ from skimage.data import shepp_logan_phantom
 from skimage.transform import resize
 import math
 import h5py
+import sigpy as sp
+import sigpy.mri as spmri
 
 from src.preprocessing.RawDataReader import RawDataReader
-from src.utils.espiritmaps import calc_espirit_maps
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
@@ -34,7 +35,7 @@ class DataLoader:
             raise ValueError("Unknown data_type")
 
         # Calculate ESPIRiT maps and input image
-        self.smaps = calc_espirit_maps(self.kspace, params.acs, params.kernel_width, sp_device=self.sp_device)
+        self.smaps = self.calc_espirit_maps()
         self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
         smaps_replicated = self.smaps.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1)
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
@@ -173,6 +174,62 @@ class DataLoader:
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+
+    def calc_espirit_maps(self):
+        acs=params.acs
+        kernel_width=params.kernel_width
+        sp_device=self.sp_device
+        kspace = self.kspace
+        device = kspace.device             # torch device of input
+        
+        use_gpu = device.type == "cuda"
+
+        if sp_device is None:
+            sp_device = sp.Device(0 if use_gpu else -1)
+
+        nCha, _, nX, nY, nSlices = kspace.shape
+
+        espirit_maps = torch.zeros(
+            (nCha, nX, nY, nSlices),
+            dtype=torch.complex64,
+            device=device
+        )
+
+        for i in range(nSlices):
+
+            # ---- GPU path ----
+            if use_gpu:
+                import cupy as cp
+                kspace_cp = cp.asarray(kspace[:, 0, :, :, i].contiguous())
+                maps_cp = spmri.app.EspiritCalib(
+                    kspace_cp, calib_width=acs,
+                    kernel_width=kernel_width,
+                    device=sp_device
+                ).run()
+                maps_cp = maps_cp.astype(cp.complex64, copy=False)
+                maps_cp = cp.ascontiguousarray(maps_cp)
+                maps_t = sp.to_pytorch(maps_cp)
+
+            # ---- CPU path ----
+            else:
+                kspace_np = kspace[:, 0, :, :, i].cpu().numpy()
+                maps_np = spmri.app.EspiritCalib(
+                    kspace_np, calib_width=acs,
+                    kernel_width=kernel_width,
+                    device=sp_device
+                ).run()
+                maps_np = maps_np.astype(np.complex64, copy=False)
+                maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
+
+            espiritual = torch.complex(maps_t[..., 0], maps_t[..., 1])
+            espirit_maps[:, :, :, i] = espiritual
+
+            if use_gpu:
+                cp.get_default_memory_pool().free_all_blocks()
+                cp.get_default_pinned_memory_pool().free_all_blocks()
+                torch.cuda.empty_cache()
+
+        return espirit_maps
 
 
 
