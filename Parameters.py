@@ -10,7 +10,7 @@ class Parameters:
     N_mot_states = 4
 
     # Data loading/generation parameters
-    data_type = 'real-world'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
+    data_type = 'raw-data'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
     path_to_fastMRI_data = 'data/kspace.npz'
     path_to_realworld_data = 'data/breast_motion_data.h5'
     saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'

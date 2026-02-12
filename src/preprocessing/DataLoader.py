@@ -142,7 +142,7 @@ class DataLoader:
         data = RawDataReader.read_data_from_rawdata(path_to_ismrm, path_to_saec, h5filename='data/breast_motion_data.h5') #
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
         # self.kspace = from_grics_to_espirit_dims(self.kspace)[:, :, :, [slice_idx]]
-        self.ky_idx = torch.from_numpy(data['line_idx'][slice_idx]).to(self.t_device, dtype=torch.int64)
+        self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
