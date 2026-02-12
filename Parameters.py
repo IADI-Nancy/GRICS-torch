@@ -2,8 +2,9 @@ import os
 
 class Parameters:
     debug_flag = True
+    verbose = True # whether to print detailed logs during reconstruction
     debug_folder = "debug_outputs/"
-    debug_convergence_folder = "debug_outputs/convergence/"
+    logs_folder = "logs/"
 
     #
     Nex = 1 # number of excitations (repetitions) per k-space acquisition
@@ -67,5 +68,5 @@ class Parameters:
         #     self.N_mot_states = self.N_motion_states  # each shot is a separate motion state, but with the original motion from the data
 
         
-        os.makedirs("debug_outputs", exist_ok=True)
-        os.makedirs("debug_outputs/convergence", exist_ok=True)
+        os.makedirs(self.debug_folder, exist_ok=True)
+        os.makedirs(self.logs_folder, exist_ok=True)

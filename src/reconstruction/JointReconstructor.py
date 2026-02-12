@@ -6,10 +6,9 @@ from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
-# from src.utils.Helpers import resize_img_2D
-from src.utils.show_slice import show_slice
-from Parameters import Parameters
+from src.utils.show_and_save_image import show_and_save_image
 
+from Parameters import Parameters
 params = Parameters()
 
 def test_J_singularity(motionSimulator):
@@ -44,16 +43,11 @@ def test_J_singularity(motionSimulator):
 
     return S, V
 
-
-def show_slice_and_save(image, image_name):
-    show_slice(image, max_images=1, headline=image_name)
-    plt.savefig(params.debug_folder + image_name + '.png')
-
 def log_motion_parameters(alpha, res_level, gn_iter):
     """
     alpha: [Nalpha, N_mot_states]
     """
-    fname = f"{params.debug_convergence_folder}motion_params_res{res_level}.txt"
+    fname = f"{params.logs_folder}motion_params_res{res_level}.txt"
     with open(fname, "a") as f:
         f.write(f"\nGN iteration {gn_iter}\n")
         f.write("alpha shape: {}\n".format(tuple(alpha.shape)))
@@ -70,11 +64,11 @@ def save_residual_convergence(residual_norms, title, res_level):
     plt.grid(True)
     plt.tight_layout()
     plt.ylim(bottom=0)
-    plt.savefig(f"{params.debug_convergence_folder}residual_convergence_{title}_res{res_level}.png")
+    plt.savefig(f"{params.logs_folder}residual_convergence_{title}_res{res_level}.png")
     plt.close()
 
     # Optional: save raw values
-    with open(f"{params.debug_convergence_folder}residual_convergence_{title}_res{res_level}.txt", "w") as f:
+    with open(f"{params.logs_folder}residual_convergence_{title}_res{res_level}.txt", "w") as f:
         for i, v in enumerate(residual_norms):
             f.write(f"{i+1}\t{v}\n")
 
@@ -369,6 +363,9 @@ class JointReconstructor:
         GN_iter = params.GN_iterations_per_level
 
         for idx_res, r in enumerate(ResLevels):
+            if params.verbose:
+                fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
+                open(fname, "w").close()
             print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
             # Prepare low-resolution dataset
@@ -426,19 +423,21 @@ class JointReconstructor:
                 dm_norm = torch.linalg.norm(dm.flatten()).item()
                 residual_motion_norms.append(dm_norm)
 
-                log_motion_parameters(
-                    Data_res["MotionModel"],
-                    res_level=idx_res + 1,
-                    gn_iter=it + 1
-                )
+                if params.verbose:
+                    log_motion_parameters(
+                        Data_res["MotionModel"],
+                        res_level=idx_res + 1,
+                        gn_iter=it + 1
+                    )
                 if it > 1 and (residual_recon_norms[-1] > residual_recon_norms[-2] or residual_motion_norms[-1] > residual_motion_norms[-2]):
                     print("    Residual increased — stopping GN at this resolution")
                     break
 
                 Data_prev = Data_res
 
-            if params.debug_flag:
-                show_slice_and_save(Data_res["ReconstructedImage"][0].unsqueeze(-1), 'image_name_resolution_level_'+str(idx_res+1))   
+            if params.debug_flag: 
+                show_and_save_image(Data_res["ReconstructedImage"][0], 'image_resolution_level_'+str(idx_res+1), params.debug_folder)
+            if params.verbose:
                 save_residual_convergence(residual_recon_norms, 'recon', idx_res + 1)
                 save_residual_convergence(residual_motion_norms, 'motion', idx_res + 1)
 

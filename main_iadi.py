@@ -8,13 +8,7 @@ from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.JointReconstructor import JointReconstructor
-from src.utils.show_slice import show_slice
-
-
-def show_slice_and_save(image, image_name):
-    if params.debug_flag:
-        show_slice(image, max_images=1, headline=image_name)
-        plt.savefig(params.debug_folder + image_name + '.png')
+from src.utils.show_and_save_image import show_and_save_image
 
 # --- Optional CuPy import + capability check ---
 try:
@@ -49,10 +43,10 @@ if params.debug_flag:
 
 data = DataLoader(t_device=t_device, sp_device=sp_device)
 image_ground_truth = data.image_ground_truth.clone()
-show_slice_and_save(image_ground_truth[0], 'img_ground_truth')
+show_and_save_image(image_ground_truth[0], 'img_ground_truth', params.debug_folder)
 image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
-show_slice_and_save(image_corrupted[0], 'img_corrupted')
+show_and_save_image(image_corrupted[0], 'img_corrupted', params.debug_folder)
 
 jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.sampling_idx)
 start = time.time()
