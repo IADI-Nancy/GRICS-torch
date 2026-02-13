@@ -372,6 +372,81 @@ class JointReconstructor:
 
         return alpha
 
+    def _initialize_global_tracking(self):
+        global_best_metric = float("inf")
+        global_best_image = None
+        global_best_motion = None
+        global_converged = False
+        return global_best_metric, global_best_image, global_best_motion, global_converged
+
+    def _prepare_resolution_level(self, idx_res, r):
+        if params.verbose:
+            fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
+            open(fname, "w").close()
+        print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
+
+        # Prepare low-resolution dataset
+        Data_res = self.downsample_data(r)
+
+        # Initialize image and motion model
+        if idx_res == 0:
+            Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
+            Data_res["MotionModel"] = self.random_motion_init()
+            # torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
+        return Data_res
+
+    def _initialize_level_tracking(self):
+        residual_recon_norms = []
+        residual_motion_norms = []
+
+        # Initialize patience tracking
+        best_metric = float("inf")
+        best_image = None
+        best_motion = None
+        no_improve_counter = 0
+        return residual_recon_norms, residual_motion_norms, best_metric, best_image, best_motion, no_improve_counter
+
+    def _compute_metric(self, res_norm, dm_norm):
+        # Metric selection
+        if params.residual_metric_type == "recon":
+            metric = res_norm
+        elif params.residual_metric_type == "motion":
+            metric = dm_norm
+        elif params.residual_metric_type == "combined":
+            metric = res_norm + params.motion_weight * dm_norm
+        else:
+            raise ValueError("Unknown residual_metric_type")
+        return metric
+
+    def _apply_patience(self, metric, best_metric, Data_res, best_image, best_motion, no_improve_counter):
+        stop_level = False
+        # Patience logic
+        if metric < best_metric:
+            best_metric = metric
+            best_image = Data_res["ReconstructedImage"].clone()
+            best_motion = Data_res["MotionModel"].clone()
+            no_improve_counter = 0
+        else:
+            no_improve_counter += 1
+            print(f"    No improvement ({no_improve_counter}/{params.patience})")
+        if no_improve_counter >= params.patience:
+            print("    Patience exceeded — restoring best solution")
+            Data_res["ReconstructedImage"] = best_image
+            Data_res["MotionModel"] = best_motion
+            stop_level = True
+
+        return stop_level, best_metric, best_image, best_motion, no_improve_counter
+
+    def _update_global_best(self, best_metric, best_image, best_motion, global_best_metric, global_best_image, global_best_motion):
+        # ----------------------------------------------------------
+        # Compare restart result with global best
+        # ----------------------------------------------------------
+        if best_metric < global_best_metric:
+            global_best_metric = best_metric
+            global_best_image = best_image.clone()
+            global_best_motion = best_motion.clone()
+        return global_best_metric, global_best_image, global_best_motion
+
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
     # ----------------------------------------------------------------------
@@ -379,39 +454,16 @@ class JointReconstructor:
         ResLevels = params.ResolutionLevels
         GN_iter = params.GN_iterations_per_level
 
-        global_best_metric = float("inf")
-        global_best_image = None
-        global_best_motion = None
-        global_converged = False
+        global_best_metric, global_best_image, global_best_motion, global_converged = self._initialize_global_tracking()
 
         for restart in range(params.max_restarts):
             restart_converged = False
 
             for idx_res, r in enumerate(ResLevels):
-                if params.verbose:
-                    fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
-                    open(fname, "w").close()
-                print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
-
-                # Prepare low-resolution dataset
-                Data_res = self.downsample_data(r)
-
-                # Initialize image and motion model
-                if idx_res == 0:
-                    Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-                    Data_res["MotionModel"] = self.random_motion_init()
-                    # torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
-                else:
+                Data_res = self._prepare_resolution_level(idx_res, r)
+                if idx_res != 0:
                     self.upsample_data(Data_prev, Data_res)
-
-                residual_recon_norms = []
-                residual_motion_norms = []
-
-                # Initialize patience tracking
-                best_metric = float("inf")
-                best_image = None
-                best_motion = None
-                no_improve_counter = 0
+                residual_recon_norms, residual_motion_norms, best_metric, best_image, best_motion, no_improve_counter = self._initialize_level_tracking()
 
                 # Gauss–Newton iterations
                 for it in range(GN_iter):
@@ -462,35 +514,16 @@ class JointReconstructor:
                             res_level=idx_res + 1,
                             gn_iter=it + 1
                         )
-                    
-                    # Metric selection
-                    if params.residual_metric_type == "recon":
-                        metric = res_norm
-                    elif params.residual_metric_type == "motion":
-                        metric = dm_norm
-                    elif params.residual_metric_type == "combined":
-                        metric = res_norm + params.motion_weight * dm_norm
-                    else:
-                        raise ValueError("Unknown residual_metric_type")
+                    metric = self._compute_metric(res_norm, dm_norm)
                     
                     if res_norm < params.tol_recon and dm_norm < params.tol_motion:
                         print("    ✅ Convergence reached (tolerance satisfied)")
                         restart_converged = True
                         break
 
-                    # Patience logic
-                    if metric < best_metric:
-                        best_metric = metric
-                        best_image = Data_res["ReconstructedImage"].clone()
-                        best_motion = Data_res["MotionModel"].clone()
-                        no_improve_counter = 0
-                    else:
-                        no_improve_counter += 1
-                        print(f"    No improvement ({no_improve_counter}/{params.patience})")
-                    if no_improve_counter >= params.patience:
-                        print("    Patience exceeded — restoring best solution")
-                        Data_res["ReconstructedImage"] = best_image
-                        Data_res["MotionModel"] = best_motion
+                    stop_level, best_metric, best_image, best_motion, no_improve_counter = self._apply_patience(
+                        metric, best_metric, Data_res, best_image, best_motion, no_improve_counter)
+                    if stop_level:
                         break
 
                     Data_prev = Data_res
@@ -504,14 +537,9 @@ class JointReconstructor:
                 if params.verbose:
                     save_residual_convergence(residual_recon_norms, 'recon_' + str(restart + 1) + '_', idx_res + 1)
                     save_residual_convergence(residual_motion_norms, 'motion_' + str(restart + 1) + '_', idx_res + 1)
-            # ----------------------------------------------------------
-            # Compare restart result with global best
-            # ----------------------------------------------------------
-
-            if best_metric < global_best_metric:
-                global_best_metric = best_metric
-                global_best_image = best_image.clone()
-                global_best_motion = best_motion.clone()
+            global_best_metric, global_best_image, global_best_motion = self._update_global_best(
+                best_metric, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
+            )
 
             if restart_converged:
                 global_converged = True
@@ -521,8 +549,7 @@ class JointReconstructor:
         if not global_converged:
             print("⚠ WARNING: No restart reached tolerance.")
 
-        show_and_save_image(global_best_image[0], 'reconstructed_image', params.debug_folder)
-
-                
+        show_and_save_image(global_best_image[0], 'reconstructed_image', params.results_folder)
+        torch.save(global_best_motion, f"{params.results_folder}motion_model.pt")
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]

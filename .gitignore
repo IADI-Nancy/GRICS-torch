@@ -20,4 +20,5 @@ data/app_data/
 data/
 debug_outputs/
 logs/
+results/
 bart-*

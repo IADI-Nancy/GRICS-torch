@@ -5,6 +5,7 @@ class Parameters:
     verbose = True # whether to print detailed logs during reconstruction
     debug_folder = "debug_outputs/"
     logs_folder = "logs/"
+    results_folder = "results/"
 
     #
     Nex = 1 # number of excitations (repetitions) per k-space acquisition
@@ -74,3 +75,4 @@ class Parameters:
         
         os.makedirs(self.debug_folder, exist_ok=True)
         os.makedirs(self.logs_folder, exist_ok=True)
+        os.makedirs(self.results_folder, exist_ok=True)
