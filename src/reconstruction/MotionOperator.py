@@ -14,12 +14,33 @@ Translational and rotational motion derivatives:
 
 
 class MotionOperator:
-    def __init__(self, Nx, Ny, alpha, centers=None):
+    def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None):
         self.Nx = Nx
         self.Ny = Ny
         self.device = alpha.device
         self.alpha = alpha
-        
+        self.motion_type = motion_type
+        self.centers = centers
+        self.motion_signal = motion_signal
+        if motion_type == 'rigid':
+            self.initialize_rigid_motion_operator()
+        elif motion_type == 'non-rigid':
+            self.initialize_non_rigid_motion_operator()
+        else:
+            raise ValueError(f"Unknown motion type: {motion_type}")    
+
+    def get_sparse_operator(self, motion_state):
+        return self.sparseMotionOperator[motion_state]
+    
+    # ---------------------------------------------------------
+    # Rigid motion
+    # ---------------------------------------------------------
+    def initialize_rigid_motion_operator(self):
+        Nx = self.Nx
+        Ny = self.Ny
+        alpha = self.alpha
+        centers = self.centers if hasattr(self, 'centers') else None
+
         if centers is None:
             centers = torch.zeros((2,alpha.shape[1]), device=self.device)
             centers[0,:] = Nx/2 * torch.ones(alpha.shape[1], device=self.device)
@@ -30,7 +51,6 @@ class MotionOperator:
         coords_x = torch.arange(Nx, device=self.device, dtype=torch.float32)
         coords_y = torch.arange(Ny, device=self.device, dtype=torch.float32)
         self.X, self.Y = torch.meshgrid(coords_x, coords_y, indexing='ij')
-
 
         # Build coordinate grid (absolute coordinates 0..Nx-1, 0..Ny-1)
         xs = torch.arange(Nx, device=self.device)
@@ -66,12 +86,7 @@ class MotionOperator:
             MotionOp = MotionOperator.create_sparse_motion_operator(Ux, Uy)
             self.sparseMotionOperator.append(MotionOp)
 
-    def get_sparse_operator(self, motion_state):
-        return self.sparseMotionOperator[motion_state]
-
-    # ---------------------------------------------------------
-    # Geometric derivatives
-    # ---------------------------------------------------------
+    # ------------------------ Geometric derivatives ----------------------------
 
     def translation_derivative(self):
         ones = torch.ones((self.Nx, self.Ny), device=self.device)
@@ -92,9 +107,7 @@ class MotionOperator:
 
         return dX, dY
 
-    # ---------------------------------------------------------
-    # FULL JACOBIAN OPERATOR J * δᾱ_j = sum_j(∂x_i/∂ᾱ_j) δᾱ_j = δu_i
-    # ---------------------------------------------------------
+    # ----------------- FULL JACOBIAN OPERATOR J * δᾱ_j = sum_j(∂x_i/∂ᾱ_j) δᾱ_j = δu_i -----------------
 
     def apply_J(self, delta_alpha, motion_state):
         """
@@ -102,6 +115,9 @@ class MotionOperator:
         returns:
             du_x, du_y  (each Nx x Ny)
         """
+        if self.motion_type != 'rigid':
+            raise NotImplementedError("apply_J is only implemented for rigid motion.")
+
         dt_x, dt_y, dphi = delta_alpha
 
         # Derivative fields
@@ -124,9 +140,7 @@ class MotionOperator:
         return du_x, du_y
 
 
-    # ---------------------------------------------------------
-    # ADJOINT (TRANSPOSE–CONJUGATE) JACOBIAN   JH * δu_i = sum_i(∂x_i/∂ᾱ_j) δu_i = δᾱ_j
-    # ---------------------------------------------------------
+    # --------- ADJOINT (TRANSPOSE–CONJUGATE) JACOBIAN   JH * δu_i = sum_i(∂x_i/∂ᾱ_j) δu_i = δᾱ_j -----------------
 
     def apply_JH(self, du_x, du_y, motion_state):
         """
@@ -134,7 +148,8 @@ class MotionOperator:
         Returns
             delta_alpha : (3,) tensor
         """
-        # zeros = torch.zeros((self.Nx, self.Ny), device=self.device)
+        if self.motion_type != 'rigid':
+            raise NotImplementedError("apply_JH is only implemented for rigid motion.")
 
         (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
         dX_dphi, dY_dphi = self.phi_derivative(motion_state)
@@ -145,6 +160,31 @@ class MotionOperator:
         dphi = torch.sum(dX_dphi * du_x + dY_dphi * du_y)
 
         return torch.stack([dt_x, dt_y, dphi])
+    
+    # ---------------------------------------------------------
+    # -------------------- Non-rigid motion -------------------
+    # ---------------------------------------------------------
+    def initialize_non_rigid_motion_operator(self):
+        alpha = self.alpha
+        signal = torch.as_tensor(self.motion_signal, device=self.device, dtype=alpha.dtype)
+
+        self.sparseMotionOperator = []
+        alpha_x = alpha[0]
+        alpha_y = alpha[1]
+        n_states = signal.numel()
+
+        for motion_state in range(n_states):
+            ux = alpha_x * signal[motion_state]
+            uy = alpha_y * signal[motion_state]
+            motion_op = MotionOperator.create_sparse_motion_operator(ux, uy)
+            self.sparseMotionOperator.append(motion_op)
+
+
+
+
+    # ---------------------------------------------------------------------------------
+    # -------- Sparse interpolation operator M for applying motion to images ----------
+    # ---------------------------------------------------------------------------------
 
     @staticmethod
     def create_sparse_motion_operator(Ux, Uy):

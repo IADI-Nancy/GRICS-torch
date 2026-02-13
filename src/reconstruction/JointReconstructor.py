@@ -221,7 +221,7 @@ class JointReconstructor:
     def build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
         alpha = Data_res["MotionModel"]
-        motionOperator = MotionOperator(Nx, Ny, alpha)
+        motionOperator = MotionOperator(Nx, Ny, alpha, params.motion_type)
         return motionOperator
 
     
@@ -379,7 +379,7 @@ class JointReconstructor:
         global_converged = False
         return global_best_metric, global_best_image, global_best_motion, global_converged
 
-    def _prepare_resolution_level(self, idx_res, r):
+    def _prepare_resolution_level(self, idx_res, r, restart):
         if params.verbose:
             fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
             open(fname, "w").close()
@@ -391,8 +391,10 @@ class JointReconstructor:
         # Initialize image and motion model
         if idx_res == 0:
             Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-            Data_res["MotionModel"] = self.random_motion_init()
-            # torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
+            if restart == 0:
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
+            else:
+                Data_res["MotionModel"] = self.random_motion_init()
         return Data_res
 
     def _initialize_level_tracking(self):
@@ -460,7 +462,7 @@ class JointReconstructor:
             restart_converged = False
 
             for idx_res, r in enumerate(ResLevels):
-                Data_res = self._prepare_resolution_level(idx_res, r)
+                Data_res = self._prepare_resolution_level(idx_res, r, restart)
                 if idx_res != 0:
                     self.upsample_data(Data_prev, Data_res)
                 residual_recon_norms, residual_motion_norms, best_metric, best_image, best_motion, no_improve_counter = self._initialize_level_tracking()

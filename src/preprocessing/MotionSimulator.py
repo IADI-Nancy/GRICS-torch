@@ -1,13 +1,13 @@
 import numpy as np
 import torch
 
-from Parameters import Parameters
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 import matplotlib.pyplot as plt
 
+from Parameters import Parameters
 params = Parameters()
 
 class MotionSimulator:
@@ -82,7 +82,9 @@ class MotionSimulator:
         plt.close()
 
     def apply_motion(self, alpha, centers):
-        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, centers)
+        self.MotionOperator = MotionOperator(
+            self.Nx, self.Ny, alpha, params.motion_type, centers=centers
+        )
 
         E = EncodingOperator(
             self.smaps,
@@ -303,7 +305,7 @@ class MotionSimulator:
 
     def simulate_discrete_rigid_motion(self):
         # Each shot is its own motion state
-        ky_per_mot_state_idx = self.ky_per_shot
+        ky_per_mot_state_idx = self.ky_per_motion_state
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)

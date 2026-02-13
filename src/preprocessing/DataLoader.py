@@ -128,7 +128,7 @@ class DataLoader:
         # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
         phantom = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
         coil_imgs = phantom * smaps             # (Ncoils, Nx, Ny, Nz)
-        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
+        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
 
         coil_imgs = coil_imgs.contiguous()       # important for FFT speed
 
@@ -157,6 +157,15 @@ class DataLoader:
         self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
+        if params.debug_flag:
+            SamplingSimulator.visualize_ky_order(
+                [self.ky_idx.detach().cpu()],
+                Ny=self.Ny,
+                folder=params.debug_folder,
+                fname=f"ky_order_rawdata_slice{slice_idx}.png"
+            )
+        
+
     def load_realworld_data(self, path_to_data, slice_idx=0):
         data = {}
         with h5py.File(path_to_data, 'r') as f:
@@ -174,6 +183,14 @@ class DataLoader:
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+
+        if params.debug_flag:
+            SamplingSimulator.visualize_ky_order(
+                [self.ky_idx.detach().cpu()],
+                Ny=self.Ny,
+                folder=params.debug_folder,
+                fname=f"ky_order_realworld_slice{slice_idx}.png"
+            )
 
     def calc_espirit_maps(self):
         acs=params.acs
