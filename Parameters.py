@@ -40,6 +40,7 @@ class Parameters:
     kernel_width = 12
 
     # General reconstruction parameters
+    max_restarts = 3
     use_scaled_motion_update = False  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
     GN_iterations_per_level = 16

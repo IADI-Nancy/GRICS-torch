@@ -354,6 +354,23 @@ class JointReconstructor:
         motion_perturb = delta.reshape(self.Nalpha, params.N_mot_states)
 
         return motion_perturb
+    
+    def random_motion_init(self):
+        Nalpha = self.Nalpha                    # should be 3
+        Nshots = params.N_mot_states            # number of motion states
+
+        alpha = torch.zeros((Nalpha, Nshots), device=self.device)
+
+        # Translation X ∈ [-max_tx, +max_tx]
+        alpha[0, :] = params.max_tx * (2 * torch.rand(Nshots, device=self.device) - 1)
+
+        # Translation Y ∈ [-max_ty, +max_ty]
+        alpha[1, :] = params.max_ty * (2 * torch.rand(Nshots, device=self.device) - 1)
+
+        # Rotation ∈ [-max_phi, +max_phi] degrees → radians
+        alpha[2, :] = (params.max_phi *(2 * torch.rand(Nshots, device=self.device) - 1)* (torch.pi / 180.0))
+
+        return alpha
 
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
@@ -362,113 +379,150 @@ class JointReconstructor:
         ResLevels = params.ResolutionLevels
         GN_iter = params.GN_iterations_per_level
 
-        for idx_res, r in enumerate(ResLevels):
-            if params.verbose:
-                fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
-                open(fname, "w").close()
-            print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
+        global_best_metric = float("inf")
+        global_best_image = None
+        global_best_motion = None
+        global_converged = False
 
-            # Prepare low-resolution dataset
-            Data_res = self.downsample_data(r)
+        for restart in range(params.max_restarts):
+            restart_converged = False
 
-            # Initialize image and motion model
-            if idx_res == 0:
-                Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
-            else:
-                self.upsample_data(Data_prev, Data_res)
-
-            residual_recon_norms = []
-            residual_motion_norms = []
-
-            # Initialize patience tracking
-            best_metric = float("inf")
-            best_image = None
-            best_motion = None
-            no_improve_counter = 0
-
-            # Gauss–Newton iterations
-            for it in range(GN_iter):
-                print(f"  GN iteration {it+1}/{GN_iter}")
-
-                # 1) Build motion and encoding operators
-                Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
-                Data_res["E"] = self.build_encoding_operator(Data_res)
-
-                # 2) Solve for image
-                print("    Solving for image...")
-                img = self.solve_image(Data_res)
-                Data_res["ReconstructedImage"] = img
-
-                if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
-                    break
-
-                # 3) Compute residual
-                x = img.flatten()
-                y = Data_res["E"].forward(x)
-                residual = Data_res["KspaceData"].flatten() - y
-                res_norm = torch.linalg.norm(residual).item()
-                residual_recon_norms.append(res_norm)
-
-                # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
-                Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
-                # S, V = test_J_singularity(Data_res["J"])
-
-                # 4) Solve for motion update
-                print("    Solving for motion update...")
-                # dm = self.solve_motion(Data_res, residual)
-                if params.use_scaled_motion_update:
-                    dm = self.solve_motion_scaled(Data_res, residual)
-                else:
-                    dm = self.solve_motion(Data_res, residual)
-
-                Data_res["MotionModel"] += dm.real
-
-                dm_norm = torch.linalg.norm(dm.flatten()).item()
-                residual_motion_norms.append(dm_norm)
-
+            for idx_res, r in enumerate(ResLevels):
                 if params.verbose:
-                    log_motion_parameters(
-                        Data_res["MotionModel"],
-                        res_level=idx_res + 1,
-                        gn_iter=it + 1
-                    )
-                
-                # -------------------------
-                # Metric selection
-                # -------------------------
-                if params.residual_metric_type == "recon":
-                    metric = res_norm
-                elif params.residual_metric_type == "motion":
-                    metric = dm_norm
-                elif params.residual_metric_type == "combined":
-                    metric = res_norm + params.motion_weight * dm_norm
-                else:
-                    raise ValueError("Unknown residual_metric_type")
+                    fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
+                    open(fname, "w").close()
+                print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
-                # -------------------------
-                # Patience logic
-                # -------------------------
-                if metric < best_metric:
-                    best_metric = metric
-                    best_image = Data_res["ReconstructedImage"].clone()
-                    best_motion = Data_res["MotionModel"].clone()
-                    no_improve_counter = 0
+                # Prepare low-resolution dataset
+                Data_res = self.downsample_data(r)
+
+                # Initialize image and motion model
+                if idx_res == 0:
+                    Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
+                    Data_res["MotionModel"] = self.random_motion_init()
+                    # torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
                 else:
-                    no_improve_counter += 1
-                    print(f"    No improvement ({no_improve_counter}/{params.patience})")
-                if no_improve_counter >= params.patience:
-                    print("    Patience exceeded — restoring best solution")
-                    Data_res["ReconstructedImage"] = best_image
-                    Data_res["MotionModel"] = best_motion
+                    self.upsample_data(Data_prev, Data_res)
+
+                residual_recon_norms = []
+                residual_motion_norms = []
+
+                # Initialize patience tracking
+                best_metric = float("inf")
+                best_image = None
+                best_motion = None
+                no_improve_counter = 0
+
+                # Gauss–Newton iterations
+                for it in range(GN_iter):
+                    print(f"  GN iteration {it+1}/{GN_iter}")
+
+                    # -------------------------------IMAGE RECONSTRUCTION STEP -------------------------
+
+                    # 1) Build motion and encoding operators
+                    Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
+                    Data_res["E"] = self.build_encoding_operator(Data_res)
+
+                    # 2) Solve for image
+                    print("    Solving for image...")
+                    img = self.solve_image(Data_res)
+                    Data_res["ReconstructedImage"] = img
+
+                    if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
+                        break
+
+                    # 3) Compute residual
+                    x = img.flatten()
+                    y = Data_res["E"].forward(x)
+                    residual = Data_res["KspaceData"].flatten() - y
+                    res_norm = torch.linalg.norm(residual).item()
+                    residual_recon_norms.append(res_norm)
+
+                    # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
+
+                    # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
+                    Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
+
+                    # 4) Solve for motion update
+                    print("    Solving for motion update...")
+                    if params.use_scaled_motion_update:
+                        dm = self.solve_motion_scaled(Data_res, residual)
+                    else:
+                        dm = self.solve_motion(Data_res, residual)
+
+                    Data_res["MotionModel"] += dm.real
+                    dm_norm = torch.linalg.norm(dm.flatten()).item()
+                    residual_motion_norms.append(dm_norm)
+
+                    # ------------------------- LOGGING and PATIENCE CHECK -------------------------
+
+                    if params.verbose:
+                        log_motion_parameters(
+                            Data_res["MotionModel"],
+                            res_level=idx_res + 1,
+                            gn_iter=it + 1
+                        )
+                    
+                    # Metric selection
+                    if params.residual_metric_type == "recon":
+                        metric = res_norm
+                    elif params.residual_metric_type == "motion":
+                        metric = dm_norm
+                    elif params.residual_metric_type == "combined":
+                        metric = res_norm + params.motion_weight * dm_norm
+                    else:
+                        raise ValueError("Unknown residual_metric_type")
+                    
+                    if res_norm < params.tol_recon and dm_norm < params.tol_motion:
+                        print("    ✅ Convergence reached (tolerance satisfied)")
+                        restart_converged = True
+                        break
+
+                    # Patience logic
+                    if metric < best_metric:
+                        best_metric = metric
+                        best_image = Data_res["ReconstructedImage"].clone()
+                        best_motion = Data_res["MotionModel"].clone()
+                        no_improve_counter = 0
+                    else:
+                        no_improve_counter += 1
+                        print(f"    No improvement ({no_improve_counter}/{params.patience})")
+                    if no_improve_counter >= params.patience:
+                        print("    Patience exceeded — restoring best solution")
+                        Data_res["ReconstructedImage"] = best_image
+                        Data_res["MotionModel"] = best_motion
+                        break
+
+                    Data_prev = Data_res
+
+                if restart_converged:
                     break
 
-                Data_prev = Data_res
+                if params.debug_flag: 
+                    show_and_save_image(Data_res["ReconstructedImage"][0], \
+                        'image_resolution_restart_' + str(restart + 1) + '_level' + str(idx_res+1), params.debug_folder)
+                if params.verbose:
+                    save_residual_convergence(residual_recon_norms, 'recon_' + str(restart + 1) + '_', idx_res + 1)
+                    save_residual_convergence(residual_motion_norms, 'motion_' + str(restart + 1) + '_', idx_res + 1)
+            # ----------------------------------------------------------
+            # Compare restart result with global best
+            # ----------------------------------------------------------
 
-            if params.debug_flag: 
-                show_and_save_image(Data_res["ReconstructedImage"][0], 'image_resolution_level_'+str(idx_res+1), params.debug_folder)
-            if params.verbose:
-                save_residual_convergence(residual_recon_norms, 'recon', idx_res + 1)
-                save_residual_convergence(residual_motion_norms, 'motion', idx_res + 1)
+            if best_metric < global_best_metric:
+                global_best_metric = best_metric
+                global_best_image = best_image.clone()
+                global_best_motion = best_motion.clone()
+
+            if restart_converged:
+                global_converged = True
+                print("Stopping restarts: true convergence achieved.")
+                break
+
+        if not global_converged:
+            print("⚠ WARNING: No restart reached tolerance.")
+
+        show_and_save_image(global_best_image[0], 'reconstructed_image', params.debug_folder)
+
+                
 
         return Data_res["ReconstructedImage"], Data_res["MotionModel"]
