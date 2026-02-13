@@ -7,7 +7,7 @@ class Parameters:
     logs_folder = "logs/"
     results_folder = "results/"
     Nex = 1 # number of excitations (repetitions) per k-space acquisition
-    motion_type = 'rigid'  # 'rigid', 'non-rigid'
+    motion_type = 'non-rigid'  # 'rigid', 'non-rigid'
     N_mot_states = 4
 
     # Data loading/generation parameters
@@ -25,7 +25,7 @@ class Parameters:
     kspace_sampling_type = 'random' # 'linear', 'interleaved' or 'random'
 
     # Motion simulation parameters
-    simulation_type = 'discrete-rigid'  # 'discrete-rigid', 'rigid', 'non-rigid', 'no-motion' or 'as-it-is'
+    simulation_type = 'discrete-non-rigid'  # 'discrete-rigid', 'rigid', 'discrete-non-rigid', 'no-motion' or 'as-it-is'
     num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
@@ -34,6 +34,8 @@ class Parameters:
     max_center_y = 0 # 10.0  # maximum variation in center y (pixels)
     seed = 1
     motion_tau = 2  # transition width of motion events (in ky lines)
+    nonrigid_motion_amplitude = 1.0
+    displacementfield_size = 1
 
     # Espirits sensitivity map calculation parameters
     acs = 48
@@ -66,6 +68,8 @@ class Parameters:
             self.N_mot_states = self.Nshots  # each shot is a separate motion state
         elif self.simulation_type in ['rigid']:
             self.N_mot_states = self.num_motion_events + 1
+        elif self.simulation_type in ['discrete-non-rigid']:
+            self.N_mot_states = self.Nshots
         elif self.simulation_type in ['no-motion']:
             self.N_mot_states = 1
         # elif self.simulation_type in ['as-it-is', 'non-rigid']:

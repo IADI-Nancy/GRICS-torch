@@ -57,6 +57,8 @@ class DataLoader:
                     motionSimulator.simulate_discrete_rigid_motion()
                 elif params.simulation_type == 'rigid':
                     motionSimulator.simulate_realistic_rigid_motion()
+                elif params.simulation_type == 'discrete-non-rigid':
+                    motionSimulator.simulate_discrete_non_rigid_motion()
                 else:
                     raise ValueError("Unknown simulation_type")
                 self.kspace = motionSimulator.get_corrupted_kspace()

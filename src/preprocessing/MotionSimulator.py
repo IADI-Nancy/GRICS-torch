@@ -81,9 +81,12 @@ class MotionSimulator:
         plt.savefig("debug_outputs/all_curves.png")
         plt.close()
 
-    def apply_motion(self, alpha, centers):
+    def apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
+        if motion_type is None:
+            motion_type = params.motion_type
+
         self.MotionOperator = MotionOperator(
-            self.Nx, self.Ny, alpha, params.motion_type, centers=centers
+            self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal
         )
 
         E = EncodingOperator(
@@ -316,6 +319,74 @@ class MotionSimulator:
         self.navigator, alpha, centers = self.create_discrete_motion_curves(ky_per_mot_state_idx)
 
         self.apply_motion(alpha, centers)
+
+    def create_discrete_non_rigid_alpha_fields(self):
+        # ground-truth alpha maps used to generate displacements
+        x = torch.arange(0, self.Nx, device=self.t_device, dtype=torch.float32)
+        y = torch.arange(0, self.Ny, device=self.t_device, dtype=torch.float32)
+        X, Y = torch.meshgrid(x, y, indexing='ij')
+
+        mu_xx = self.Nx / 2.0  # center of the gauss in x direction
+        mu_yy = self.Ny / 2.0  # center of the gauss in y direction
+        mu_yx = self.Nx / 2.0  # center of the gauss in x direction
+        mu_xy = self.Ny / 2.0  # center of the gauss in y direction
+
+        sigma = params.displacementfield_size * np.sqrt(self.Nx * self.Ny) / 2
+
+        alpha_x = (
+            torch.exp(- (X - mu_xx) ** 2 / (2 * sigma ** 2))
+            * torch.exp(- (Y - mu_xy) ** 2 / (2 * sigma ** 2))
+        )
+        alpha_y = (
+            2 * torch.exp(- (X - mu_yx) ** 2 / (2 * sigma ** 2))
+            * torch.exp(- (Y - mu_yy) ** 2 / (2 * sigma ** 2))
+        )
+        alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
+        return alpha_x, alpha_y, alpha_maps
+
+    def simulate_discrete_non_rigid_motion(self):
+        print("Simulating non-rigid motion fields...")
+
+        ky_per_mot_state_idx = self.ky_per_motion_state
+        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
+            ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device
+        )
+        self.TotalKspaceSamples = self.Ny * self.Nx
+
+        Nshots = len(ky_per_mot_state_idx[0])
+
+        # sensor time course S(t)
+        S = params.nonrigid_motion_amplitude * torch.randn(Nshots, device=self.t_device)
+
+        alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
+        self.alpha_maps = alpha_maps
+
+        if params.debug_flag:
+            print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
+            plt.figure(figsize=(10, 4))
+            plt.subplot(1, 2, 1)
+            plt.imshow(alpha_x.detach().cpu().numpy(), cmap="viridis")
+            plt.title("alpha_x")
+            plt.colorbar(fraction=0.046, pad=0.04)
+            plt.axis("off")
+
+            plt.subplot(1, 2, 2)
+            plt.imshow(alpha_y.detach().cpu().numpy(), cmap="viridis")
+            plt.title("alpha_y")
+            plt.colorbar(fraction=0.046, pad=0.04)
+            plt.axis("off")
+
+            plt.tight_layout()
+            plt.savefig(f"{params.debug_folder}nonrigid_alpha_fields.png")
+            plt.close()
+
+        self.apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
+
+        self.navigator_mot_state = S
+        self.tx_mot_state = torch.zeros(Nshots, device=self.t_device)
+        self.ty_mot_state = torch.zeros(Nshots, device=self.t_device)
+        self.phi_mot_state = torch.zeros(Nshots, device=self.t_device)
+        self.expand_motion_to_ky(ky_per_mot_state_idx)
 
 
 
