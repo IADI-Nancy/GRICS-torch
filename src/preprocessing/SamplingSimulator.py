@@ -64,18 +64,18 @@ class SamplingSimulator:
         ky_idx  = []   # motion-state / shot-wise flattened ky indices
         nex_idx = []   # motion-state / shot-wise flattened nex indices
 
-        if params.kspace_sampling_type == 'random':
-            # 1) Full random permutation of all ky (0..Ny-1) for this Nex
-            ky_all = torch.randperm(self.Ny, device=self.t_device, dtype=torch.int32)
-
-            # 2) Split randomly shuffled ky into shots (for bookkeeping only)
-            split_sizes = [(self.Ny // Nshots) + (1 if s < self.Ny % Nshots else 0)
-                        for s in range(Nshots)]
-            start = 0
-
         for nex in range(Nex):
             ky_list  = []   # chronological chunks (per Nex)
             nex_list = []
+
+            if params.kspace_sampling_type == 'random':
+                # Independent random ky ordering for each Nex
+                ky_all = torch.randperm(self.Ny, device=self.t_device, dtype=torch.int32)
+                split_sizes = [
+                    (self.Ny // Nshots) + (1 if s < self.Ny % Nshots else 0)
+                    for s in range(Nshots)
+                ]
+                start = 0
 
             for shot in range(Nshots):
                 shot_in_nex = shot

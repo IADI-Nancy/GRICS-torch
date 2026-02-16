@@ -26,7 +26,8 @@ class ConjugateGradientSolver:
     # Regularized linear operator: A(x) = Eh(E(x)) + lambda_scaled * x
     # --------------------------------------------------------------
     def A(self, x):
-        return self.E.normal(x) + self.lambda_ * self.regularization(x)
+        lam = self.lambda_scaled if hasattr(self, "lambda_scaled") else self.lambda_
+        return self.E.normal(x) + lam * self.regularization(x)
     
     def regularization(self, x):
         if self.regularizer == "Tikhonov":
@@ -46,7 +47,8 @@ class ConjugateGradientSolver:
         dy = torch.roll(field, shifts=-1, dims=-1) - field
         dxx = dx - torch.roll(dx, shifts=1, dims=-2)
         dyy = dy - torch.roll(dy, shifts=1, dims=-1)
-        return (dxx + dyy).reshape(-1)
+        # Return L^H L x (positive semidefinite): minus discrete Laplacian.
+        return (-(dxx + dyy)).reshape(-1)
     
     def laplacian_op(self, x):
         if self.regularization_shape is None:
@@ -57,7 +59,8 @@ class ConjugateGradientSolver:
             + torch.roll(field, shifts=1, dims=-2) + torch.roll(field, shifts=-1, dims=-2)
             + torch.roll(field, shifts=1, dims=-1) + torch.roll(field, shifts=-1, dims=-1)
         )
-        return lap.reshape(-1)
+        # Use -Laplacian so the regularization term is positive semidefinite.
+        return (-lap).reshape(-1)
 
     # --------------------------------------------------------------
     # Preconditioners ----------------------------------------------

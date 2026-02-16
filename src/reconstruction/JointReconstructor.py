@@ -295,25 +295,36 @@ class JointReconstructor:
         Nparams = self._n_motion_params(Data_res)
         x0 = torch.zeros(Nparams, dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
-        b = J.adjoint(residual)
+        b_data = J.adjoint(residual)
 
         if params.motion_type == "non-rigid":
             solver = ConjugateGradientSolver(
                 J,
                 reg_lambda=params.lambda_m,
-                regularizer="Tikhonov_gradient",
+                regularizer="Tikhonov_laplacian",
                 regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
                 verbose=True,
             )
+            # Match MATLAB formulation:
+            # A(dm) = J^H J dm + mu_scaled * GhG(dm)
+            # b     = J^H r    - mu_scaled * GhG(alpha_current)
+            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data, p=2)
+            b = b_data - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
+            mot_pert_vec = solver.cg_keep_best(
+                b.flatten(),
+                x0=x0.flatten(),
+                max_iter=params.max_iter_motion,
+                tol=params.tol_motion,
+                M=None,
+            )
         else:
             solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=True)
-
-        mot_pert_vec = solver.solve_cg_keep_best(
-            b.flatten(),
-            x0=x0.flatten(),
-            max_iter=params.max_iter_motion,
-            tol=params.tol_motion,
-        )
+            mot_pert_vec = solver.solve_cg_keep_best(
+                b_data.flatten(),
+                x0=x0.flatten(),
+                max_iter=params.max_iter_motion,
+                tol=params.tol_motion,
+            )
 
         if params.motion_type == "rigid":
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, params.N_mot_states)
@@ -409,13 +420,6 @@ class JointReconstructor:
         # Rotation ∈ [-max_phi, +max_phi] degrees → radians
         alpha[2, :] = (params.max_phi *(2 * torch.rand(Nshots, device=self.device) - 1)* (torch.pi / 180.0))
 
-        return alpha
-
-    def random_nonrigid_motion_init(self, Nx, Ny):
-        alpha = torch.zeros((self.Nalpha, Nx, Ny), device=self.device)
-        scale = getattr(params, "nonrigid_motion_amplitude", 1.0)
-        alpha[0] = 0.1 * scale * (2 * torch.rand((Nx, Ny), device=self.device) - 1)
-        alpha[1] = 0.1 * scale * (2 * torch.rand((Nx, Ny), device=self.device) - 1)
         return alpha
 
     def _initialize_global_tracking(self):

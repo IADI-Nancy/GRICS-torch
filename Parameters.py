@@ -56,7 +56,7 @@ class Parameters:
     tol_recon = 1e-3
 
     # Motion model parameters
-    lambda_m = 1
+    lambda_m = 1.e-3
     max_iter_motion = 20
     tol_motion = 1e-3
 
