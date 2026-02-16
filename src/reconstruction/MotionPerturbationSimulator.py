@@ -1,6 +1,6 @@
 import torch
-from  src.utils.fftnc import fftnc, ifftnc
-from src.reconstruction.MotionOperator import MotionOperator
+import torch.nn.functional as F
+from  src.utils.fftnc import fftnc
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
@@ -31,159 +31,131 @@ class MotionPerturbationSimulator:
     def set_image(self, image):
         self.image = image.reshape(self.Nex, self.SensitivityMaps.shape[1], self.SensitivityMaps.shape[2])
 
-    def gradient_2d(self, img):
-        # Central differences in the interior, one-sided at boundaries.
-        gx = torch.empty_like(img)
-        gy = torch.empty_like(img)
+    def _grid_sample_complex(self, image, ux, uy):
+        nx, ny = image.shape
+        dtype = image.real.dtype
+        device = image.device
 
-        # x-gradient (axis 0)
-        gx[1:-1, :] = 0.5 * (img[2:, :] - img[:-2, :])
-        gx[0, :] = img[1, :] - img[0, :]
-        gx[-1, :] = img[-1, :] - img[-2, :]
+        x = torch.arange(nx, device=device, dtype=dtype)
+        y = torch.arange(ny, device=device, dtype=dtype)
+        xx, yy = torch.meshgrid(x, y, indexing="ij")
 
-        # y-gradient (axis 1)
-        gy[:, 1:-1] = 0.5 * (img[:, 2:] - img[:, :-2])
-        gy[:, 0] = img[:, 1] - img[:, 0]
-        gy[:, -1] = img[:, -1] - img[:, -2]
+        src_x = xx + ux
+        src_y = yy + uy
 
-        return gx, gy
+        if nx > 1:
+            y_norm = 2.0 * src_x / (nx - 1) - 1.0
+        else:
+            y_norm = torch.zeros_like(src_x)
+        if ny > 1:
+            x_norm = 2.0 * src_y / (ny - 1) - 1.0
+        else:
+            x_norm = torch.zeros_like(src_y)
+
+        grid = torch.stack([x_norm, y_norm], dim=-1).unsqueeze(0)
+        real = image.real.unsqueeze(0).unsqueeze(0)
+        imag = image.imag.unsqueeze(0).unsqueeze(0)
+        real_w = F.grid_sample(
+            real, grid, mode="bilinear", padding_mode="border", align_corners=True
+        )[0, 0]
+        imag_w = F.grid_sample(
+            imag, grid, mode="bilinear", padding_mode="border", align_corners=True
+        )[0, 0]
+        return torch.complex(real_w, imag_w)
+
+    def _displacement_fields(self, alpha, motion_state, nx, ny, dtype, device):
+        if self.motionOperator.motion_type == "rigid":
+            centers = self.motionOperator.centers
+            if centers is None:
+                centers = torch.zeros((2, alpha.shape[1]), dtype=dtype, device=device)
+                centers[0, :] = nx / 2.0
+                centers[1, :] = ny / 2.0
+
+            tx = alpha[0, motion_state]
+            ty = alpha[1, motion_state]
+            phi = alpha[2, motion_state]
+            cx = centers[0, motion_state]
+            cy = centers[1, motion_state]
+
+            x = torch.arange(nx, device=device, dtype=dtype)
+            y = torch.arange(ny, device=device, dtype=dtype)
+            xx, yy = torch.meshgrid(x, y, indexing="ij")
+            xmc = xx - cx
+            ymc = yy - cy
+            c = torch.cos(phi)
+            s = torch.sin(phi)
+            xp = cx + c * xmc - s * ymc + tx
+            yp = cy + s * xmc + c * ymc + ty
+            ux = xp - xx
+            uy = yp - yy
+            return ux, uy
+
+        motion_signal = torch.as_tensor(
+            self.motionOperator.motion_signal, device=device, dtype=dtype
+        )
+        ux = alpha[0] * motion_signal[motion_state]
+        uy = alpha[1] * motion_signal[motion_state]
+        return ux, uy
+
+    def _forward_alpha(self, alpha):
+        Ncoils, nx, ny, _ = self.SensitivityMaps.shape
+        n_states = len(self.SamplingIndices[0])
+        image = self.image.reshape(self.Nex, nx, ny)
+        kspace = torch.zeros(
+            (Ncoils, self.Nex, self.Nsamples), dtype=torch.complex64, device=self.device
+        )
+
+        for motion_state in range(n_states):
+            ux, uy = self._displacement_fields(
+                alpha, motion_state, nx, ny, alpha.dtype, alpha.device
+            )
+            for nex in range(self.Nex):
+                idx = self.SamplingIndices[nex][motion_state]
+                if idx.numel() == 0:
+                    continue
+                warped = self._grid_sample_complex(image[nex], ux, uy)
+                for coil in range(Ncoils):
+                    coil_img = warped * self.SensitivityMaps[coil].squeeze(-1)
+                    k = fftnc(coil_img, dims=(0, 1))
+                    kspace[coil, nex, idx] = k.flatten()[idx]
+        return kspace.flatten()
 
     def forward(self, MotionModelPerturbation):
-        Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
-
+        n_states = len(self.SamplingIndices[0])
         if self.motionOperator.motion_type == "rigid":
-            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_mot_states)
+            delta = MotionModelPerturbation.reshape(self.Nalpha, n_states)
         else:
-            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
-            motion_signal = torch.as_tensor(
-                self.motionOperator.motion_signal,
-                device=self.device,
-                dtype=MotionModelPerturbation.dtype,
-            )
-        # output k-space residual
-        ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
-                                     dtype=torch.complex64,
-                                     device=self.device)
+            nx, ny = self.SensitivityMaps.shape[1], self.SensitivityMaps.shape[2]
+            delta = MotionModelPerturbation.reshape(self.Nalpha, nx, ny)
 
-        # ---- Loop over motion states ----
-        for motion_state in range(N_mot_states):
-              
-            MotionOp = self.motionOperator.get_sparse_operator(motion_state)
+        alpha0 = self.motionOperator.alpha.detach().to(self.device, dtype=torch.float32)
+        delta = delta.to(self.device)
 
-            for nex in range(self.Nex):
-                SamplingIndices = self.SamplingIndices[nex][motion_state]
-                if SamplingIndices.numel() == 0:
-                    continue
-                image_nex = self.image[nex]
-                # 1) Warp the image using the motion operator
-                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+        def directional(d):
+            d = d.to(dtype=torch.float32)
+            scale = torch.max(torch.abs(d)).item()
+            eps = 1e-3 / max(scale, 1e-6)
+            with torch.no_grad():
+                y_p = self._forward_alpha(alpha0 + eps * d)
+                y_m = self._forward_alpha(alpha0 - eps * d)
+            return (y_p - y_m) / (2.0 * eps)
 
-                # 2) Spatial gradients ∂I/∂x, ∂I/∂y
-                Gx, Gy = self.gradient_2d(WarpedImage)
-
-                # 3) motion model and displacement field perturbations
-                if self.motionOperator.motion_type == "rigid":
-                    dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, motion_state], motion_state)
-                else:
-                    # Non-rigid model is modulated by the state-dependent motion signal.
-                    dux = MotionModelPerturbation[0] * motion_signal[motion_state]
-                    duy = MotionModelPerturbation[1] * motion_signal[motion_state]
-
-                # 4) optical-flow first-order perturbation
-                WarpedImageError = Gx * dux + Gy * duy
-
-                # 5) Loop over coils
-                for coil in range(Ncoils):
-                    # apply coil sensitivities
-                    WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil].squeeze()
-
-                    # FFT
-                    ImFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
-
-                    # Sampling operator: extract measured samples
-                    sampled = ImFT.flatten()[SamplingIndices]
-
-                    # store in global vector
-                    ResidualKspace[coil, nex, SamplingIndices] = sampled
-
-        return ResidualKspace.flatten()
+        if torch.is_complex(delta):
+            return directional(delta.real) + 1j * directional(delta.imag)
+        return directional(delta)
     
 
     def adjoint(self, ResidualKspace):
-        """
-        Adjoint of the motion-perturbation forward operator.
-        Input:
-            ResidualKspace: flattened k-space residual, shape [Nsamples*Ncoils]
-        Output:
-            MotionModelAdjoint: shape [2, N_mot_states]
-        """
-
-        Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
-
-        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
-
-        if self.motionOperator.motion_type == "rigid":
-            MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
-                                            dtype=torch.complex64,
-                                            device=self.device)
-        else:
-            MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny),
-                                            dtype=torch.complex64,
-                                            device=self.device)
-            motion_signal = torch.as_tensor(
-                self.motionOperator.motion_signal,
-                device=self.device,
-                dtype=MotionModelPerturbation.dtype,
+        alpha0 = self.motionOperator.alpha.detach().to(self.device, dtype=torch.float32)
+        with torch.enable_grad():
+            _, vjp = torch.autograd.functional.vjp(
+                self._forward_alpha,
+                alpha0,
+                v=ResidualKspace.reshape(-1),
+                create_graph=False,
+                strict=False,
             )
-
-        for motion_state in range(N_mot_states):
-            
-            MotionOp     = self.motionOperator.get_sparse_operator(motion_state)
-            
-            for nex in range(self.Nex):
-                SamplingIndices = self.SamplingIndices[nex][motion_state]
-                if SamplingIndices.numel() == 0:
-                    continue
-                image_nex = self.image[nex]
-                # 1) Warp image with motion state operator
-                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
-
-                # 2) Gradients of warped image
-                Gx, Gy = self.gradient_2d(WarpedImage)
-
-                # 3) Allocate adjoint image accumulator (summed over coils)
-                ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=self.device)
-
-                # --- Coil loop --------------------------------------------------------
-                for coil in range(Ncoils):
-
-                    # 4) Extract coil residual samples and place them back into k-space
-                    KspaceDataCoilNex = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
-
-                    KspaceDataCoilNex[SamplingIndices] = ResidualKspace[coil, nex, SamplingIndices]
-
-                    KspaceDataCoilNex = KspaceDataCoilNex.reshape(Nx, Ny)
-                    # 5) Inverse FFT to go back to image domain
-                    ImageSeenByCoil = ifftnc(KspaceDataCoilNex, dims=(0, 1))
-
-                    # 6) Apply coil sensitivity adjoint (complex conjugate)
-                    ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
-
-                # 7) Inner products with Gx and Gy → scalar dux, duy contributions
-                du_x = (ResidualImage * Gx.conj())
-                du_y = (ResidualImage * Gy.conj())
-
-                # Apply the adjoint Jacobian
-                if self.motionOperator.motion_type == "rigid":
-                    MotionModelPerturbation[:, motion_state] += self.motionOperator.apply_JH(du_x, du_y, motion_state)
-                else:
-                    # Adjoint of multiplication by motion_signal is multiplication by its complex conjugate.
-                    MotionModelPerturbation[0] += du_x * motion_signal[motion_state]
-                    MotionModelPerturbation[1] += du_y * motion_signal[motion_state]
-            
-        return MotionModelPerturbation.flatten()
+        return vjp.reshape(-1)
     
     def normal(self, image):
             return self.adjoint(self.forward(image))
