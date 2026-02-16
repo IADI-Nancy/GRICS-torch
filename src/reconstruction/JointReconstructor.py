@@ -298,8 +298,23 @@ class JointReconstructor:
         b_data = J.adjoint(residual)
 
         if params.motion_type == "non-rigid":
+            class RealJacobian:
+                def __init__(self, J):
+                    self.J = J
+                    self.device = J.device
+
+                def forward(self, v):
+                    return self.J.forward(v)
+
+                def adjoint(self, w):
+                    return self.J.adjoint(w).real
+
+                def normal(self, v):
+                    return self.adjoint(self.forward(v))
+
+            J_real = RealJacobian(J)
             solver = ConjugateGradientSolver(
-                J,
+                J_real,
                 reg_lambda=params.lambda_m,
                 regularizer="Tikhonov_laplacian",
                 regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
@@ -308,8 +323,9 @@ class JointReconstructor:
             # Match MATLAB formulation:
             # A(dm) = J^H J dm + mu_scaled * GhG(dm)
             # b     = J^H r    - mu_scaled * GhG(alpha_current)
-            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data, p=2)
-            b = b_data - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
+            b_data_real = b_data.real
+            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data_real, p=2)
+            b = b_data_real - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg_keep_best(
                 b.flatten(),
                 x0=x0.flatten(),

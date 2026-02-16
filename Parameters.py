@@ -22,7 +22,7 @@ class Parameters:
 
     # Sampling simulation parameters
     NshotsPerNex = 4    
-    kspace_sampling_type = 'random' # 'linear', 'interleaved' or 'random'
+    kspace_sampling_type = 'interleaved' # 'linear', 'interleaved' or 'random'
 
     # Motion simulation parameters
     simulation_type = 'discrete-non-rigid'  # 'discrete-rigid', 'rigid', 'discrete-non-rigid', 'no-motion' or 'as-it-is'
@@ -56,7 +56,7 @@ class Parameters:
     tol_recon = 1e-3
 
     # Motion model parameters
-    lambda_m = 1.e-3
+    lambda_m = 1.e-1
     max_iter_motion = 20
     tol_motion = 1e-3
 

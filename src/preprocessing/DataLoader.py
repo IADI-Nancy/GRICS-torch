@@ -13,6 +13,10 @@ from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.MotionBinner import MotionBinner
+from src.reconstruction.MotionOperator import MotionOperator
+from src.reconstruction.EncodingOperator import EncodingOperator
+from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
+from src.utils.show_and_save_image import show_and_save_image
 
 from Parameters import Parameters
 params = Parameters()
@@ -72,6 +76,9 @@ class DataLoader:
             self.Nx, self.Ny,
             self.t_device
         )
+
+        if params.debug_flag:
+            self._debug_check_true_motion_image_reconstruction(motionSimulator)
 
 
     def load_fastMRI_data(self, path_to_mri_data):
@@ -251,6 +258,59 @@ class DataLoader:
                 torch.cuda.empty_cache()
 
         return espirit_maps
+
+    def _debug_check_true_motion_image_reconstruction(self, motionSimulator):
+        # This consistency check is meaningful only for simulated non-rigid data.
+        if params.motion_type != "non-rigid":
+            return
+        if params.simulation_type != "discrete-non-rigid":
+            return
+        if not hasattr(motionSimulator, "alpha_maps"):
+            return
+        if not hasattr(self, "motion_signal"):
+            return
+
+        with torch.no_grad():
+            alpha_true = motionSimulator.alpha_maps.to(self.t_device)
+            # Use exactly the signal/sampling that are fed to GN.
+            signal_true = self.motion_signal.to(self.t_device)
+            sampling_true = self.sampling_idx
+            nsamples_true = self.Nx * self.Ny
+
+            motion_op_true = MotionOperator(
+                self.Nx,
+                self.Ny,
+                alpha_true,
+                params.motion_type,
+                motion_signal=signal_true,
+            )
+
+            encoding_true = EncodingOperator(
+                self.smaps,
+                nsamples_true,
+                sampling_true,
+                params.Nex,
+                motion_op_true,
+            )
+
+            kspace_vec = self.kspace[..., 0].reshape(self.Ncha, params.Nex, nsamples_true).flatten()
+            b = encoding_true.adjoint(kspace_vec)
+            x0 = torch.zeros_like(b)
+            solver = ConjugateGradientSolver(encoding_true, reg_lambda=0.0, verbose=False)
+            img_vec = solver.solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
+            img_back = img_vec.reshape(params.Nex, self.Nx, self.Ny)
+            img_ref = self.image_ground_truth[..., 0]
+
+            num = torch.linalg.norm((img_back - img_ref).flatten())
+            den = torch.linalg.norm(img_ref.flatten()) + 1e-12
+            rel_err = (num / den).item()
+
+            print(f"[DEBUG] GN-input consistency check (true alpha, clustered signal/sampling): rel_err={rel_err:.6e}")
+            show_and_save_image(
+                img_back[0],
+                "gn_input_consistency_recovered_image",
+                params.debug_folder,
+            )
 
 
 

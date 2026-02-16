@@ -51,16 +51,52 @@ class ConjugateGradientSolver:
         return (-(dxx + dyy)).reshape(-1)
     
     def laplacian_op(self, x):
-        if self.regularization_shape is None:
-            raise ValueError("regularization_shape must be set for Tikhonov_laplacian regularization.")
         field = x.view(*self.regularization_shape)
-        lap = (
-            -4 * field
-            + torch.roll(field, shifts=1, dims=-2) + torch.roll(field, shifts=-1, dims=-2)
-            + torch.roll(field, shifts=1, dims=-1) + torch.roll(field, shifts=-1, dims=-1)
-        )
-        # Use -Laplacian so the regularization term is positive semidefinite.
+
+        lap = torch.zeros_like(field)
+
+        # interior
+        lap[..., 1:-1, 1:-1] = (
+            field[..., :-2, 1:-1]
+            + field[..., 2:, 1:-1]
+            + field[..., 1:-1, :-2]
+            + field[..., 1:-1, 2:]
+            - 4 * field[..., 1:-1, 1:-1]
+        ) / 4.0
+
+        # edges (second-order one-sided)
+        lap[..., 0, 1:-1] = (
+            field[..., 1, 1:-1]
+            - 2 * field[..., 0, 1:-1]
+            + field[..., 2, 1:-1]
+        ) / 4.0
+
+        lap[..., -1, 1:-1] = (
+            field[..., -3, 1:-1]
+            - 2 * field[..., -2, 1:-1]
+            + field[..., -1, 1:-1]
+        ) / 4.0
+
+        lap[..., 1:-1, 0] = (
+            field[..., 1:-1, 1]
+            - 2 * field[..., 1:-1, 0]
+            + field[..., 1:-1, 2]
+        ) / 4.0
+
+        lap[..., 1:-1, -1] = (
+            field[..., 1:-1, -3]
+            - 2 * field[..., 1:-1, -2]
+            + field[..., 1:-1, -1]
+        ) / 4.0
+
+        # corners (simple approximation)
+        lap[..., 0, 0] = lap[..., 0, 1]
+        lap[..., 0, -1] = lap[..., 0, -2]
+        lap[..., -1, 0] = lap[..., -1, 1]
+        lap[..., -1, -1] = lap[..., -1, -2]
+
         return (-lap).reshape(-1)
+
 
     # --------------------------------------------------------------
     # Preconditioners ----------------------------------------------

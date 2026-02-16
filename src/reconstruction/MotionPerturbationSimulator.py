@@ -32,11 +32,19 @@ class MotionPerturbationSimulator:
         self.image = image.reshape(self.Nex, self.SensitivityMaps.shape[1], self.SensitivityMaps.shape[2])
 
     def gradient_2d(self, img):
-        gx = torch.zeros_like(img)
-        gy = torch.zeros_like(img)
+        # Central differences in the interior, one-sided at boundaries.
+        gx = torch.empty_like(img)
+        gy = torch.empty_like(img)
 
-        gx[:-1, :] = img[1:, :] - img[:-1, :]
-        gy[:, :-1] = img[:, 1:] - img[:, :-1]
+        # x-gradient (axis 0)
+        gx[1:-1, :] = 0.5 * (img[2:, :] - img[:-2, :])
+        gx[0, :] = img[1, :] - img[0, :]
+        gx[-1, :] = img[-1, :] - img[-2, :]
+
+        # y-gradient (axis 1)
+        gy[:, 1:-1] = 0.5 * (img[:, 2:] - img[:, :-2])
+        gy[:, 0] = img[:, 1] - img[:, 0]
+        gy[:, -1] = img[:, -1] - img[:, -2]
 
         return gx, gy
 
