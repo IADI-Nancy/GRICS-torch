@@ -127,4 +127,4 @@ class MotionBinner:
             fig.savefig("debug_outputs/clustered_curve_sorted_ky.png")
             plt.close(fig)
 
-        return binned_indices
+        return binned_indices, centers.squeeze(1)

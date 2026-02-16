@@ -10,7 +10,7 @@ class ConjugateGradientSolver:
     where A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
 
-    def __init__(self, encoding_operator, reg_lambda=0.0, regularizer="Tikhonov", verbose=False):
+    def __init__(self, encoding_operator, reg_lambda=0.0, regularizer="Tikhonov", regularization_shape=None, verbose=False):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -19,6 +19,7 @@ class ConjugateGradientSolver:
         self.device = encoding_operator.device
         self.lambda_ = reg_lambda
         self.regularizer = regularizer
+        self.regularization_shape = regularization_shape
         self.verbose = verbose
 
     # --------------------------------------------------------------
@@ -37,31 +38,26 @@ class ConjugateGradientSolver:
         else:
             raise ValueError("Unknown regularizer")
     
-    # def gradient_op(self, x):
-    #     # x is (N) or 2D image flattened
-    #     Nx, Ny = self.E.SensitivityMaps.shape[:2]
-    #     img = x.view(Nx, Ny)
-
-    #     dx = torch.roll(img, -1, dims=0) - img
-    #     dy = torch.roll(img, -1, dims=1) - img
-
-    #     # return L^H L x
-    #     # because CG needs LᵀL—not L
-    #     dxx = dx - torch.roll(dx, 1, dims=0)
-    #     dyy = dy - torch.roll(dy, 1, dims=1)
-
-    #     return (dxx + dyy).reshape(-1)
+    def gradient_op(self, x):
+        if self.regularization_shape is None:
+            raise ValueError("regularization_shape must be set for Tikhonov_gradient regularization.")
+        field = x.view(*self.regularization_shape)
+        dx = torch.roll(field, shifts=-1, dims=-2) - field
+        dy = torch.roll(field, shifts=-1, dims=-1) - field
+        dxx = dx - torch.roll(dx, shifts=1, dims=-2)
+        dyy = dy - torch.roll(dy, shifts=1, dims=-1)
+        return (dxx + dyy).reshape(-1)
     
-    # def laplacian_op(self, x):
-    #     Nx, Ny = self.E.SensitivityMaps.shape[:2]
-    #     img = x.view(Nx, Ny)
-
-    #     lap = (
-    #         -4*img
-    #         + torch.roll(img, 1, 0) + torch.roll(img, -1, 0)
-    #         + torch.roll(img, 1, 1) + torch.roll(img, -1, 1)
-    #     )
-    #     return lap.reshape(-1)
+    def laplacian_op(self, x):
+        if self.regularization_shape is None:
+            raise ValueError("regularization_shape must be set for Tikhonov_laplacian regularization.")
+        field = x.view(*self.regularization_shape)
+        lap = (
+            -4 * field
+            + torch.roll(field, shifts=1, dims=-2) + torch.roll(field, shifts=-1, dims=-2)
+            + torch.roll(field, shifts=1, dims=-1) + torch.roll(field, shifts=-1, dims=-1)
+        )
+        return lap.reshape(-1)
 
     # --------------------------------------------------------------
     # Preconditioners ----------------------------------------------

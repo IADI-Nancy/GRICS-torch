@@ -44,8 +44,15 @@ class MotionPerturbationSimulator:
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
         N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
 
-        # MotionModelPerturbation: shape [3, N_mot_states]
-        MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_mot_states)
+        if self.motionOperator.motion_type == "rigid":
+            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_mot_states)
+        else:
+            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
+            motion_signal = torch.as_tensor(
+                self.motionOperator.motion_signal,
+                device=self.device,
+                dtype=MotionModelPerturbation.dtype,
+            )
         # output k-space residual
         ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
                                      dtype=torch.complex64,
@@ -68,7 +75,12 @@ class MotionPerturbationSimulator:
                 Gx, Gy = self.gradient_2d(WarpedImage)
 
                 # 3) motion model and displacement field perturbations
-                dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, motion_state], motion_state)
+                if self.motionOperator.motion_type == "rigid":
+                    dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, motion_state], motion_state)
+                else:
+                    # Non-rigid model is modulated by the state-dependent motion signal.
+                    dux = MotionModelPerturbation[0] * motion_signal[motion_state]
+                    duy = MotionModelPerturbation[1] * motion_signal[motion_state]
 
                 # 4) optical-flow first-order perturbation
                 WarpedImageError = Gx * dux + Gy * duy
@@ -104,10 +116,19 @@ class MotionPerturbationSimulator:
 
         ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
 
-        # output: 2 × N_mot_states (dux and duy)
-        MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
-                                        dtype=torch.complex64,
-                                        device=self.device)
+        if self.motionOperator.motion_type == "rigid":
+            MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
+                                            dtype=torch.complex64,
+                                            device=self.device)
+        else:
+            MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny),
+                                            dtype=torch.complex64,
+                                            device=self.device)
+            motion_signal = torch.as_tensor(
+                self.motionOperator.motion_signal,
+                device=self.device,
+                dtype=MotionModelPerturbation.dtype,
+            )
 
         for motion_state in range(N_mot_states):
             
@@ -147,10 +168,14 @@ class MotionPerturbationSimulator:
                 du_y = (ResidualImage * Gy.conj())
 
                 # Apply the adjoint Jacobian
-                MotionModelPerturbation[:, motion_state] += self.motionOperator.apply_JH(du_x, du_y, motion_state)
+                if self.motionOperator.motion_type == "rigid":
+                    MotionModelPerturbation[:, motion_state] += self.motionOperator.apply_JH(du_x, du_y, motion_state)
+                else:
+                    # Adjoint of multiplication by motion_signal is multiplication by its complex conjugate.
+                    MotionModelPerturbation[0] += du_x * motion_signal[motion_state]
+                    MotionModelPerturbation[1] += du_y * motion_signal[motion_state]
             
         return MotionModelPerturbation.flatten()
     
     def normal(self, image):
             return self.adjoint(self.forward(image))
-

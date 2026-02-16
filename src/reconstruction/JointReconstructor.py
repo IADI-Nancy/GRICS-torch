@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+import os
 
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.MotionOperator import MotionOperator
@@ -79,13 +80,16 @@ def save_residual_convergence(residual_norms, title, res_level):
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, SamplingIndices):
+    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal):
         Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
         self.Ncoils = Ncoils
         self.device = KspaceData.device
-        self.Nalpha = 3  # number of motion parameters (t_x, t_y, phi)
+        self.Nalpha = 3 if params.motion_type == "rigid" else 2
+        if motion_signal is None:
+            raise ValueError("motion_signal must be provided.")
+        self.motion_signal = motion_signal.to(self.device)
 
         # Data changing with resolution
         self.Data_full = {}
@@ -210,10 +214,16 @@ class JointReconstructor:
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]
-        Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
-        Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
-        Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
-        Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
+        if params.motion_type == "rigid":
+            Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
+            Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
+            Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
+            Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
+        else:
+            mot_res = self.resize_img_2D(mot_prev, (Data_res["Nx"], Data_res["Ny"]))
+            mot_res[0] = mot_res[0] * Data_res["Nx"] / Data_prev["Nx"]
+            mot_res[1] = mot_res[1] * Data_res["Ny"] / Data_prev["Ny"]
+            Data_res["MotionModel"] = mot_res
 
     # ----------------------------------------------------------------------
     # Build Ux, Uy fields and Motion Operators
@@ -221,7 +231,13 @@ class JointReconstructor:
     def build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
         alpha = Data_res["MotionModel"]
-        motionOperator = MotionOperator(Nx, Ny, alpha, params.motion_type)
+        if params.motion_type == "rigid":
+            motionOperator = MotionOperator(Nx, Ny, alpha, params.motion_type)
+        else:
+            motion_signal = self.motion_signal
+            if motion_signal.dtype != alpha.dtype:
+                motion_signal = motion_signal.to(dtype=alpha.dtype)
+            motionOperator = MotionOperator(Nx, Ny, alpha, params.motion_type, motion_signal=motion_signal)
         return motionOperator
 
     
@@ -270,12 +286,27 @@ class JointReconstructor:
     # # ----------------------------------------------------------------------
     # # Solve for motion model update
     # # ----------------------------------------------------------------------
+    def _n_motion_params(self, Data_res):
+        if params.motion_type == "rigid":
+            return self.Nalpha * params.N_mot_states
+        return self.Nalpha * Data_res["Nx"] * Data_res["Ny"]
+
     def solve_motion(self, Data_res, residual):
-        x0 = torch.zeros(self.Nalpha * params.N_mot_states, dtype=torch.float32, device=residual.device)
+        Nparams = self._n_motion_params(Data_res)
+        x0 = torch.zeros(Nparams, dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b = J.adjoint(residual)
-        
-        solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=True)
+
+        if params.motion_type == "non-rigid":
+            solver = ConjugateGradientSolver(
+                J,
+                reg_lambda=params.lambda_m,
+                regularizer="Tikhonov_gradient",
+                regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
+                verbose=True,
+            )
+        else:
+            solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=True)
 
         mot_pert_vec = solver.solve_cg_keep_best(
             b.flatten(),
@@ -284,10 +315,16 @@ class JointReconstructor:
             tol=params.tol_motion,
         )
 
-        motion_perturb = mot_pert_vec.reshape(self.Nalpha, params.N_mot_states)
+        if params.motion_type == "rigid":
+            motion_perturb = mot_pert_vec.reshape(self.Nalpha, params.N_mot_states)
+        else:
+            motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"])
         return motion_perturb
     
     def solve_motion_scaled(self, Data_res, residual):
+        if params.motion_type != "rigid":
+            return self.solve_motion(Data_res, residual)
+
         Nparams = self.Nalpha * params.N_mot_states
         with torch.no_grad():
             diag_JHJ = torch.zeros(Nparams, device=self.device)
@@ -356,6 +393,8 @@ class JointReconstructor:
         return motion_perturb
     
     def random_motion_init(self):
+        if params.motion_type != "rigid":
+            raise RuntimeError("random_motion_init() is only for rigid motion.")
         Nalpha = self.Nalpha                    # should be 3
         Nshots = params.N_mot_states            # number of motion states
 
@@ -370,6 +409,13 @@ class JointReconstructor:
         # Rotation ∈ [-max_phi, +max_phi] degrees → radians
         alpha[2, :] = (params.max_phi *(2 * torch.rand(Nshots, device=self.device) - 1)* (torch.pi / 180.0))
 
+        return alpha
+
+    def random_nonrigid_motion_init(self, Nx, Ny):
+        alpha = torch.zeros((self.Nalpha, Nx, Ny), device=self.device)
+        scale = getattr(params, "nonrigid_motion_amplitude", 1.0)
+        alpha[0] = 0.1 * scale * (2 * torch.rand((Nx, Ny), device=self.device) - 1)
+        alpha[1] = 0.1 * scale * (2 * torch.rand((Nx, Ny), device=self.device) - 1)
         return alpha
 
     def _initialize_global_tracking(self):
@@ -391,10 +437,14 @@ class JointReconstructor:
         # Initialize image and motion model
         if idx_res == 0:
             Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
-            if restart == 0:
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
-            else:
-                Data_res["MotionModel"] = self.random_motion_init()
+            
+            if params.motion_type == "rigid":
+                if restart == 0:
+                    Data_res["MotionModel"] = torch.zeros((self.Nalpha, params.N_mot_states), device=self.device)
+                else:
+                    Data_res["MotionModel"] = self.random_motion_init()
+            elif params.motion_type == "non-rigid":
+                Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"]), device=self.device)
         return Data_res
 
     def _initialize_level_tracking(self):
@@ -448,6 +498,72 @@ class JointReconstructor:
             global_best_image = best_image.clone()
             global_best_motion = best_motion.clone()
         return global_best_metric, global_best_image, global_best_motion
+
+    def _save_nonrigid_motion_debug(self, Data_res, restart_idx, level_idx):
+        if params.motion_type != "non-rigid":
+            return
+
+        alpha = Data_res["MotionModel"]
+        if alpha.ndim != 3 or alpha.shape[0] < 2:
+            return
+
+        os.makedirs(params.debug_folder, exist_ok=True)
+
+        alpha_x = alpha[0].detach().real.cpu()
+        alpha_y = alpha[1].detach().real.cpu()
+
+        for comp_name, comp in (("alpha_x", alpha_x), ("alpha_y", alpha_y)):
+            plt.figure(figsize=(5, 5))
+            plt.imshow(comp, cmap="jet")
+            plt.colorbar()
+            plt.axis("off")
+            plt.title(f"{comp_name} restart {restart_idx} level {level_idx}")
+            plt.savefig(
+                os.path.join(
+                    params.debug_folder,
+                    f"{comp_name}_restart_{restart_idx}_level{level_idx}.png",
+                ),
+                bbox_inches="tight",
+                pad_inches=0,
+            )
+            plt.close()
+
+        # Quiver plot: direction from (alpha_x, alpha_y), color by amplitude.
+        nx, ny = alpha_x.shape
+        step = max(1, min(nx, ny) // 32)
+
+        yy, xx = torch.meshgrid(
+            torch.arange(nx),
+            torch.arange(ny),
+            indexing="ij",
+        )
+        xx = xx[::step, ::step].numpy()
+        yy = yy[::step, ::step].numpy()
+        ux = alpha_x[::step, ::step].numpy()
+        uy = alpha_y[::step, ::step].numpy()
+        amp = torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)[::step, ::step].numpy()
+
+        img = Data_res["ReconstructedImage"][0].detach().cpu()
+        if img.is_complex():
+            img = img.abs()
+        img = img.numpy()
+
+        fig, ax = plt.subplots(figsize=(6, 6))
+        q = ax.quiver(xx, yy, ux, uy, amp, cmap="jet", angles="xy", scale_units="xy", scale=None)
+        ax.contour(img, levels=8, colors="k", linewidths=0.7, alpha=0.8)
+        ax.set_aspect("equal")
+        ax.invert_yaxis()
+        ax.set_title(f"motion field restart {restart_idx} level {level_idx}")
+        fig.colorbar(q, ax=ax, label="|u|")
+        fig.savefig(
+            os.path.join(
+                params.debug_folder,
+                f"motion_quiver_restart_{restart_idx}_level{level_idx}.png",
+            ),
+            bbox_inches="tight",
+            pad_inches=0,
+        )
+        plt.close(fig)
 
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
@@ -530,15 +646,16 @@ class JointReconstructor:
 
                     Data_prev = Data_res
 
-                if restart_converged:
-                    break
-
                 if params.debug_flag: 
                     show_and_save_image(Data_res["ReconstructedImage"][0], \
                         'image_resolution_restart_' + str(restart + 1) + '_level' + str(idx_res+1), params.debug_folder)
+                    self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
                 if params.verbose:
                     save_residual_convergence(residual_recon_norms, 'recon_' + str(restart + 1) + '_', idx_res + 1)
                     save_residual_convergence(residual_motion_norms, 'motion_' + str(restart + 1) + '_', idx_res + 1)
+
+                if restart_converged:
+                    break
             global_best_metric, global_best_image, global_best_motion = self._update_global_best(
                 best_metric, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
             )

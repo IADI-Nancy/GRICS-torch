@@ -56,7 +56,7 @@ class Parameters:
     tol_recon = 1e-3
 
     # Motion model parameters
-    lambda_m = 1e-3
+    lambda_m = 1
     max_iter_motion = 20
     tol_motion = 1e-3
 
@@ -72,9 +72,9 @@ class Parameters:
             self.N_mot_states = self.Nshots
         elif self.simulation_type in ['no-motion']:
             self.N_mot_states = 1
-        # elif self.simulation_type in ['as-it-is', 'non-rigid']:
-        #     self.N_mot_states = self.N_motion_states  # each shot is a separate motion state, but with the original motion from the data
-
+        
+        if self.motion_type == 'non-rigid':
+            self.max_restarts = 1  # random and non-smooth motion is hard to optimize, so we do only one reconstruction run without restarts
         
         os.makedirs(self.debug_folder, exist_ok=True)
         os.makedirs(self.logs_folder, exist_ok=True)

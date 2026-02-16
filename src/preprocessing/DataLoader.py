@@ -65,7 +65,7 @@ class DataLoader:
                 self.image_no_moco = motionSimulator.get_corrupted_image()
 
             motion_curve, _, _, _ = motionSimulator.get_motion_information()
-            self.binned_indices = MotionBinner.bin_motion(motion_curve, self.ky_idx, self.nex_idx, self.t_device)
+            self.binned_indices, self.motion_signal = MotionBinner.bin_motion(motion_curve, self.ky_idx, self.nex_idx, self.t_device)
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
@@ -156,7 +156,8 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
+        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
+        self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         if params.debug_flag:
@@ -183,7 +184,8 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_motion = self.binned_indices = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
+        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
+        self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         if params.debug_flag:
