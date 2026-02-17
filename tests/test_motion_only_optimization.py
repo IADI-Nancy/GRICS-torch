@@ -70,7 +70,7 @@ def run_motion_only_checks():
 
     delta_true = _make_smooth_alpha(nx, ny, amp_x=0.3, amp_y=-0.25, device=device)
     residual_lin = d_lin["J"].forward(delta_true.flatten())
-    delta_est = recon.solve_motion(d_lin, residual_lin).real
+    delta_est = recon.solve_motion(d_lin, residual_lin)
 
     lin_rel_err = (
         torch.linalg.norm((delta_est - delta_true).flatten())
@@ -97,7 +97,7 @@ def run_motion_only_checks():
         y_est = d["E"].forward(x_true.flatten())
         residual = y_true - y_est
 
-        dm = recon.solve_motion(d, residual).real
+        dm = recon.solve_motion(d, residual)
         alpha_est = alpha_est + dm
 
         res_norm = torch.linalg.norm(residual).item()

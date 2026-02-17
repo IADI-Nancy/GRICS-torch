@@ -133,8 +133,7 @@ class MotionPerturbationSimulator:
 
         def directional(d):
             d = d.to(dtype=torch.float32)
-            scale = torch.max(torch.abs(d)).item()
-            eps = 1e-3 / max(scale, 1e-6)
+            eps = 1e-4
             with torch.no_grad():
                 y_p = self._forward_alpha(alpha0 + eps * d)
                 y_m = self._forward_alpha(alpha0 - eps * d)

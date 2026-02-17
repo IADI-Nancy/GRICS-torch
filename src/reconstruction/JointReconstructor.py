@@ -293,28 +293,13 @@ class JointReconstructor:
 
     def solve_motion(self, Data_res, residual):
         Nparams = self._n_motion_params(Data_res)
-        x0 = torch.zeros(Nparams, dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b_data = J.adjoint(residual)
+        x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=residual.device)
 
         if params.motion_type == "non-rigid":
-            class RealJacobian:
-                def __init__(self, J):
-                    self.J = J
-                    self.device = J.device
-
-                def forward(self, v):
-                    return self.J.forward(v)
-
-                def adjoint(self, w):
-                    return self.J.adjoint(w).real
-
-                def normal(self, v):
-                    return self.adjoint(self.forward(v))
-
-            J_real = RealJacobian(J)
             solver = ConjugateGradientSolver(
-                J_real,
+                J,
                 reg_lambda=params.lambda_m,
                 regularizer="Tikhonov_laplacian",
                 regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
@@ -323,9 +308,8 @@ class JointReconstructor:
             # Match MATLAB formulation:
             # A(dm) = J^H J dm + mu_scaled * GhG(dm)
             # b     = J^H r    - mu_scaled * GhG(alpha_current)
-            b_data_real = b_data.real
-            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data_real, p=2)
-            b = b_data_real - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
+            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data, p=2)
+            b = b_data - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg_keep_best(
                 b.flatten(),
                 x0=x0.flatten(),
@@ -529,10 +513,27 @@ class JointReconstructor:
 
         os.makedirs(params.debug_folder, exist_ok=True)
 
-        alpha_x = alpha[0].detach().real.cpu()
-        alpha_y = alpha[1].detach().real.cpu()
+        alpha_x = alpha[0].detach().cpu()
+        alpha_y = alpha[1].detach().cpu()
 
-        for comp_name, comp in (("alpha_x", alpha_x), ("alpha_y", alpha_y)):
+        if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
+            components = (
+                ("alpha_x_real", alpha_x.real),
+                ("alpha_y_real", alpha_y.real),
+                ("alpha_x_imag", alpha_x.imag),
+                ("alpha_y_imag", alpha_y.imag),
+            )
+            alpha_x_for_quiver = alpha_x.real
+            alpha_y_for_quiver = alpha_y.real
+        else:
+            components = (
+                ("alpha_x", alpha_x),
+                ("alpha_y", alpha_y),
+            )
+            alpha_x_for_quiver = alpha_x
+            alpha_y_for_quiver = alpha_y
+
+        for comp_name, comp in components:
             plt.figure(figsize=(5, 5))
             plt.imshow(comp, cmap="jet")
             plt.colorbar()
@@ -549,7 +550,7 @@ class JointReconstructor:
             plt.close()
 
         # Quiver plot: direction from (alpha_x, alpha_y), color by amplitude.
-        nx, ny = alpha_x.shape
+        nx, ny = alpha_x_for_quiver.shape
         step = max(1, min(nx, ny) // 32)
 
         yy, xx = torch.meshgrid(
@@ -559,9 +560,9 @@ class JointReconstructor:
         )
         xx = xx[::step, ::step].numpy()
         yy = yy[::step, ::step].numpy()
-        ux = alpha_x[::step, ::step].numpy()
-        uy = alpha_y[::step, ::step].numpy()
-        amp = torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)[::step, ::step].numpy()
+        ux = alpha_x_for_quiver[::step, ::step].numpy()
+        uy = alpha_y_for_quiver[::step, ::step].numpy()
+        amp = torch.sqrt(alpha_x_for_quiver * alpha_x_for_quiver + alpha_y_for_quiver * alpha_y_for_quiver)[::step, ::step].numpy()
 
         img = Data_res["ReconstructedImage"][0].detach().cpu()
         if img.is_complex():
@@ -640,7 +641,7 @@ class JointReconstructor:
                     else:
                         dm = self.solve_motion(Data_res, residual)
 
-                    Data_res["MotionModel"] += dm.real
+                    Data_res["MotionModel"] += dm
                     dm_norm = torch.linalg.norm(dm.flatten()).item()
                     residual_motion_norms.append(dm_norm)
 
