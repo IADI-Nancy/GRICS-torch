@@ -46,7 +46,7 @@ class Parameters:
     max_restarts = 3
     use_scaled_motion_update = False  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
-    GN_iterations_per_level = 4
+    GN_iterations_per_level = 8
     patience = 3
     residual_metric_type = "motion"  # "recon", "motion" or "combined"
     motion_weight = 1.0             # used only if combined
@@ -55,9 +55,12 @@ class Parameters:
     lambda_r = 1e-3
     max_iter_recon = 128
     tol_recon = 1e-3
+    cg_early_stopping = True  # MATLAB-like stagnation/more-steps stopping inside CG
+    cg_max_stag_steps = 3     # lighter than MATLAB default (3)
+    cg_max_more_steps = 0    # allow more post-stagnation recovery iterations
 
     # Motion model parameters
-    lambda_m = 1.e-1
+    lambda_m = 10.e-1
     max_iter_motion = 128
     tol_motion = 1e-3
 

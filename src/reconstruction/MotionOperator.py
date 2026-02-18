@@ -222,6 +222,13 @@ class MotionOperator:
         Xi = X + Ux
         Yi = Y + Uy
 
+        # Clamp interpolation points to valid non-periodic domain.
+        # Use upper bound (N-1) so the +1 neighbor always exists.
+        x_hi = max(1, Nx - 1)
+        y_hi = max(1, Ny - 1)
+        Xi = Xi.clamp(1, x_hi)
+        Yi = Yi.clamp(1, y_hi)
+
         # -----------------------------
         # Surrounding integer coordinates
         # -----------------------------
@@ -229,8 +236,8 @@ class MotionOperator:
         Yi_i = Yi.floor()
 
         # Boundaries
-        Xi_i = Xi_i.clamp(1, Nx - 1)
-        Yi_i = Yi_i.clamp(1, Ny - 1)
+        Xi_i = Xi_i.clamp(1, x_hi)
+        Yi_i = Yi_i.clamp(1, y_hi)
 
         # -----------------------------
         # Flatten sizes

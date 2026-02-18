@@ -271,7 +271,14 @@ class JointReconstructor:
         E = Data_res["E"]
 
         b = E.adjoint(Data_res["KspaceData"])
-        solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=params.verbose)
+        solver = ConjugateGradientSolver(
+            E,
+            reg_lambda=params.lambda_r,
+            verbose=params.verbose,
+            early_stopping=params.cg_early_stopping,
+            max_stag_steps=params.cg_max_stag_steps,
+            max_more_steps=params.cg_max_more_steps,
+        )
 
         img_vec = solver.solve_cg(
             b.flatten(),
@@ -301,16 +308,19 @@ class JointReconstructor:
             solver = ConjugateGradientSolver(
                 J,
                 reg_lambda=params.lambda_m,
-                regularizer="Tikhonov_laplacian",
+                regularizer="Tikhonov_gradient",
                 regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
                 verbose=params.verbose,
+                early_stopping=params.cg_early_stopping,
+                max_stag_steps=params.cg_max_stag_steps,
+                max_more_steps=params.cg_max_more_steps,
             )
             # Match MATLAB formulation:
             # A(dm) = J^H J dm + mu_scaled * GhG(dm)
             # b     = J^H r    - mu_scaled * GhG(alpha_current)
             solver.lambda_scaled = solver.lambda_ * torch.norm(b_data, p=2)
             b = b_data - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
-            mot_pert_vec = solver.cg_keep_best(
+            mot_pert_vec = solver.cg(
                 b.flatten(),
                 x0=x0.flatten(),
                 max_iter=params.max_iter_motion,
@@ -318,8 +328,15 @@ class JointReconstructor:
                 M=None,
             )
         else:
-            solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=params.verbose)
-            mot_pert_vec = solver.solve_cg_keep_best(
+            solver = ConjugateGradientSolver(
+                J,
+                reg_lambda=params.lambda_m,
+                verbose=params.verbose,
+                early_stopping=params.cg_early_stopping,
+                max_stag_steps=params.cg_max_stag_steps,
+                max_more_steps=params.cg_max_more_steps,
+            )
+            mot_pert_vec = solver.solve_cg(
                 b_data.flatten(),
                 x0=x0.flatten(),
                 max_iter=params.max_iter_motion,
@@ -386,10 +403,13 @@ class JointReconstructor:
         solver = ConjugateGradientSolver(
             J_scaled,
             reg_lambda=params.lambda_m,
-            verbose=True
+            verbose=True,
+            early_stopping=params.cg_early_stopping,
+            max_stag_steps=params.cg_max_stag_steps,
+            max_more_steps=params.cg_max_more_steps,
         )
 
-        delta_tilde = solver.solve_cg_keep_best(
+        delta_tilde = solver.solve_cg(
             b_scaled.flatten(),
             x0=x0,
             max_iter=params.max_iter_motion,

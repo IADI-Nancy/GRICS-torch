@@ -25,7 +25,8 @@ def show_and_save_image(img: torch.Tensor, image_name: str, folder: str):
     vmax = np.percentile(np_img, 98)
 
     plt.figure(figsize=(5, 5))
-    plt.imshow(np_img, vmin=vmin, vmax=vmax, cmap="gray")
+    im = plt.imshow(np_img, vmin=vmin, vmax=vmax, cmap="gray")
+    plt.colorbar(im, fraction=0.046, pad=0.04)
     plt.axis("off")
     plt.title(image_name)
 

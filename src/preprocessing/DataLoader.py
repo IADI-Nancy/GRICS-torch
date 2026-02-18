@@ -310,7 +310,14 @@ class DataLoader:
             kspace_vec = self.kspace[..., 0].reshape(self.Ncha, params.Nex, nsamples_true).flatten()
             b = encoding_true.adjoint(kspace_vec)
             x0 = torch.zeros_like(b)
-            solver = ConjugateGradientSolver(encoding_true, reg_lambda=0.0, verbose=False)
+            solver = ConjugateGradientSolver(
+                encoding_true,
+                reg_lambda=0.0,
+                verbose=False,
+                early_stopping=params.cg_early_stopping,
+                max_stag_steps=params.cg_max_stag_steps,
+                max_more_steps=params.cg_max_more_steps,
+            )
             img_vec = solver.solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
             img_back = img_vec.reshape(params.Nex, self.Nx, self.Ny)
             img_ref = self.image_ground_truth[..., 0]

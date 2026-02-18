@@ -47,6 +47,8 @@ def _build_data_res(recon, x_true, alpha):
 def run_motion_only_checks():
     params = Parameters()
     device = torch.device("cpu")
+    debug_folder = Path(params.debug_folder) / "test_motion_only_optimization"
+    debug_folder.mkdir(parents=True, exist_ok=True)
 
     if params.motion_type != "non-rigid":
         raise RuntimeError("Set motion_type='non-rigid' for this script.")
@@ -79,12 +81,12 @@ def run_motion_only_checks():
 
     print(f"[MOTION-ONLY] linearized delta recovery rel_err={lin_rel_err:.6e}")
 
-    show_and_save_image(delta_true[0], "motion_only_linear_delta_true_x", params.debug_folder)
-    show_and_save_image(delta_true[1], "motion_only_linear_delta_true_y", params.debug_folder)
-    show_and_save_image(delta_est[0], "motion_only_linear_delta_est_x", params.debug_folder)
-    show_and_save_image(delta_est[1], "motion_only_linear_delta_est_y", params.debug_folder)
-    show_and_save_image(torch.abs(delta_est[0] - delta_true[0]), "motion_only_linear_abs_err_x", params.debug_folder)
-    show_and_save_image(torch.abs(delta_est[1] - delta_true[1]), "motion_only_linear_abs_err_y", params.debug_folder)
+    show_and_save_image(delta_true[0], "motion_only_linear_delta_true_x", str(debug_folder))
+    show_and_save_image(delta_true[1], "motion_only_linear_delta_true_y", str(debug_folder))
+    show_and_save_image(delta_est[0], "motion_only_linear_delta_est_x", str(debug_folder))
+    show_and_save_image(delta_est[1], "motion_only_linear_delta_est_y", str(debug_folder))
+    show_and_save_image(torch.abs(delta_est[0] - delta_true[0]), "motion_only_linear_abs_err_x", str(debug_folder))
+    show_and_save_image(torch.abs(delta_est[1] - delta_true[1]), "motion_only_linear_abs_err_y", str(debug_folder))
 
     # -------------------- 2) Nonlinear GN motion-only loop --------------------
     alpha_est = torch.zeros_like(alpha_true)
@@ -111,12 +113,12 @@ def run_motion_only_checks():
     print(f"[MOTION-ONLY] final alpha rel_err={alpha_hist[-1]:.6e}")
     print(f"[MOTION-ONLY] residual first={res_hist[0]:.6e}, last={res_hist[-1]:.6e}")
 
-    show_and_save_image(alpha_true[0], "motion_only_alpha_true_x", params.debug_folder)
-    show_and_save_image(alpha_true[1], "motion_only_alpha_true_y", params.debug_folder)
-    show_and_save_image(alpha_est[0], "motion_only_alpha_est_x", params.debug_folder)
-    show_and_save_image(alpha_est[1], "motion_only_alpha_est_y", params.debug_folder)
-    show_and_save_image(torch.abs(alpha_est[0] - alpha_true[0]), "motion_only_alpha_abs_err_x", params.debug_folder)
-    show_and_save_image(torch.abs(alpha_est[1] - alpha_true[1]), "motion_only_alpha_abs_err_y", params.debug_folder)
+    show_and_save_image(alpha_true[0], "motion_only_alpha_true_x", str(debug_folder))
+    show_and_save_image(alpha_true[1], "motion_only_alpha_true_y", str(debug_folder))
+    show_and_save_image(alpha_est[0], "motion_only_alpha_est_x", str(debug_folder))
+    show_and_save_image(alpha_est[1], "motion_only_alpha_est_y", str(debug_folder))
+    show_and_save_image(torch.abs(alpha_est[0] - alpha_true[0]), "motion_only_alpha_abs_err_x", str(debug_folder))
+    show_and_save_image(torch.abs(alpha_est[1] - alpha_true[1]), "motion_only_alpha_abs_err_y", str(debug_folder))
 
     plt.figure(figsize=(6, 4))
     plt.plot(res_hist, marker="o")
@@ -125,7 +127,7 @@ def run_motion_only_checks():
     plt.title("Motion-only GN residual")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(f"{params.debug_folder}motion_only_residual_curve.png")
+    plt.savefig(debug_folder / "motion_only_residual_curve.png")
     plt.close()
 
     plt.figure(figsize=(6, 4))
@@ -135,7 +137,7 @@ def run_motion_only_checks():
     plt.title("Motion-only GN alpha error")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(f"{params.debug_folder}motion_only_alpha_error_curve.png")
+    plt.savefig(debug_folder / "motion_only_alpha_error_curve.png")
     plt.close()
 
 

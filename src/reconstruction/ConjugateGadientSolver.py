@@ -10,7 +10,18 @@ class ConjugateGradientSolver:
     where A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
 
-    def __init__(self, encoding_operator, reg_lambda=0.0, regularizer="Tikhonov", regularization_shape=None, verbose=False):
+    def __init__(
+        self,
+        encoding_operator,
+        reg_lambda=0.0,
+        regularizer="Tikhonov",
+        regularization_shape=None,
+        verbose=False,
+        early_stopping=True,
+        true_residual_interval=10,
+        max_stag_steps=3,
+        max_more_steps=None,
+    ):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -21,6 +32,10 @@ class ConjugateGradientSolver:
         self.regularizer = regularizer
         self.regularization_shape = regularization_shape
         self.verbose = verbose
+        self.early_stopping = early_stopping
+        self.true_residual_interval = true_residual_interval
+        self.max_stag_steps = max_stag_steps
+        self.max_more_steps = max_more_steps
 
     # --------------------------------------------------------------
     # Regularized linear operator: A(x) = Eh(E(x)) + lambda_scaled * x
@@ -43,12 +58,23 @@ class ConjugateGradientSolver:
         if self.regularization_shape is None:
             raise ValueError("regularization_shape must be set for Tikhonov_gradient regularization.")
         field = x.view(*self.regularization_shape)
-        dx = torch.roll(field, shifts=-1, dims=-2) - field
-        dy = torch.roll(field, shifts=-1, dims=-1) - field
-        dxx = dx - torch.roll(dx, shifts=1, dims=-2)
-        dyy = dy - torch.roll(dy, shifts=1, dims=-1)
-        # Return L^H L x (positive semidefinite): minus discrete Laplacian.
-        return (-(dxx + dyy)).reshape(-1)
+        # Forward differences with zero-gradient (non-periodic) boundaries.
+        dx = torch.zeros_like(field)
+        dy = torch.zeros_like(field)
+        dx[..., :-1, :] = field[..., 1:, :] - field[..., :-1, :]
+        dy[..., :, :-1] = field[..., :, 1:] - field[..., :, :-1]
+
+        # Adjoint divergence of the forward differences.
+        dxx = torch.zeros_like(field)
+        dyy = torch.zeros_like(field)
+        dxx[..., 0, :] = -dx[..., 0, :]
+        dxx[..., 1:-1, :] = dx[..., :-2, :] - dx[..., 1:-1, :]
+        dxx[..., -1, :] = dx[..., -2, :]
+        dyy[..., :, 0] = -dy[..., :, 0]
+        dyy[..., :, 1:-1] = dy[..., :, :-2] - dy[..., :, 1:-1]
+        dyy[..., :, -1] = dy[..., :, -2]
+
+        return (dxx + dyy).reshape(-1)
     
     def laplacian_op(self, x):
         field = x.view(*self.regularization_shape)
@@ -116,6 +142,7 @@ class ConjugateGradientSolver:
         """
         with torch.no_grad():
             b = b.to(self.device)
+            n = b.numel()
 
             if x0 is None:
                 x = torch.zeros_like(b)
@@ -128,6 +155,7 @@ class ConjugateGradientSolver:
             # Residual
             r = b - Ax
             b_norm = torch.linalg.norm(b) + 1e-12
+            tolb = tol * b_norm
 
             # Preconditioned residual
             if M is None:
@@ -137,6 +165,16 @@ class ConjugateGradientSolver:
 
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
+            eps = torch.finfo(r.real.dtype).eps
+            stag = 0
+            moresteps = 0
+            max_stag_steps = self.max_stag_steps
+            if self.max_more_steps is None:
+                max_more_steps = max(1, min(n // 50, 5, max(n - max_iter, 1)))
+            else:
+                max_more_steps = max(1, int(self.max_more_steps))
+            best_x = x.clone()
+            best_rel = torch.linalg.norm(r) / b_norm
 
             for it in range(max_iter):
                 Ap = self.A(p)
@@ -146,12 +184,28 @@ class ConjugateGradientSolver:
                     break
 
                 alpha = rz_old / denom
+                if torch.linalg.norm(p) * alpha.abs() < eps * torch.linalg.norm(x):
+                    stag += 1
+                else:
+                    stag = 0
 
                 x = x + alpha * p
                 r = r - alpha * Ap
-
                 res_norm = torch.linalg.norm(r)
+                refresh_true_residual = (
+                    (it + 1) % self.true_residual_interval == 0
+                    or res_norm <= tolb
+                    or (self.early_stopping and stag >= max_stag_steps)
+                    or (self.early_stopping and moresteps > 0)
+                )
+                if refresh_true_residual:
+                    # MATLAB-style stabilization: periodically recompute true residual.
+                    r = b - self.A(x)
+                    res_norm = torch.linalg.norm(r)
                 rel_res = (res_norm / b_norm).item()
+                if rel_res < best_rel:
+                    best_rel = rel_res
+                    best_x = x.clone()
                 if self.verbose:
                     print(
                         f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
@@ -159,8 +213,14 @@ class ConjugateGradientSolver:
                     )
                 # torch.cuda.synchronize()
 
-                if rel_res < tol:
+                if res_norm <= tolb:
                     break
+                if self.early_stopping and refresh_true_residual:
+                    if stag >= max_stag_steps and moresteps == 0:
+                        stag = 0
+                    moresteps += 1
+                    if moresteps >= max_more_steps:
+                        break
 
                 if M is None:
                     z = r.clone()
@@ -168,92 +228,21 @@ class ConjugateGradientSolver:
                     z = M(r)
 
                 rz_new = torch.dot(torch.conj(r), z).real
+                if rz_old.abs() < 1e-15:
+                    break
                 beta = rz_new / rz_old
                 rz_old = rz_new
 
                 p = z + beta * p
 
-            return x
-        
-    def cg_keep_best(self, b, x0=None, max_iter=20, tol=1e-3, M=None):
-        """
-        Solve A(x) = b using Conjugate Gradient.
-        Returns the x that achieved the smallest residual norm during iterations.
-        """
-        with torch.no_grad():
-            b = b.to(self.device)
-
-            if x0 is None:
-                x = torch.zeros_like(b)
-            else:
-                x = x0.clone().to(self.device)
-
-            # Compute initial residual
-            Ax = self.A(x)
-            r = b - Ax
-            b_norm = torch.linalg.norm(b) + 1e-12
-
-            # Precondition
-            z = r.clone() if M is None else M(r)
-            p = z.clone()
-            rz_old = torch.dot(torch.conj(r), z).real
-
-            # === NEW: store best iterate ===
-            best_x = x.clone()
-            best_rel = torch.linalg.norm(r) / b_norm
-
-            # CG iterations
-            for it in range(max_iter):
-                Ap = self.A(p)
-                denom = torch.dot(torch.conj(p), Ap).real
-
-                if denom.abs() < 1e-15:
-                    break
-
-                alpha = rz_old / denom
-
-                x = x + alpha * p
-                r = r - alpha * Ap
-
-                res_norm = torch.linalg.norm(r)
-                rel_res = res_norm / b_norm
-
-                if self.verbose:
-                    print(
-                        f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
-                        f"Rel residual: {rel_res.item():.6e}"
-                    )
-
-                # === NEW: update best solution ===
-                if rel_res < best_rel:
-                    best_rel = rel_res.clone()
-                    best_x = x.clone()
-
-                if rel_res < tol:
-                    break
-
-                # Precondition
-                z = r.clone() if M is None else M(r)
-
-                rz_new = torch.dot(torch.conj(r), z).real
-                beta = rz_new / rz_old
-                rz_old = rz_new
-
-                p = z + beta * p
-
-            # === Return best solution, not last one ===
             return best_x
-
+        
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG
     # --------------------------------------------------------------
     def solve_cg(self, b, **kwargs):
         self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
         return self.cg(b, M=None, **kwargs)
-    
-    def solve_cg_keep_best(self, b, **kwargs):
-        self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
-        return self.cg_keep_best(b, M=None, **kwargs)
 
     # --------------------------------------------------------------
     # Convenience function: solve with Jacobi PCG
