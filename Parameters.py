@@ -56,11 +56,13 @@ class Parameters:
     max_iter_recon = 128
     tol_recon = 1e-3
     cg_early_stopping = True  # MATLAB-like stagnation/more-steps stopping inside CG
-    cg_max_stag_steps = 3     # lighter than MATLAB default (3)
+    cg_max_stag_steps = 6     # lighter than MATLAB default (3)
     cg_max_more_steps = 0    # allow more post-stagnation recovery iterations
+    cg_use_reg_scale_proxy = True   # scales regularizer by ||A_data v||/||R v|| proxy
+    cg_reg_scale_num_probes = 8
 
     # Motion model parameters
-    lambda_m = 10.e-1
+    lambda_m = 1
     max_iter_motion = 128
     tol_motion = 1e-3
 

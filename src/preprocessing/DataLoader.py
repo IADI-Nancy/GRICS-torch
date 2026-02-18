@@ -317,6 +317,8 @@ class DataLoader:
                 early_stopping=params.cg_early_stopping,
                 max_stag_steps=params.cg_max_stag_steps,
                 max_more_steps=params.cg_max_more_steps,
+                use_reg_scale_proxy=params.cg_use_reg_scale_proxy,
+                reg_scale_num_probes=params.cg_reg_scale_num_probes,
             )
             img_vec = solver.solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
             img_back = img_vec.reshape(params.Nex, self.Nx, self.Ny)

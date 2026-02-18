@@ -21,6 +21,8 @@ class ConjugateGradientSolver:
         true_residual_interval=10,
         max_stag_steps=3,
         max_more_steps=None,
+        use_reg_scale_proxy=False,
+        reg_scale_num_probes=8,
     ):
         """
         encoding_operator : instance of EncodingOperator
@@ -36,13 +38,58 @@ class ConjugateGradientSolver:
         self.true_residual_interval = true_residual_interval
         self.max_stag_steps = max_stag_steps
         self.max_more_steps = max_more_steps
+        self.use_reg_scale_proxy = use_reg_scale_proxy
+        self.reg_scale_num_probes = reg_scale_num_probes
+        self.reg_scale = 1.0
 
     # --------------------------------------------------------------
-    # Regularized linear operator: A(x) = Eh(E(x)) + lambda_scaled * x
+    # Regularized linear operator: A(x) = Eh(E(x)) + lambda_eff * R(x)
     # --------------------------------------------------------------
     def A(self, x):
-        lam = self.lambda_scaled if hasattr(self, "lambda_scaled") else self.lambda_
-        return self.E.normal(x) + lam * self.regularization(x)
+        return self.E.normal(x) + self.effective_lambda() * self.regularization(x)
+
+    def effective_lambda(self):
+        return self.lambda_ * self.reg_scale
+
+    def update_regularization_scale(self, reference):
+        if (not self.use_reg_scale_proxy) or self.lambda_ == 0.0:
+            self.reg_scale = 1.0
+            return self.reg_scale
+
+        ref = reference.to(self.device)
+        eps = 1e-12
+        ratios = []
+        n = ref.numel()
+        is_complex = torch.is_complex(ref)
+
+        for _ in range(max(1, int(self.reg_scale_num_probes))):
+            if is_complex:
+                v = torch.randn(n, device=self.device, dtype=torch.float64) + 1j * torch.randn(
+                    n, device=self.device, dtype=torch.float64
+                )
+                v = v.to(ref.dtype)
+            else:
+                v = torch.randn(n, device=self.device, dtype=ref.dtype)
+
+            v = v / (torch.linalg.norm(v) + eps)
+            data_norm = torch.linalg.norm(self.E.normal(v))
+            reg_norm = torch.linalg.norm(self.regularization(v))
+
+            if reg_norm > eps and torch.isfinite(data_norm) and torch.isfinite(reg_norm):
+                ratios.append((data_norm / reg_norm).real.item())
+
+        if len(ratios) == 0:
+            self.reg_scale = 1.0
+        else:
+            r = torch.tensor(ratios, dtype=torch.float64, device=self.device)
+            self.reg_scale = max(1e-12, torch.median(r).item())
+
+        if self.verbose:
+            print(
+                f"Regularizer proxy scale: {self.reg_scale:.6e}, "
+                f"lambda_eff={self.effective_lambda():.6e}"
+            )
+        return self.reg_scale
     
     def regularization(self, x):
         if self.regularizer == "Tikhonov":
@@ -241,13 +288,13 @@ class ConjugateGradientSolver:
     # Convenience function: solve with simple CG
     # --------------------------------------------------------------
     def solve_cg(self, b, **kwargs):
-        self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
+        self.update_regularization_scale(b)
         return self.cg(b, M=None, **kwargs)
 
     # --------------------------------------------------------------
     # Convenience function: solve with Jacobi PCG
     # --------------------------------------------------------------
     def solve_pcg_jacobi(self, b, **kwargs):
-        self.lambda_scaled = self.lambda_ * torch.norm(b, p=2)
+        self.update_regularization_scale(b)
         M = self.jacobi_preconditioner(b.shape[0])
         return self.cg(b, M=M, **kwargs)

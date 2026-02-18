@@ -262,6 +262,16 @@ class JointReconstructor:
         )
         return J
 
+    def _assign_cached_reg_scale(self, Data_res, cache_key, solver, reference_vec):
+        if not params.cg_use_reg_scale_proxy:
+            solver.reg_scale = 1.0
+            return
+
+        cache = Data_res.setdefault("_reg_scale_cache", {})
+        if cache_key not in cache:
+            cache[cache_key] = solver.update_regularization_scale(reference_vec)
+        solver.reg_scale = cache[cache_key]
+
     # ----------------------------------------------------------------------
     # Solve linear system for image
     # ----------------------------------------------------------------------
@@ -278,13 +288,17 @@ class JointReconstructor:
             early_stopping=params.cg_early_stopping,
             max_stag_steps=params.cg_max_stag_steps,
             max_more_steps=params.cg_max_more_steps,
+            use_reg_scale_proxy=params.cg_use_reg_scale_proxy,
+            reg_scale_num_probes=params.cg_reg_scale_num_probes,
         )
+        self._assign_cached_reg_scale(Data_res, "image", solver, b.flatten())
 
-        img_vec = solver.solve_cg(
+        img_vec = solver.cg(
             b.flatten(),
             x0=x0.flatten(),
             max_iter=params.max_iter_recon,
             tol=params.tol_recon,
+            M=None,
         )
 
         img = img_vec.reshape(params.Nex, Data_res["Nx"], Data_res["Ny"])
@@ -314,12 +328,14 @@ class JointReconstructor:
                 early_stopping=params.cg_early_stopping,
                 max_stag_steps=params.cg_max_stag_steps,
                 max_more_steps=params.cg_max_more_steps,
+                use_reg_scale_proxy=params.cg_use_reg_scale_proxy,
+                reg_scale_num_probes=params.cg_reg_scale_num_probes,
             )
-            # Match MATLAB formulation:
-            # A(dm) = J^H J dm + mu_scaled * GhG(dm)
-            # b     = J^H r    - mu_scaled * GhG(alpha_current)
-            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data, p=2)
-            b = b_data - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
+            # Unscaled regularization:
+            # A(dm) = J^H J dm + mu * GhG(dm)
+            # b     = J^H r    - mu * GhG(alpha_current)
+            self._assign_cached_reg_scale(Data_res, "motion_nonrigid", solver, b_data.flatten())
+            b = b_data - solver.effective_lambda() * solver.regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg(
                 b.flatten(),
                 x0=x0.flatten(),
@@ -335,12 +351,16 @@ class JointReconstructor:
                 early_stopping=params.cg_early_stopping,
                 max_stag_steps=params.cg_max_stag_steps,
                 max_more_steps=params.cg_max_more_steps,
+                use_reg_scale_proxy=params.cg_use_reg_scale_proxy,
+                reg_scale_num_probes=params.cg_reg_scale_num_probes,
             )
-            mot_pert_vec = solver.solve_cg(
+            self._assign_cached_reg_scale(Data_res, "motion_rigid", solver, b_data.flatten())
+            mot_pert_vec = solver.cg(
                 b_data.flatten(),
                 x0=x0.flatten(),
                 max_iter=params.max_iter_motion,
                 tol=params.tol_motion,
+                M=None,
             )
 
         if params.motion_type == "rigid":
@@ -407,13 +427,17 @@ class JointReconstructor:
             early_stopping=params.cg_early_stopping,
             max_stag_steps=params.cg_max_stag_steps,
             max_more_steps=params.cg_max_more_steps,
+            use_reg_scale_proxy=params.cg_use_reg_scale_proxy,
+            reg_scale_num_probes=params.cg_reg_scale_num_probes,
         )
+        self._assign_cached_reg_scale(Data_res, "motion_scaled", solver, b_scaled.flatten())
 
-        delta_tilde = solver.solve_cg(
+        delta_tilde = solver.cg(
             b_scaled.flatten(),
             x0=x0,
             max_iter=params.max_iter_motion,
             tol=params.tol_motion,
+            M=None,
         )
 
         # ---- Unscale back to physical parameters ----
