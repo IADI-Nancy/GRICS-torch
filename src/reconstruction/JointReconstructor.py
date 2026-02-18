@@ -80,13 +80,14 @@ def save_residual_convergence(residual_norms, title, res_level):
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal):
+    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, kspace_scale=1.0):
         Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
         self.Ncoils = Ncoils
         self.device = KspaceData.device
         self.Nalpha = 3 if params.motion_type == "rigid" else 2
+        self.kspace_scale = float(kspace_scale)
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
         self.motion_signal = motion_signal.to(self.device)
@@ -545,7 +546,7 @@ class JointReconstructor:
 
         for comp_name, comp in components:
             plt.figure(figsize=(5, 5))
-            plt.imshow(comp, cmap="jet")
+            plt.imshow(comp, cmap="jet", origin="upper")
             plt.colorbar()
             plt.axis("off")
             plt.title(f"{comp_name} restart {restart_idx} level {level_idx}")
@@ -570,8 +571,12 @@ class JointReconstructor:
         )
         xx = xx[::step, ::step].numpy()
         yy = yy[::step, ::step].numpy()
-        ux = alpha_x_for_quiver[::step, ::step].numpy()
-        uy = alpha_y_for_quiver[::step, ::step].numpy()
+        # Matrix-to-plot convention:
+        # first index (rows) -> vertical component, second index (cols) -> horizontal component.
+        # Motion operator is built from inverse-warp displacements, so flip sign here
+        # to visualize physical forward motion direction.
+        ux = (-alpha_y_for_quiver[::step, ::step]).numpy()
+        uy = (-alpha_x_for_quiver[::step, ::step]).numpy()
         amp = torch.sqrt(alpha_x_for_quiver * alpha_x_for_quiver + alpha_y_for_quiver * alpha_y_for_quiver)[::step, ::step].numpy()
 
         img = Data_res["ReconstructedImage"][0].detach().cpu()
@@ -580,10 +585,21 @@ class JointReconstructor:
         img = img.numpy()
 
         fig, ax = plt.subplots(figsize=(6, 6))
+        ax.imshow(img, cmap="gray", origin="upper", alpha=0.35)
         q = ax.quiver(xx, yy, ux, uy, amp, cmap="jet", angles="xy", scale_units="xy", scale=None)
-        ax.contour(img, levels=8, colors="k", linewidths=0.7, alpha=0.8)
+        # Use explicit X/Y grid so contour follows the same coordinates as quiver.
+        ax.contour(
+            torch.arange(ny).cpu().numpy(),
+            torch.arange(nx).cpu().numpy(),
+            img,
+            levels=8,
+            colors="k",
+            linewidths=0.7,
+            alpha=0.8,
+        )
         ax.set_aspect("equal")
-        ax.invert_yaxis()
+        ax.set_xlim(-0.5, ny - 0.5)
+        ax.set_ylim(nx - 0.5, -0.5)
         ax.set_title(f"motion field restart {restart_idx} level {level_idx}")
         fig.colorbar(q, ax=ax, label="|u|")
         fig.savefig(
@@ -680,7 +696,7 @@ class JointReconstructor:
                         Data_res["ReconstructedImage"] = best_image
                         Data_res["MotionModel"] = best_motion
                     show_and_save_image(Data_res["ReconstructedImage"][0], \
-                        'image_resolution_restart_' + str(restart + 1) + '_level' + str(idx_res+1), params.debug_folder)
+                        'image_restart_' + str(restart + 1) + '_resolution_level' + str(idx_res+1), params.debug_folder)
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
                 if params.verbose:
                     save_residual_convergence(residual_recon_norms, 'recon_' + str(restart + 1) + '_', idx_res + 1)
@@ -702,7 +718,8 @@ class JointReconstructor:
         if not global_converged:
             print("⚠ WARNING: No restart reached tolerance.")
 
-        show_and_save_image(global_best_image[0], 'reconstructed_image', params.results_folder)
+        global_best_image_unscaled = global_best_image * self.kspace_scale
+        show_and_save_image(global_best_image_unscaled[0], 'reconstructed_image', params.results_folder)
         torch.save(global_best_motion, f"{params.results_folder}motion_model.pt")
 
-        return Data_res["ReconstructedImage"], Data_res["MotionModel"]
+        return global_best_image_unscaled, global_best_motion

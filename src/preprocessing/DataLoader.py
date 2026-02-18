@@ -26,6 +26,7 @@ class DataLoader:
     def __init__(self, sp_device=None, t_device=None):
         self.sp_device = sp_device
         self.t_device = t_device
+        self.kspace_scale = 1.0
         
         if params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=params.N_SheppLogan, Ncoils=params.Ncoils_SheppLogan, Nz=params.Nz_SheppLogan, random_phase=True)
@@ -37,6 +38,8 @@ class DataLoader:
             self.load_realworld_data_from_ismrm_and_saec(params.ismrmrd_file, params.saec_file, slice_idx=16)
         else:
             raise ValueError("Unknown data_type")
+
+        self._normalize_kspace_if_enabled()
         
         # Keep a copy of motion-free k-space before any simulated corruption.
         self.kspace_nomotion = self.kspace.clone()
@@ -74,15 +77,9 @@ class DataLoader:
                     self.alpha_maps_true = motionSimulator.alpha_maps
 
             motion_curve, _, _, _ = motionSimulator.get_motion_information()
-            if params.simulation_type == 'discrete-non-rigid':
-                # Keep exactly the simulator's shot-wise partition/signal.
-                # This matches the MATLAB synthetic pipeline (no extra re-clustering).
-                self.binned_indices = self.ky_per_motion
-                self.motion_signal = motionSimulator.navigator_mot_state
-            else:
-                self.binned_indices, self.motion_signal = MotionBinner.bin_motion(
-                    motion_curve, self.ky_idx, self.nex_idx, self.t_device
-                )
+            self.binned_indices, self.motion_signal = MotionBinner.bin_motion(
+                motion_curve, self.ky_idx, self.nex_idx, self.t_device
+            )
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
@@ -90,8 +87,29 @@ class DataLoader:
             self.t_device
         )
 
-        if params.debug_flag:
+        if params.debug_flag and params.simulation_type in ['discrete-non-rigid', 'rigid', 'discrete-rigid']:
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
+
+    def _normalize_kspace_if_enabled(self):
+        if not params.normalize_kspace:
+            self.kspace_scale = 1.0
+            return
+
+        k = self.kspace
+        if params.kspace_norm_mode == "max":
+            s = torch.max(torch.abs(k))
+        elif params.kspace_norm_mode == "rms":
+            s = torch.linalg.norm(k.flatten()) / (k.numel() ** 0.5)
+        else:
+            raise ValueError(f"Unknown kspace_norm_mode: {params.kspace_norm_mode}")
+
+        s = torch.clamp(s.real if torch.is_complex(s) else s, min=params.kspace_norm_eps)
+        self.kspace_scale = float(s.item())
+        self.kspace = self.kspace / self.kspace_scale
+        print(
+            f"[DataLoader] k-space normalized ({params.kspace_norm_mode}), "
+            f"scale={self.kspace_scale:.6e}"
+        )
 
 
     def load_fastMRI_data(self, path_to_mri_data):

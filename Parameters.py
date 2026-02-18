@@ -7,12 +7,12 @@ class Parameters:
     debug_folder = "debug_outputs/"
     logs_folder = "logs/"
     results_folder = "results/"
-    Nex = 3 # number of excitations (repetitions) per k-space acquisition
+    Nex = 1 # number of excitations (repetitions) per k-space acquisition
     motion_type = 'non-rigid'  # 'rigid', 'non-rigid'
-    N_mot_states = 4
+    N_mot_states = 8
 
     # Data loading/generation parameters
-    data_type = 'shepp-logan'  # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
+    data_type = 'real-world' # 'shepp-logan', 'fastMRI', 'real-world', 'raw-data'
     path_to_fastMRI_data = 'data/kspace.npz'
     path_to_realworld_data = 'data/breast_motion_data.h5'
     saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
@@ -26,7 +26,7 @@ class Parameters:
     kspace_sampling_type = 'interleaved' # 'linear', 'interleaved' or 'random'
 
     # Motion simulation parameters
-    simulation_type = 'discrete-non-rigid'  # 'discrete-rigid', 'rigid', 'discrete-non-rigid', 'no-motion' or 'as-it-is'
+    simulation_type = 'as-it-is'  # 'discrete-rigid', 'rigid', 'discrete-non-rigid', 'no-motion' or 'as-it-is'
     num_motion_events = 4
     max_tx = 4.0  # maximum translation in x (pixels)
     max_ty = 3.0  # maximum translation in y (pixels)
@@ -44,6 +44,9 @@ class Parameters:
 
     # General reconstruction parameters
     max_restarts = 3
+    normalize_kspace = True
+    kspace_norm_mode = "rms"  # "rms" or "max"
+    kspace_norm_eps = 1e-12
     use_scaled_motion_update = False  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
     GN_iterations_per_level = 8
@@ -52,7 +55,7 @@ class Parameters:
     motion_weight = 1.0             # used only if combined
 
     # Image reconstruction parameters
-    lambda_r = 1e-3
+    lambda_r = 5.063e-02
     max_iter_recon = 128
     tol_recon = 1e-3
     cg_early_stopping = True  # MATLAB-like stagnation/more-steps stopping inside CG
@@ -62,7 +65,7 @@ class Parameters:
     cg_reg_scale_num_probes = 8
 
     # Motion model parameters
-    lambda_m = 1
+    lambda_m = 1 # 1.e7# 
     max_iter_motion = 128
     tol_motion = 1e-3
 
