@@ -63,7 +63,7 @@ class MotionPerturbationSimulator:
             )
         # output k-space residual
         ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
-                                     dtype=torch.complex64,
+                                     dtype=torch.complex128,
                                      device=self.device)
 
         # ---- Loop over motion states ----
@@ -126,11 +126,11 @@ class MotionPerturbationSimulator:
 
         if self.motionOperator.motion_type == "rigid":
             MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
-                                            dtype=torch.complex64,
+                                            dtype=torch.complex128,
                                             device=self.device)
         else:
             MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny),
-                                            dtype=torch.complex64,
+                                            dtype=torch.complex128,
                                             device=self.device)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
@@ -154,13 +154,13 @@ class MotionPerturbationSimulator:
                 Gx, Gy = self.gradient_2d(WarpedImage)
 
                 # 3) Allocate adjoint image accumulator (summed over coils)
-                ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=self.device)
+                ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex128, device=self.device)
 
                 # --- Coil loop --------------------------------------------------------
                 for coil in range(Ncoils):
 
                     # 4) Extract coil residual samples and place them back into k-space
-                    KspaceDataCoilNex = torch.zeros((Nx * Ny,), dtype=torch.complex64, device=self.device)
+                    KspaceDataCoilNex = torch.zeros((Nx * Ny,), dtype=torch.complex128, device=self.device)
 
                     KspaceDataCoilNex[SamplingIndices] = ResidualKspace[coil, nex, SamplingIndices]
 

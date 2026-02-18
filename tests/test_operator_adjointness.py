@@ -11,9 +11,9 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from Parameters import Parameters
 
 
-def _complex_randn(shape, device, dtype=torch.complex64):
-    real = torch.randn(*shape, device=device, dtype=torch.float32)
-    imag = torch.randn(*shape, device=device, dtype=torch.float32)
+def _complex_randn(shape, device, dtype=torch.complex128):
+    real = torch.randn(*shape, device=device, dtype=torch.float64)
+    imag = torch.randn(*shape, device=device, dtype=torch.float64)
     return torch.complex(real, imag).to(dtype)
 
 

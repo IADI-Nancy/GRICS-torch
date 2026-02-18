@@ -1,4 +1,5 @@
 import os
+import torch
 
 class Parameters:
     debug_flag = True
@@ -6,7 +7,7 @@ class Parameters:
     debug_folder = "debug_outputs/"
     logs_folder = "logs/"
     results_folder = "results/"
-    Nex = 1 # number of excitations (repetitions) per k-space acquisition
+    Nex = 3 # number of excitations (repetitions) per k-space acquisition
     motion_type = 'non-rigid'  # 'rigid', 'non-rigid'
     N_mot_states = 4
 
@@ -17,11 +18,11 @@ class Parameters:
     saec_file = 'data/2008-003 01-1724_S11_20210323_151329.h5'
     ismrmrd_file = 'data/t2_1724.h5'
     N_SheppLogan = 128
-    Ncoils_SheppLogan = 16
+    Ncoils_SheppLogan = 4
     Nz_SheppLogan = 1
 
     # Sampling simulation parameters
-    NshotsPerNex = 4    
+    NshotsPerNex = 8    
     kspace_sampling_type = 'interleaved' # 'linear', 'interleaved' or 'random'
 
     # Motion simulation parameters
@@ -45,22 +46,25 @@ class Parameters:
     max_restarts = 3
     use_scaled_motion_update = False  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
-    GN_iterations_per_level = 50
+    GN_iterations_per_level = 4
     patience = 3
     residual_metric_type = "motion"  # "recon", "motion" or "combined"
     motion_weight = 1.0             # used only if combined
 
     # Image reconstruction parameters
-    lambda_r = 2e-3
-    max_iter_recon = 20
+    lambda_r = 1e-3
+    max_iter_recon = 128
     tol_recon = 1e-3
 
     # Motion model parameters
     lambda_m = 1.e-1
-    max_iter_motion = 20
+    max_iter_motion = 128
     tol_motion = 1e-3
 
     def __init__(self):
+        # Enforce double precision globally for tensors created without explicit dtype.
+        torch.set_default_dtype(torch.float64)
+
         if self.debug_flag and not os.path.exists(self.debug_folder):
             os.makedirs(self.debug_folder)
         self.Nshots = self.NshotsPerNex * self.Nex

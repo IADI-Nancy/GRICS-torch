@@ -132,7 +132,7 @@ class MotionSimulator:
     
     def create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
-        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float32)
+        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float64)
 
         # 1) Generate random motion event times
         event_times = torch.sort(
@@ -153,7 +153,7 @@ class MotionSimulator:
         phi = torch.zeros(self.Ny*params.Nex, device=self.t_device)
 
         # Full time axis
-        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float32)
+        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float64)
 
         for i, ti in enumerate(event_times):
             ti = event_times[i].item()
@@ -321,25 +321,28 @@ class MotionSimulator:
         self.apply_motion(alpha, centers)
 
     def create_discrete_non_rigid_alpha_fields(self):
-        # ground-truth alpha maps used to generate displacements
-        x = torch.arange(0, self.Nx, device=self.t_device, dtype=torch.float32)
-        y = torch.arange(0, self.Ny, device=self.t_device, dtype=torch.float32)
+        # MATLAB-equivalent coordinates and Gaussian maps for motion_type_flag == 2:
+        # [X,Y] = meshgrid(1:N,1:N), sigma = N/4
+        x = torch.arange(1, self.Nx + 1, device=self.t_device, dtype=torch.float64)
+        y = torch.arange(1, self.Ny + 1, device=self.t_device, dtype=torch.float64)
         X, Y = torch.meshgrid(x, y, indexing='ij')
 
-        mu_xx = self.Nx / 2.0  # center of the gauss in x direction
-        mu_yy = self.Ny / 2.0  # center of the gauss in y direction
-        mu_yx = self.Nx / 2.0  # center of the gauss in x direction
-        mu_xy = self.Ny / 2.0  # center of the gauss in y direction
+        mu_xx = self.Nx / 2.0
+        mu_yy = self.Ny / 2.0
+        mu_yx = self.Nx / 2.0
+        mu_xy = self.Ny / 2.0
 
-        sigma = params.displacementfield_size * np.sqrt(self.Nx * self.Ny) / 2
+        # MATLAB uses sigma = N/4.
+        sigma_x = self.Nx / 4.0
+        sigma_y = self.Ny / 4.0
 
         alpha_x = (
-            torch.exp(- (X - mu_xx) ** 2 / (2 * sigma ** 2))
-            * torch.exp(- (Y - mu_xy) ** 2 / (2 * sigma ** 2))
+            torch.exp(- (X - mu_xx) ** 2 / (2 * sigma_x ** 2))
+            * torch.exp(- (Y - mu_xy) ** 2 / (2 * sigma_y ** 2))
         )
         alpha_y = (
-            2 * torch.exp(- (X - mu_yx) ** 2 / (2 * sigma ** 2))
-            * torch.exp(- (Y - mu_yy) ** 2 / (2 * sigma ** 2))
+            2 * torch.exp(- (X - mu_yx) ** 2 / (2 * sigma_x ** 2))
+            * torch.exp(- (Y - mu_yy) ** 2 / (2 * sigma_y ** 2))
         )
         alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
         return alpha_x, alpha_y, alpha_maps
@@ -353,10 +356,18 @@ class MotionSimulator:
         )
         self.TotalKspaceSamples = self.Ny * self.Nx
 
-        Nshots = len(ky_per_mot_state_idx[0])
+        # Total number of motion states across all Nex acquisitions.
+        Nshots = sum(len(shot_list) for shot_list in ky_per_mot_state_idx)
 
-        # sensor time course S(t)
-        S = params.nonrigid_motion_amplitude * torch.randn(Nshots, device=self.t_device)
+        # MATLAB-equivalent random motion vectors:
+        # XTranslationVector = 4 * randn(1,Nshots)
+        # YTranslationVector = 2 * randn(1,Nshots)
+        # RotationVector     = 3 * randn(1,Nshots) [deg]
+        tx_vec = 4.0 * torch.randn(Nshots, device=self.t_device)
+        ty_vec = 2.0 * torch.randn(Nshots, device=self.t_device)
+        phi_vec = (3.0 * torch.randn(Nshots, device=self.t_device)) * (torch.pi / 180.0)
+        # For non-rigid motion_type_flag==2, MATLAB uses S = XTranslationVector.
+        S = tx_vec
 
         alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
         self.alpha_maps = alpha_maps
@@ -383,9 +394,9 @@ class MotionSimulator:
         self.apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
 
         self.navigator_mot_state = S
-        self.tx_mot_state = torch.zeros(Nshots, device=self.t_device)
-        self.ty_mot_state = torch.zeros(Nshots, device=self.t_device)
-        self.phi_mot_state = torch.zeros(Nshots, device=self.t_device)
+        self.tx_mot_state = tx_vec
+        self.ty_mot_state = ty_vec
+        self.phi_mot_state = phi_vec
         self.expand_motion_to_ky(ky_per_mot_state_idx)
 
 

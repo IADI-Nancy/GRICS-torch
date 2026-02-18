@@ -21,13 +21,13 @@ class SamplingSimulator:
         - Adds a colorbar
         """
         # Create empty image
-        img = torch.zeros((Ny, Ny, 3), dtype=torch.float32)  # RGB
+        img = torch.zeros((Ny, Ny, 3), dtype=torch.float64)  # RGB
 
         # Concatenate all shot tensors for acquisition order
         all_ky = torch.cat(ky_per_shot)
 
         # Map ky line -> acquisition order (0..1)
-        order_map = torch.zeros(Ny, dtype=torch.float32)
+        order_map = torch.zeros(Ny, dtype=torch.float64)
         order_map[all_ky] = torch.linspace(0, 1, len(all_ky))
 
         # Use viridis colormap
@@ -35,7 +35,7 @@ class SamplingSimulator:
 
         # Fill image line by line
         for ky in range(Ny):
-            img[ky, :, :] = torch.tensor(cmap(order_map[ky].item())[:3], dtype=torch.float32)
+            img[ky, :, :] = torch.tensor(cmap(order_map[ky].item())[:3], dtype=torch.float64)
 
         # Save image
         os.makedirs(folder, exist_ok=True)

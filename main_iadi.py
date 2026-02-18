@@ -48,7 +48,7 @@ image_corrupted = data.image_no_moco.clone()
 kspace_corrupted = data.kspace
 show_and_save_image(image_corrupted[0], 'img_corrupted', params.debug_folder)
 
-jointReconstructor = JointReconstructor(data.kspace, data.smaps, data.sampling_idx, motion_signal=data.motion_signal)
+jointReconstructor = JointReconstructor(data.kspace, data.smaps_generated, data.sampling_idx, motion_signal=data.motion_signal)
 start = time.time()
 jointReconstructor.run()
 end = time.time()

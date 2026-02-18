@@ -70,7 +70,7 @@ class RawDataReader:
 
         kspace = torch.zeros(
             (number_of_channels, Nex, number_of_samples, Ny, N_SLI),
-            dtype=torch.complex64,
+            dtype=torch.complex128,
             device=self.device)
 
         for i in range(dset.number_of_acquisitions()):

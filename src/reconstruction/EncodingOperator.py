@@ -23,7 +23,7 @@ class EncodingOperator:
          # ---- Sizes ----
         Ncoils, Nx, Ny, Nsli = self.smaps.shape
         N_mot_states         = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
-        KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex64, device=self.device)
+        KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex128, device=self.device)
         image = image.reshape(self.Nex, Nx, Ny)
 
         # ---- Loop over motion states ----
@@ -57,13 +57,13 @@ class EncodingOperator:
         Ncoils, Nx, Ny, Nsli = self.smaps.shape
         N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
         KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples)
-        Image = torch.zeros((self.Nex, Nx, Ny), dtype=torch.complex64, device=device)
+        Image = torch.zeros((self.Nex, Nx, Ny), dtype=torch.complex128, device=device)
 
         
         for nex in range(self.Nex):
 
             for motion_state in range(N_mot_states):
-                WarpedImage = torch.zeros((Nx, Ny), dtype=torch.complex64, device=device)
+                WarpedImage = torch.zeros((Nx, Ny), dtype=torch.complex128, device=device)
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue

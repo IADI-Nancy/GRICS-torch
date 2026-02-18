@@ -37,6 +37,9 @@ class DataLoader:
             self.load_realworld_data_from_ismrm_and_saec(params.ismrmrd_file, params.saec_file, slice_idx=16)
         else:
             raise ValueError("Unknown data_type")
+        
+        # Keep a copy of motion-free k-space before any simulated corruption.
+        self.kspace_nomotion = self.kspace.clone()
 
         # Calculate ESPIRiT maps and input image
         self.smaps = self.calc_espirit_maps()
@@ -67,9 +70,19 @@ class DataLoader:
                     raise ValueError("Unknown simulation_type")
                 self.kspace = motionSimulator.get_corrupted_kspace()
                 self.image_no_moco = motionSimulator.get_corrupted_image()
+                if hasattr(motionSimulator, "alpha_maps"):
+                    self.alpha_maps_true = motionSimulator.alpha_maps
 
             motion_curve, _, _, _ = motionSimulator.get_motion_information()
-            self.binned_indices, self.motion_signal = MotionBinner.bin_motion(motion_curve, self.ky_idx, self.nex_idx, self.t_device)
+            if params.simulation_type == 'discrete-non-rigid':
+                # Keep exactly the simulator's shot-wise partition/signal.
+                # This matches the MATLAB synthetic pipeline (no extra re-clustering).
+                self.binned_indices = self.ky_per_motion
+                self.motion_signal = motionSimulator.navigator_mot_state
+            else:
+                self.binned_indices, self.motion_signal = MotionBinner.bin_motion(
+                    motion_curve, self.ky_idx, self.nex_idx, self.t_device
+                )
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
@@ -95,7 +108,7 @@ class DataLoader:
         phantom_np_2d = resize(shepp_logan_phantom(), (N, N))
         phantom_2d = torch.tensor(
             phantom_np_2d,
-            dtype=torch.float32,
+            dtype=torch.float64,
             device=self.t_device
         )
 
@@ -119,7 +132,7 @@ class DataLoader:
         # Allocate coil maps directly in (Ncoils, Nx, Ny)
         smaps_2d = torch.empty(
             (Ncoils, N, N),
-            dtype=torch.cfloat,
+            dtype=torch.cdouble,
             device=self.t_device
         )
 
@@ -133,6 +146,7 @@ class DataLoader:
 
         # Expand to Nz: (Ncoils, Nx, Ny, Nz)
         smaps = smaps_2d.unsqueeze(-1).expand(Ncoils, N, N, Nz)
+        self.smaps_generated = smaps.clone()
 
         # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
         phantom = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
@@ -158,7 +172,7 @@ class DataLoader:
         )
         data = reader.read_data_from_rawdata()
 
-        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
+        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
         self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
@@ -185,7 +199,7 @@ class DataLoader:
             data['idx_nex'] = f['idx_nex'][:]
             data['kspace'] = f['kspace'][:]
 
-        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cfloat)[:, :, :, :, [slice_idx]]
+        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
         ky_dx = data['idx_ky'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
@@ -219,7 +233,7 @@ class DataLoader:
 
         espirit_maps = torch.zeros(
             (nCha, nX, nY, nSlices),
-            dtype=torch.complex64,
+            dtype=torch.complex128,
             device=device
         )
 
@@ -234,7 +248,7 @@ class DataLoader:
                     kernel_width=kernel_width,
                     device=sp_device
                 ).run()
-                maps_cp = maps_cp.astype(cp.complex64, copy=False)
+                maps_cp = maps_cp.astype(cp.complex128, copy=False)
                 maps_cp = cp.ascontiguousarray(maps_cp)
                 maps_t = sp.to_pytorch(maps_cp)
 
@@ -246,7 +260,7 @@ class DataLoader:
                     kernel_width=kernel_width,
                     device=sp_device
                 ).run()
-                maps_np = maps_np.astype(np.complex64, copy=False)
+                maps_np = maps_np.astype(np.complex128, copy=False)
                 maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
 
             espiritual = torch.complex(maps_t[..., 0], maps_t[..., 1])

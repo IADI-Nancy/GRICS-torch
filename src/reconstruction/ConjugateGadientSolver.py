@@ -52,48 +52,36 @@ class ConjugateGradientSolver:
     
     def laplacian_op(self, x):
         field = x.view(*self.regularization_shape)
+        nx = field.shape[-2]
+        ny = field.shape[-1]
 
-        lap = torch.zeros_like(field)
+        if nx < 2 or ny < 2:
+            return torch.zeros_like(field).reshape(-1)
 
-        # interior
-        lap[..., 1:-1, 1:-1] = (
-            field[..., :-2, 1:-1]
-            + field[..., 2:, 1:-1]
-            + field[..., 1:-1, :-2]
-            + field[..., 1:-1, 2:]
-            - 4 * field[..., 1:-1, 1:-1]
+        # MATLAB del2-like boundary treatment: linear extrapolation with
+        # one-pixel ghost borders, then 5-point stencil over all pixels.
+        pad = torch.zeros(*field.shape[:-2], nx + 2, ny + 2, dtype=field.dtype, device=field.device)
+        pad[..., 1:-1, 1:-1] = field
+
+        # Edge ghost values.
+        pad[..., 0, 1:-1] = 2 * field[..., 0, :] - field[..., 1, :]
+        pad[..., -1, 1:-1] = 2 * field[..., -1, :] - field[..., -2, :]
+        pad[..., 1:-1, 0] = 2 * field[..., :, 0] - field[..., :, 1]
+        pad[..., 1:-1, -1] = 2 * field[..., :, -1] - field[..., :, -2]
+
+        # Corner ghost values (bilinear completion from adjacent ghosts).
+        pad[..., 0, 0] = pad[..., 0, 1] + pad[..., 1, 0] - pad[..., 1, 1]
+        pad[..., 0, -1] = pad[..., 0, -2] + pad[..., 1, -1] - pad[..., 1, -2]
+        pad[..., -1, 0] = pad[..., -1, 1] + pad[..., -2, 0] - pad[..., -2, 1]
+        pad[..., -1, -1] = pad[..., -1, -2] + pad[..., -2, -1] - pad[..., -2, -2]
+
+        lap = (
+            pad[..., :-2, 1:-1]
+            + pad[..., 2:, 1:-1]
+            + pad[..., 1:-1, :-2]
+            + pad[..., 1:-1, 2:]
+            - 4 * pad[..., 1:-1, 1:-1]
         ) / 4.0
-
-        # edges (second-order one-sided)
-        lap[..., 0, 1:-1] = (
-            field[..., 1, 1:-1]
-            - 2 * field[..., 0, 1:-1]
-            + field[..., 2, 1:-1]
-        ) / 4.0
-
-        lap[..., -1, 1:-1] = (
-            field[..., -3, 1:-1]
-            - 2 * field[..., -2, 1:-1]
-            + field[..., -1, 1:-1]
-        ) / 4.0
-
-        lap[..., 1:-1, 0] = (
-            field[..., 1:-1, 1]
-            - 2 * field[..., 1:-1, 0]
-            + field[..., 1:-1, 2]
-        ) / 4.0
-
-        lap[..., 1:-1, -1] = (
-            field[..., 1:-1, -3]
-            - 2 * field[..., 1:-1, -2]
-            + field[..., 1:-1, -1]
-        ) / 4.0
-
-        # corners (simple approximation)
-        lap[..., 0, 0] = lap[..., 0, 1]
-        lap[..., 0, -1] = lap[..., 0, -2]
-        lap[..., -1, 0] = lap[..., -1, 1]
-        lap[..., -1, -1] = lap[..., -1, -2]
 
         return (-lap).reshape(-1)
 
@@ -107,7 +95,7 @@ class ConjugateGradientSolver:
         Build Jacobi preconditioner: M^{-1} = diag(A)^(-1)
         Approximated by applying A to basis vectors implicitly via ones-vector.
         """
-        ones_img = torch.ones(N, dtype=torch.complex64, device=self.device)
+        ones_img = torch.ones(N, dtype=torch.complex128, device=self.device)
         d = self.A(ones_img).real   # diagonal approximation
         d = torch.clamp(d, min=1e-6)
         return lambda r: r / d
@@ -139,6 +127,7 @@ class ConjugateGradientSolver:
 
             # Residual
             r = b - Ax
+            b_norm = torch.linalg.norm(b) + 1e-12
 
             # Preconditioned residual
             if M is None:
@@ -161,12 +150,16 @@ class ConjugateGradientSolver:
                 x = x + alpha * p
                 r = r - alpha * Ap
 
+                res_norm = torch.linalg.norm(r)
+                rel_res = (res_norm / b_norm).item()
                 if self.verbose:
-                    res_norm = torch.linalg.norm(r)
-                    print(f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}")
+                    print(
+                        f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
+                        f"Rel residual: {rel_res:.6e}"
+                    )
                 # torch.cuda.synchronize()
 
-                if torch.linalg.norm(r) < tol:
+                if rel_res < tol:
                     break
 
                 if M is None:
@@ -198,6 +191,7 @@ class ConjugateGradientSolver:
             # Compute initial residual
             Ax = self.A(x)
             r = b - Ax
+            b_norm = torch.linalg.norm(b) + 1e-12
 
             # Precondition
             z = r.clone() if M is None else M(r)
@@ -206,7 +200,7 @@ class ConjugateGradientSolver:
 
             # === NEW: store best iterate ===
             best_x = x.clone()
-            best_res = torch.linalg.norm(r)
+            best_rel = torch.linalg.norm(r) / b_norm
 
             # CG iterations
             for it in range(max_iter):
@@ -222,16 +216,20 @@ class ConjugateGradientSolver:
                 r = r - alpha * Ap
 
                 res_norm = torch.linalg.norm(r)
+                rel_res = res_norm / b_norm
 
                 if self.verbose:
-                    print(f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}")
+                    print(
+                        f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
+                        f"Rel residual: {rel_res.item():.6e}"
+                    )
 
                 # === NEW: update best solution ===
-                if res_norm < best_res:
-                    best_res = res_norm.clone()
+                if rel_res < best_rel:
+                    best_rel = rel_res.clone()
                     best_x = x.clone()
 
-                if res_norm < tol:
+                if rel_res < tol:
                     break
 
                 # Precondition

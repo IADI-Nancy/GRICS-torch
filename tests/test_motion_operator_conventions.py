@@ -22,8 +22,8 @@ def test_meshgrid_construction_equivalence():
     # and
     #   X, Y = meshgrid(coords_x, coords_y, indexing="ij")
     nx, ny = 7, 11
-    coords_x = torch.arange(1, nx + 1, dtype=torch.float32)
-    coords_y = torch.arange(1, ny + 1, dtype=torch.float32)
+    coords_x = torch.arange(1, nx + 1, dtype=torch.float64)
+    coords_y = torch.arange(1, ny + 1, dtype=torch.float64)
 
     y_xy, x_xy = torch.meshgrid(coords_y, coords_x, indexing="xy")
     x_ij, y_ij = torch.meshgrid(coords_x, coords_y, indexing="ij")
@@ -34,11 +34,11 @@ def test_meshgrid_construction_equivalence():
 
 def test_u_x_shift_direction_matches_inverse_warp_convention():
     nx, ny = 9, 9
-    img = torch.zeros((nx, ny), dtype=torch.complex64)
+    img = torch.zeros((nx, ny), dtype=torch.complex128)
     img[4, 4] = 1.0
 
-    ux = torch.ones((nx, ny), dtype=torch.float32)
-    uy = torch.zeros((nx, ny), dtype=torch.float32)
+    ux = torch.ones((nx, ny), dtype=torch.float64)
+    uy = torch.zeros((nx, ny), dtype=torch.float64)
     motion_op = MotionOperator.create_sparse_motion_operator(ux, uy)
 
     warped = (motion_op @ img.flatten()).reshape(nx, ny)
@@ -50,11 +50,11 @@ def test_u_x_shift_direction_matches_inverse_warp_convention():
 
 def test_u_y_shift_direction_matches_inverse_warp_convention():
     nx, ny = 9, 9
-    img = torch.zeros((nx, ny), dtype=torch.complex64)
+    img = torch.zeros((nx, ny), dtype=torch.complex128)
     img[4, 4] = 1.0
 
-    ux = torch.zeros((nx, ny), dtype=torch.float32)
-    uy = torch.ones((nx, ny), dtype=torch.float32)
+    ux = torch.zeros((nx, ny), dtype=torch.float64)
+    uy = torch.ones((nx, ny), dtype=torch.float64)
     motion_op = MotionOperator.create_sparse_motion_operator(ux, uy)
 
     warped = (motion_op @ img.flatten()).reshape(nx, ny)

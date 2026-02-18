@@ -15,13 +15,13 @@ from src.utils.show_and_save_image import show_and_save_image
 
 
 def _make_smooth_alpha(nx, ny, amp_x=2.0, amp_y=2.0, device="cpu"):
-    x = torch.arange(nx, device=device, dtype=torch.float32)
-    y = torch.arange(ny, device=device, dtype=torch.float32)
+    x = torch.arange(nx, device=device, dtype=torch.float64)
+    y = torch.arange(ny, device=device, dtype=torch.float64)
     xx, yy = torch.meshgrid(x, y, indexing="ij")
     sx = nx / 6.0
     sy = ny / 6.0
     g = torch.exp(-((xx - nx / 2.0) ** 2) / (2 * sx * sx) - ((yy - ny / 2.0) ** 2) / (2 * sy * sy))
-    alpha = torch.zeros((2, nx, ny), device=device, dtype=torch.float32)
+    alpha = torch.zeros((2, nx, ny), device=device, dtype=torch.float64)
     alpha[0] = amp_x * g
     alpha[1] = amp_y * g
     return alpha
@@ -70,7 +70,7 @@ def run_motion_only_checks():
 
     delta_true = _make_smooth_alpha(nx, ny, amp_x=0.3, amp_y=-0.25, device=device)
     residual_lin = d_lin["J"].forward(delta_true.flatten())
-    delta_est = recon.solve_motion(d_lin, residual_lin).real
+    delta_est = recon.solve_motion(d_lin, residual_lin)
 
     lin_rel_err = (
         torch.linalg.norm((delta_est - delta_true).flatten())
@@ -97,8 +97,8 @@ def run_motion_only_checks():
         y_est = d["E"].forward(x_true.flatten())
         residual = y_true - y_est
 
-        dm = recon.solve_motion(d, residual).real
-        alpha_est = alpha_est + dm
+        dm = recon.solve_motion(d, residual)
+        alpha_est = alpha_est + dm.real
 
         res_norm = torch.linalg.norm(residual).item()
         alpha_rel = (

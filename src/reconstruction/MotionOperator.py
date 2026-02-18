@@ -48,8 +48,8 @@ class MotionOperator:
         self.centers = centers
 
         # Precompute meshgrid
-        coords_x = torch.arange(Nx, device=self.device, dtype=torch.float32)
-        coords_y = torch.arange(Ny, device=self.device, dtype=torch.float32)
+        coords_x = torch.arange(Nx, device=self.device, dtype=torch.float64)
+        coords_y = torch.arange(Ny, device=self.device, dtype=torch.float64)
         self.X, self.Y = torch.meshgrid(coords_x, coords_y, indexing='ij')
 
         # Build coordinate grid (absolute coordinates 0..Nx-1, 0..Ny-1)
@@ -201,7 +201,11 @@ class MotionOperator:
         """
 
         device = Ux.device
-        dtype  = Ux.dtype
+        # Interpolation grid is purely geometric; keep it real-valued even if
+        # motion coefficients carry a complex diagnostic component.
+        Ux = Ux.real if torch.is_complex(Ux) else Ux
+        Uy = Uy.real if torch.is_complex(Uy) else Uy
+        dtype = Ux.dtype
 
         Nx, Ny = Ux.shape
 
@@ -279,6 +283,6 @@ class MotionOperator:
         # Build sparse matrix
         # -----------------------------
         indices = torch.stack([rowIndices, colIndices], dim=0)
-        M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex64)
+        M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex128)
 
         return M

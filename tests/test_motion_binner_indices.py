@@ -29,7 +29,7 @@ def _build_synthetic_inputs(nex, n_states, ny, device):
     motion_curve = []
 
     # Distinct per-state signal values
-    state_signal = torch.tensor([-1.4, -0.2, 0.9, 2.1], device=device, dtype=torch.float32)[:n_states]
+    state_signal = torch.tensor([-1.4, -0.2, 0.9, 2.1], device=device, dtype=torch.float64)[:n_states]
 
     for n in range(nex):
         ky_idx.append(torch.cat(init_bins[n], dim=0).to(torch.int32))

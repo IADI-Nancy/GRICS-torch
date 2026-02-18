@@ -28,7 +28,7 @@ def test_J_singularity(motionSimulator):
         Je = motionSimulator.forward(e)
         JHJe = motionSimulator.adjoint(Je)
 
-        JHJ[:, i] = JHJe.real  # JHJ should be real symmetric
+        JHJ[:, i] = JHJe
 
     # SVD
     U, S, V = torch.linalg.svd(JHJ)
@@ -271,7 +271,7 @@ class JointReconstructor:
         E = Data_res["E"]
 
         b = E.adjoint(Data_res["KspaceData"])
-        solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=True)
+        solver = ConjugateGradientSolver(E, reg_lambda=params.lambda_r, verbose=params.verbose)
 
         img_vec = solver.solve_cg(
             b.flatten(),
@@ -293,39 +293,23 @@ class JointReconstructor:
 
     def solve_motion(self, Data_res, residual):
         Nparams = self._n_motion_params(Data_res)
-        x0 = torch.zeros(Nparams, dtype=torch.float32, device=residual.device)
         J = Data_res["J"]
         b_data = J.adjoint(residual)
+        x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=residual.device)
 
         if params.motion_type == "non-rigid":
-            class RealJacobian:
-                def __init__(self, J):
-                    self.J = J
-                    self.device = J.device
-
-                def forward(self, v):
-                    return self.J.forward(v)
-
-                def adjoint(self, w):
-                    return self.J.adjoint(w).real
-
-                def normal(self, v):
-                    return self.adjoint(self.forward(v))
-
-            J_real = RealJacobian(J)
             solver = ConjugateGradientSolver(
-                J_real,
+                J,
                 reg_lambda=params.lambda_m,
                 regularizer="Tikhonov_laplacian",
                 regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
-                verbose=True,
+                verbose=params.verbose,
             )
             # Match MATLAB formulation:
             # A(dm) = J^H J dm + mu_scaled * GhG(dm)
             # b     = J^H r    - mu_scaled * GhG(alpha_current)
-            b_data_real = b_data.real
-            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data_real, p=2)
-            b = b_data_real - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
+            solver.lambda_scaled = solver.lambda_ * torch.norm(b_data, p=2)
+            b = b_data - solver.lambda_scaled * solver.regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg_keep_best(
                 b.flatten(),
                 x0=x0.flatten(),
@@ -334,7 +318,7 @@ class JointReconstructor:
                 M=None,
             )
         else:
-            solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=True)
+            solver = ConjugateGradientSolver(J, reg_lambda=params.lambda_m, verbose=params.verbose)
             mot_pert_vec = solver.solve_cg_keep_best(
                 b_data.flatten(),
                 x0=x0.flatten(),
@@ -354,14 +338,14 @@ class JointReconstructor:
 
         Nparams = self.Nalpha * params.N_mot_states
         with torch.no_grad():
-            diag_JHJ = torch.zeros(Nparams, device=self.device)
+            diag_JHJ = torch.zeros(Nparams, dtype=torch.complex128, device=self.device)
 
             for i in range(Nparams):
                 e = torch.zeros(Nparams, device=self.device)
                 e[i] = 1.0
                 Je = Data_res["J"].forward(e)
                 JHJe = Data_res["J"].adjoint(Je)
-                diag_JHJ[i] = torch.real(JHJe[i])
+                diag_JHJ[i] = JHJe[i]
 
             # Avoid division by zero
             eps = 1e-8
@@ -396,7 +380,7 @@ class JointReconstructor:
         b_scaled = J_scaled.adjoint(residual)
 
         # ---- Initial guess ----
-        x0 = torch.zeros(Nparams, dtype=torch.float32, device=device)
+        x0 = torch.zeros(Nparams, dtype=b_scaled.dtype, device=device)
 
         # ---- Solve in scaled variables ----
         solver = ConjugateGradientSolver(
@@ -456,7 +440,7 @@ class JointReconstructor:
 
         # Initialize image and motion model
         if idx_res == 0:
-            Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex64, device=self.device)
+            Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=self.device)
             
             if params.motion_type == "rigid":
                 if restart == 0:
@@ -470,51 +454,17 @@ class JointReconstructor:
     def _initialize_level_tracking(self):
         residual_recon_norms = []
         residual_motion_norms = []
-
-        # Initialize patience tracking
-        best_metric = float("inf")
+        best_relres = float("inf")
         best_image = None
         best_motion = None
-        no_improve_counter = 0
-        return residual_recon_norms, residual_motion_norms, best_metric, best_image, best_motion, no_improve_counter
+        return residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion
 
-    def _compute_metric(self, res_norm, dm_norm):
-        # Metric selection
-        if params.residual_metric_type == "recon":
-            metric = res_norm
-        elif params.residual_metric_type == "motion":
-            metric = dm_norm
-        elif params.residual_metric_type == "combined":
-            metric = res_norm + params.motion_weight * dm_norm
-        else:
-            raise ValueError("Unknown residual_metric_type")
-        return metric
-
-    def _apply_patience(self, metric, best_metric, Data_res, best_image, best_motion, no_improve_counter):
-        stop_level = False
-        # Patience logic
-        if metric < best_metric:
-            best_metric = metric
-            best_image = Data_res["ReconstructedImage"].clone()
-            best_motion = Data_res["MotionModel"].clone()
-            no_improve_counter = 0
-        else:
-            no_improve_counter += 1
-            print(f"    No improvement ({no_improve_counter}/{params.patience})")
-        if no_improve_counter >= params.patience:
-            print("    Patience exceeded — restoring best solution")
-            Data_res["ReconstructedImage"] = best_image
-            Data_res["MotionModel"] = best_motion
-            stop_level = True
-
-        return stop_level, best_metric, best_image, best_motion, no_improve_counter
-
-    def _update_global_best(self, best_metric, best_image, best_motion, global_best_metric, global_best_image, global_best_motion):
+    def _update_global_best(self, best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion):
         # ----------------------------------------------------------
         # Compare restart result with global best
         # ----------------------------------------------------------
-        if best_metric < global_best_metric:
-            global_best_metric = best_metric
+        if best_relres < global_best_metric:
+            global_best_metric = best_relres
             global_best_image = best_image.clone()
             global_best_motion = best_motion.clone()
         return global_best_metric, global_best_image, global_best_motion
@@ -529,10 +479,27 @@ class JointReconstructor:
 
         os.makedirs(params.debug_folder, exist_ok=True)
 
-        alpha_x = alpha[0].detach().real.cpu()
-        alpha_y = alpha[1].detach().real.cpu()
+        alpha_x = alpha[0].detach().cpu()
+        alpha_y = alpha[1].detach().cpu()
 
-        for comp_name, comp in (("alpha_x", alpha_x), ("alpha_y", alpha_y)):
+        if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
+            components = (
+                ("alpha_x_real", alpha_x.real),
+                ("alpha_y_real", alpha_y.real),
+                ("alpha_x_imag", alpha_x.imag),
+                ("alpha_y_imag", alpha_y.imag),
+            )
+            alpha_x_for_quiver = alpha_x.real
+            alpha_y_for_quiver = alpha_y.real
+        else:
+            components = (
+                ("alpha_x", alpha_x),
+                ("alpha_y", alpha_y),
+            )
+            alpha_x_for_quiver = alpha_x
+            alpha_y_for_quiver = alpha_y
+
+        for comp_name, comp in components:
             plt.figure(figsize=(5, 5))
             plt.imshow(comp, cmap="jet")
             plt.colorbar()
@@ -549,7 +516,7 @@ class JointReconstructor:
             plt.close()
 
         # Quiver plot: direction from (alpha_x, alpha_y), color by amplitude.
-        nx, ny = alpha_x.shape
+        nx, ny = alpha_x_for_quiver.shape
         step = max(1, min(nx, ny) // 32)
 
         yy, xx = torch.meshgrid(
@@ -559,9 +526,9 @@ class JointReconstructor:
         )
         xx = xx[::step, ::step].numpy()
         yy = yy[::step, ::step].numpy()
-        ux = alpha_x[::step, ::step].numpy()
-        uy = alpha_y[::step, ::step].numpy()
-        amp = torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)[::step, ::step].numpy()
+        ux = alpha_x_for_quiver[::step, ::step].numpy()
+        uy = alpha_y_for_quiver[::step, ::step].numpy()
+        amp = torch.sqrt(alpha_x_for_quiver * alpha_x_for_quiver + alpha_y_for_quiver * alpha_y_for_quiver)[::step, ::step].numpy()
 
         img = Data_res["ReconstructedImage"][0].detach().cpu()
         if img.is_complex():
@@ -601,7 +568,8 @@ class JointReconstructor:
                 Data_res = self._prepare_resolution_level(idx_res, r, restart)
                 if idx_res != 0:
                     self.upsample_data(Data_prev, Data_res)
-                residual_recon_norms, residual_motion_norms, best_metric, best_image, best_motion, no_improve_counter = self._initialize_level_tracking()
+                residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion = self._initialize_level_tracking()
+                s_res = Data_res["KspaceData"].flatten()
 
                 # Gauss–Newton iterations
                 for it in range(GN_iter):
@@ -624,9 +592,19 @@ class JointReconstructor:
                     # 3) Compute residual
                     x = img.flatten()
                     y = Data_res["E"].forward(x)
-                    residual = Data_res["KspaceData"].flatten() - y
+                    residual = s_res - y
                     res_norm = torch.linalg.norm(residual).item()
-                    residual_recon_norms.append(res_norm)
+                    rel_res = res_norm / (torch.linalg.norm(s_res).item() + 1e-12)
+                    residual_recon_norms.append(rel_res)
+
+                    if it > 0 and rel_res > best_relres:
+                        print("    Relative residual increased — restoring best solution at this level.")
+                        break
+
+                    # Residual improved: store current image/motion as level-best.
+                    best_relres = rel_res
+                    best_image = Data_res["ReconstructedImage"].clone()
+                    best_motion = Data_res["MotionModel"].clone()
 
                     # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
 
@@ -652,21 +630,11 @@ class JointReconstructor:
                             res_level=idx_res + 1,
                             gn_iter=it + 1
                         )
-                    metric = self._compute_metric(res_norm, dm_norm)
-                    
-                    if res_norm < params.tol_recon and dm_norm < params.tol_motion:
-                        print("    ✅ Convergence reached (tolerance satisfied)")
-                        restart_converged = True
-                        break
-
-                    stop_level, best_metric, best_image, best_motion, no_improve_counter = self._apply_patience(
-                        metric, best_metric, Data_res, best_image, best_motion, no_improve_counter)
-                    if stop_level:
-                        break
-
-                    Data_prev = Data_res
 
                 if params.debug_flag: 
+                    if best_image is not None and best_motion is not None:
+                        Data_res["ReconstructedImage"] = best_image
+                        Data_res["MotionModel"] = best_motion
                     show_and_save_image(Data_res["ReconstructedImage"][0], \
                         'image_resolution_restart_' + str(restart + 1) + '_level' + str(idx_res+1), params.debug_folder)
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
@@ -676,9 +644,11 @@ class JointReconstructor:
 
                 if restart_converged:
                     break
-            global_best_metric, global_best_image, global_best_motion = self._update_global_best(
-                best_metric, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
-            )
+                Data_prev = Data_res
+            if best_image is not None and best_motion is not None:
+                global_best_metric, global_best_image, global_best_motion = self._update_global_best(
+                    best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
+                )
 
             if restart_converged:
                 global_converged = True
