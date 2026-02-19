@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import os
+import time
 
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.MotionOperator import MotionOperator
@@ -9,7 +10,7 @@ from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSim
 from src.utils.show_and_save_image import show_and_save_image
 from src.utils.save_alpha_component_map import save_alpha_component_map
 from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
-from src.utils.save_residual_convergence import save_residual_convergence
+from src.utils.save_residual_subplots import save_residual_subplots
 
 from Parameters import Parameters
 params = Parameters()
@@ -46,17 +47,14 @@ def test_J_singularity(motionSimulator):
 
     return S, V
 
-def log_motion_parameters(alpha, res_level, gn_iter):
-    """
-    alpha: [Nalpha, N_mot_states]
-    """
-    fname = f"{params.logs_folder}motion_params_res{res_level}.txt"
-    with open(fname, "a") as f:
-        f.write(f"\nGN iteration {gn_iter}\n")
-        f.write("alpha shape: {}\n".format(tuple(alpha.shape)))
-        for a in range(alpha.shape[0]):
-            vals = alpha[a].detach().cpu().numpy()
-            f.write(f"  alpha[{a}]: {vals}\n")
+def _format_cg_info(cg_info):
+    if cg_info is None:
+        return "flag = -1, relres = nan, iter = 0"
+    return (
+        f"flag = {cg_info.get('flag', -1)}, "
+        f"relres = {cg_info.get('relres', float('nan')):.6e}, "
+        f"iter = {cg_info.get('iterations', 0)}"
+    )
 
 # --------------------------------------------------------------------------
 # Class that performs joint image–motion reconstruction
@@ -74,6 +72,8 @@ class JointReconstructor:
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
         self.motion_signal = motion_signal.to(self.device)
+        self._last_image_cg_info = None
+        self._last_motion_cg_info = None
 
         # Data changing with resolution
         self.Data_full = {}
@@ -284,6 +284,7 @@ class JointReconstructor:
             tol=params.tol_recon,
             M=None,
         )
+        self._last_image_cg_info = solver.last_info
 
         img = img_vec.reshape(params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
@@ -346,6 +347,7 @@ class JointReconstructor:
                 tol=params.tol_motion,
                 M=None,
             )
+        self._last_motion_cg_info = solver.last_info
 
         if params.motion_type == "rigid":
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, params.N_mot_states)
@@ -423,6 +425,7 @@ class JointReconstructor:
             tol=params.tol_motion,
             M=None,
         )
+        self._last_motion_cg_info = solver.last_info
 
         # ---- Unscale back to physical parameters ----
         delta = delta_tilde / scale
@@ -457,10 +460,80 @@ class JointReconstructor:
         global_converged = False
         return global_best_metric, global_best_image, global_best_motion, global_converged
 
+    def _resolve_gn_iterations_per_level(self, res_levels):
+        gn_cfg = params.GN_iterations_per_level
+        if isinstance(gn_cfg, int):
+            return [gn_cfg] * len(res_levels)
+        if isinstance(gn_cfg, (list, tuple)):
+            if len(gn_cfg) != len(res_levels):
+                raise ValueError(
+                    f"GN_iterations_per_level length ({len(gn_cfg)}) must match ResolutionLevels length ({len(res_levels)})."
+                )
+            return [int(v) for v in gn_cfg]
+        raise ValueError("GN_iterations_per_level must be int, list, or tuple.")
+
+    def _init_restart_logging(self, restart_idx, n_levels, gn_iters_per_level):
+        os.makedirs(params.logs_folder, exist_ok=True)
+        log_path = os.path.join(params.logs_folder, f"restart_{restart_idx}.log")
+        param_items = {}
+        simulation_param_keys = {
+            "simulation_type",
+            "num_motion_events",
+            "max_tx",
+            "max_ty",
+            "max_phi",
+            "max_center_x",
+            "max_center_y",
+            "seed",
+            "motion_tau",
+            "nonrigid_motion_amplitude",
+            "displacementfield_size",
+        }
+        for key in dir(params):
+            if key.startswith("_"):
+                continue
+            if key in simulation_param_keys:
+                continue
+            value = getattr(params, key)
+            if callable(value):
+                continue
+            param_items[key] = value
+
+        with open(log_path, "w") as f:
+            f.write(f"Restart {restart_idx}\n")
+            f.write(f"Motion type: {params.motion_type}\n")
+            f.write(f"GN iterations per level: {gn_iters_per_level}\n\n")
+            f.write("Parameters (excluding simulation parameters):\n")
+            for key in sorted(param_items.keys()):
+                f.write(f"  {key} = {param_items[key]}\n")
+            f.write("\n")
+        return {
+            "path": log_path,
+            "recon_residuals_by_level": [[] for _ in range(n_levels)],
+            "motion_residuals_by_level": [[] for _ in range(n_levels)],
+        }
+
+    def _append_restart_log(self, restart_log, line=""):
+        with open(restart_log["path"], "a") as f:
+            f.write(line + "\n")
+
+    def _save_restart_residual_plots(self, restart_log, restart_idx):
+        recon_path = os.path.join(params.logs_folder, f"residual_recon_restart_{restart_idx}.png")
+        motion_path = os.path.join(params.logs_folder, f"residual_motion_restart_{restart_idx}.png")
+        save_residual_subplots(
+            restart_log["recon_residuals_by_level"],
+            title=f"Reconstruction residuals - restart {restart_idx}",
+            y_label="Relative residual",
+            out_path=recon_path,
+        )
+        save_residual_subplots(
+            restart_log["motion_residuals_by_level"],
+            title=f"Motion normalized residuals - restart {restart_idx}",
+            y_label="||dm||2 / (||alpha||2 + eps)",
+            out_path=motion_path,
+        )
+
     def _prepare_resolution_level(self, idx_res, r, restart):
-        if params.verbose:
-            fname = f"{params.logs_folder}motion_params_res{idx_res+1}.txt"
-            open(fname, "w").close()
         print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
         # Prepare low-resolution dataset
@@ -599,23 +672,41 @@ class JointReconstructor:
     # ----------------------------------------------------------------------
     def run(self):
         ResLevels = params.ResolutionLevels
-        GN_iter = params.GN_iterations_per_level
+        gn_iters_per_level = self._resolve_gn_iterations_per_level(ResLevels)
 
         global_best_metric, global_best_image, global_best_motion, global_converged = self._initialize_global_tracking()
 
         for restart in range(params.max_restarts):
+            restart_idx = restart + 1
+            restart_log = self._init_restart_logging(restart_idx, len(ResLevels), gn_iters_per_level)
+            restart_t0 = time.perf_counter()
             restart_converged = False
 
             for idx_res, r in enumerate(ResLevels):
+                GN_iter = gn_iters_per_level[idx_res]
+                level_t0 = time.perf_counter()
                 Data_res = self._prepare_resolution_level(idx_res, r, restart)
                 if idx_res != 0:
                     self.upsample_data(Data_prev, Data_res)
+                level_init_time = time.perf_counter() - level_t0
+
+                self._append_restart_log(
+                    restart_log,
+                    f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x1, {Data_res['Ny']} views, {params.N_mot_states} virtual times)",
+                )
+                self._append_restart_log(
+                    restart_log,
+                    f"    Resolution level initializations : {level_init_time:.6f} s",
+                )
+                self._append_restart_log(restart_log, "")
+
                 residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion = self._initialize_level_tracking()
                 s_res = Data_res["KspaceData"].flatten()
 
                 # Gauss–Newton iterations
                 for it in range(GN_iter):
                     print(f"  GN iteration {it+1}/{GN_iter}")
+                    fp_t0 = time.perf_counter()
 
                     # -------------------------------IMAGE RECONSTRUCTION STEP -------------------------
 
@@ -625,8 +716,14 @@ class JointReconstructor:
 
                     # 2) Solve for image
                     print("    Solving for image...")
+                    t_img = time.perf_counter()
                     img = self.solve_image(Data_res)
+                    img_elapsed = time.perf_counter() - t_img
                     Data_res["ReconstructedImage"] = img
+                    self._append_restart_log(
+                        restart_log,
+                        f"    Reconstruction step : {_format_cg_info(self._last_image_cg_info)}, elapsed time = {img_elapsed:.6f} s",
+                    )
 
                     if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
                         break
@@ -641,6 +738,10 @@ class JointReconstructor:
 
                     if it > 0 and rel_res > best_relres:
                         print("    Relative residual increased — restoring best solution at this level.")
+                        self._append_restart_log(
+                            restart_log,
+                            "    Relative residual increased - restoring best solution at this level.",
+                        )
                         break
 
                     # Residual improved: store current image/motion as level-best.
@@ -655,23 +756,30 @@ class JointReconstructor:
 
                     # 4) Solve for motion update
                     print("    Solving for motion update...")
+                    t_mot = time.perf_counter()
                     if params.use_scaled_motion_update:
                         dm = self.solve_motion_scaled(Data_res, residual)
                     else:
                         dm = self.solve_motion(Data_res, residual)
+                    mot_elapsed = time.perf_counter() - t_mot
 
                     Data_res["MotionModel"] += dm.real
                     dm_norm = torch.linalg.norm(dm.flatten()).item()
-                    residual_motion_norms.append(dm_norm)
+                    alpha_norm = torch.linalg.norm(Data_res["MotionModel"].flatten()).item()
+                    dm_rel_norm = dm_norm / (alpha_norm + 1e-12)
+                    residual_motion_norms.append(dm_rel_norm)
+                    self._append_restart_log(
+                        restart_log,
+                        f"    Model optimization step: {_format_cg_info(self._last_motion_cg_info)}, elapsed time = {mot_elapsed:.6f} s",
+                    )
+                    fp_elapsed = time.perf_counter() - fp_t0
+                    self._append_restart_log(
+                        restart_log,
+                        f"    Fixed point iter {it}: recon_rel_residual = {rel_res:.6e}, motion_rel_residual = {dm_rel_norm:.6e}, motion_norm = {dm_norm:.6e} : {fp_elapsed:.6f} s",
+                    )
+                    self._append_restart_log(restart_log, "")
 
                     # ------------------------- LOGGING and PATIENCE CHECK -------------------------
-
-                    if params.verbose:
-                        log_motion_parameters(
-                            Data_res["MotionModel"],
-                            res_level=idx_res + 1,
-                            gn_iter=it + 1
-                        )
 
                 if params.debug_flag: 
                     if best_image is not None and best_motion is not None:
@@ -680,19 +788,14 @@ class JointReconstructor:
                     show_and_save_image(Data_res["ReconstructedImage"][0], \
                         'image_restart_' + str(restart + 1) + '_resolution_level' + str(idx_res+1), params.debug_folder)
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
-                if params.verbose:
-                    save_residual_convergence(
-                        residual_recon_norms,
-                        'recon_' + str(restart + 1) + '_',
-                        idx_res + 1,
-                        params.logs_folder,
-                    )
-                    save_residual_convergence(
-                        residual_motion_norms,
-                        'motion_' + str(restart + 1) + '_',
-                        idx_res + 1,
-                        params.logs_folder,
-                    )
+                restart_log["recon_residuals_by_level"][idx_res] = residual_recon_norms
+                restart_log["motion_residuals_by_level"][idx_res] = residual_motion_norms
+                level_elapsed = time.perf_counter() - level_t0
+                self._append_restart_log(
+                    restart_log,
+                    f"    Total time of resolution level {idx_res}: {level_elapsed:.6f} s",
+                )
+                self._append_restart_log(restart_log, "")
 
                 if restart_converged:
                     break
@@ -701,6 +804,12 @@ class JointReconstructor:
                 global_best_metric, global_best_image, global_best_motion = self._update_global_best(
                     best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
                 )
+
+            self._append_restart_log(
+                restart_log,
+                f"Total time of restart {restart_idx}: {time.perf_counter() - restart_t0:.6f} s",
+            )
+            self._save_restart_residual_plots(restart_log, restart_idx)
 
             if restart_converged:
                 global_converged = True

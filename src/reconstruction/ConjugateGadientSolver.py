@@ -41,6 +41,7 @@ class ConjugateGradientSolver:
         self.use_reg_scale_proxy = use_reg_scale_proxy
         self.reg_scale_num_probes = reg_scale_num_probes
         self.reg_scale = 1.0
+        self.last_info = None
 
     # --------------------------------------------------------------
     # Regularized linear operator: A(x) = Eh(E(x)) + lambda_eff * R(x)
@@ -222,12 +223,19 @@ class ConjugateGradientSolver:
                 max_more_steps = max(1, int(self.max_more_steps))
             best_x = x.clone()
             best_rel = torch.linalg.norm(r) / b_norm
+            iters_done = 0
+            res_norm = torch.linalg.norm(r)
+            rel_res = (res_norm / b_norm).item()
+            converged = bool(res_norm <= tolb)
+            stop_reason = "initial_tolerance"
 
             for it in range(max_iter):
                 Ap = self.A(p)
+                iters_done = it + 1
 
                 denom = torch.dot(torch.conj(p), Ap).real
                 if denom.abs() < 1e-15:
+                    stop_reason = "breakdown_denom"
                     break
 
                 alpha = rz_old / denom
@@ -261,12 +269,15 @@ class ConjugateGradientSolver:
                 # torch.cuda.synchronize()
 
                 if res_norm <= tolb:
+                    converged = True
+                    stop_reason = "tolerance"
                     break
                 if self.early_stopping and refresh_true_residual:
                     if stag >= max_stag_steps and moresteps == 0:
                         stag = 0
                     moresteps += 1
                     if moresteps >= max_more_steps:
+                        stop_reason = "early_stopping"
                         break
 
                 if M is None:
@@ -276,11 +287,25 @@ class ConjugateGradientSolver:
 
                 rz_new = torch.dot(torch.conj(r), z).real
                 if rz_old.abs() < 1e-15:
+                    stop_reason = "breakdown_rz"
                     break
                 beta = rz_new / rz_old
                 rz_old = rz_new
 
                 p = z + beta * p
+
+            if iters_done == 0 and stop_reason == "initial_tolerance":
+                stop_reason = "initial_tolerance"
+            elif stop_reason == "initial_tolerance":
+                stop_reason = "max_iter"
+
+            self.last_info = {
+                "flag": 0 if converged else 1,
+                "iterations": int(iters_done),
+                "relres": float(rel_res),
+                "residual_norm": float(res_norm.item()),
+                "stop_reason": stop_reason,
+            }
 
             return best_x
         
