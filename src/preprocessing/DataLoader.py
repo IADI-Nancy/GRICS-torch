@@ -17,24 +17,22 @@ from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.utils.show_and_save_image import show_and_save_image
 
-from Parameters import Parameters
-params = Parameters()
-
 
 class DataLoader:
-    def __init__(self, sp_device=None, t_device=None):
+    def __init__(self, params, sp_device=None, t_device=None):
+        self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
         self.kspace_scale = 1.0
         
-        if params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
-            self.generate_shepp_logan(N=params.N_SheppLogan, Ncoils=params.Ncoils_SheppLogan, Nz=params.Nz_SheppLogan, random_phase=True)
-        elif params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
-            self.load_fastMRI_data(params.path_to_fastMRI_data)
-        elif params.data_type == 'real-world': # Real-world data with acquisition order and motion data
-            self.load_realworld_data(params.path_to_realworld_data, slice_idx=16)
-        elif params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
-            self.load_realworld_data_from_ismrm_and_saec(params.ismrmrd_file, params.saec_file, slice_idx=16)
+        if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
+            self.generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
+        elif self.params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
+            self.load_fastMRI_data(self.params.path_to_fastMRI_data)
+        elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
+            self.load_realworld_data(self.params.path_to_realworld_data, slice_idx=16)
+        elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
+            self.load_realworld_data_from_ismrm_and_saec(self.params.ismrmrd_file, self.params.saec_file, slice_idx=16)
         else:
             raise ValueError("Unknown data_type")
 
@@ -46,27 +44,35 @@ class DataLoader:
         # Calculate ESPIRiT maps and input image
         self.smaps = self.calc_espirit_maps()
         self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
-        smaps_replicated = self.smaps.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1)
+        smaps_replicated = self.smaps.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
 
-        motionSimulator = MotionSimulator(self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_motion, \
-                                            sp_device=self.sp_device, t_device=self.t_device)
+        motionSimulator = MotionSimulator(
+            self.image_ground_truth,
+            self.smaps,
+            self.ky_idx,
+            self.nex_idx,
+            self.ky_per_motion,
+            params=self.params,
+            sp_device=self.sp_device,
+            t_device=self.t_device,
+        )
         
-        if params.simulation_type == 'as-it-is':
-            if params.data_type in ['real-world', 'raw-data']:
+        if self.params.simulation_type == 'as-it-is':
+            if self.params.data_type in ['real-world', 'raw-data']:
                 self.image_no_moco = self.image_ground_truth.clone()
             else:
                 raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
         else:
-            if params.simulation_type == 'no-motion':
+            if self.params.simulation_type == 'no-motion':
                 motionSimulator.simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth.clone()
             else:      
-                if params.simulation_type == 'discrete-rigid':
+                if self.params.simulation_type == 'discrete-rigid':
                     motionSimulator.simulate_discrete_rigid_motion()
-                elif params.simulation_type == 'rigid':
+                elif self.params.simulation_type == 'rigid':
                     motionSimulator.simulate_realistic_rigid_motion()
-                elif params.simulation_type == 'discrete-non-rigid':
+                elif self.params.simulation_type == 'discrete-non-rigid':
                     motionSimulator.simulate_discrete_non_rigid_motion()
                 else:
                     raise ValueError("Unknown simulation_type")
@@ -77,7 +83,7 @@ class DataLoader:
 
             motion_curve, _, _, _ = motionSimulator.get_motion_information()
             self.binned_indices, self.motion_signal = MotionBinner.bin_motion(
-                motion_curve, self.ky_idx, self.nex_idx, self.t_device
+                motion_curve, self.ky_idx, self.nex_idx, self.t_device, self.params
             )
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
@@ -86,27 +92,27 @@ class DataLoader:
             self.t_device
         )
 
-        if params.debug_flag and params.simulation_type in ['discrete-non-rigid', 'rigid', 'discrete-rigid']:
+        if self.params.debug_flag and self.params.simulation_type in ['discrete-non-rigid', 'rigid', 'discrete-rigid']:
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
 
     def _normalize_kspace_if_enabled(self):
-        if not params.normalize_kspace:
+        if not self.params.normalize_kspace:
             self.kspace_scale = 1.0
             return
 
         k = self.kspace
-        if params.kspace_norm_mode == "max":
+        if self.params.kspace_norm_mode == "max":
             s = torch.max(torch.abs(k))
-        elif params.kspace_norm_mode == "rms":
+        elif self.params.kspace_norm_mode == "rms":
             s = torch.linalg.norm(k.flatten()) / (k.numel() ** 0.5)
         else:
-            raise ValueError(f"Unknown kspace_norm_mode: {params.kspace_norm_mode}")
+            raise ValueError(f"Unknown kspace_norm_mode: {self.params.kspace_norm_mode}")
 
-        s = torch.clamp(s.real if torch.is_complex(s) else s, min=params.kspace_norm_eps)
+        s = torch.clamp(s.real if torch.is_complex(s) else s, min=self.params.kspace_norm_eps)
         self.kspace_scale = float(s.item())
         self.kspace = self.kspace / self.kspace_scale
         print(
-            f"[DataLoader] k-space normalized ({params.kspace_norm_mode}), "
+            f"[DataLoader] k-space normalized ({self.params.kspace_norm_mode}), "
             f"scale={self.kspace_scale:.6e}"
         )
 
@@ -114,9 +120,9 @@ class DataLoader:
     def load_fastMRI_data(self, path_to_mri_data):
         self.kspace = np.load(path_to_mri_data)['arr_0']
         self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
-        self.kspace = self.kspace.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1)
+        self.kspace = self.kspace.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        samplingSimulator = SamplingSimulator(self.Ny, self.t_device)
+        samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
     # Ncoils should be a perfect square (or close) for coil map generation
@@ -168,7 +174,7 @@ class DataLoader:
         # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
         phantom = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
         coil_imgs = phantom * smaps             # (Ncoils, Nx, Ny, Nz)
-        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
+        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
 
         coil_imgs = coil_imgs.contiguous()       # important for FFT speed
 
@@ -177,7 +183,7 @@ class DataLoader:
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         # 5. Sampling
-        samplingSimulator = SamplingSimulator(self.Ny, self.t_device)
+        samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
     def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
@@ -194,15 +200,17 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
+        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(
+            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params
+        )
         self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
-        if params.debug_flag:
+        if self.params.debug_flag:
             SamplingSimulator.visualize_ky_order(
                 [self.ky_idx.detach().cpu()],
                 Ny=self.Ny,
-                folder=params.debug_folder,
+                folder=self.params.debug_folder,
                 fname=f"ky_order_rawdata_slice{slice_idx}.png"
             )
         
@@ -222,21 +230,23 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(motion_data, self.ky_idx, self.nex_idx, self.t_device)
+        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(
+            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params
+        )
         self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
-        if params.debug_flag:
+        if self.params.debug_flag:
             SamplingSimulator.visualize_ky_order(
                 [self.ky_idx.detach().cpu()],
                 Ny=self.Ny,
-                folder=params.debug_folder,
+                folder=self.params.debug_folder,
                 fname=f"ky_order_realworld_slice{slice_idx}.png"
             )
 
     def calc_espirit_maps(self):
-        acs=params.acs
-        kernel_width=params.kernel_width
+        acs=self.params.acs
+        kernel_width=self.params.kernel_width
         sp_device=self.sp_device
         kspace = self.kspace
         device = kspace.device             # torch device of input
@@ -292,9 +302,9 @@ class DataLoader:
 
     def _debug_check_true_motion_image_reconstruction(self, motionSimulator):
         # This consistency check is meaningful only for simulated non-rigid data.
-        if params.motion_type != "non-rigid":
+        if self.params.motion_type != "non-rigid":
             return
-        if params.simulation_type != "discrete-non-rigid":
+        if self.params.simulation_type != "discrete-non-rigid":
             return
         if not hasattr(motionSimulator, "alpha_maps"):
             return
@@ -312,7 +322,7 @@ class DataLoader:
                 self.Nx,
                 self.Ny,
                 alpha_true,
-                params.motion_type,
+                self.params.motion_type,
                 motion_signal=signal_true,
             )
 
@@ -320,25 +330,25 @@ class DataLoader:
                 self.smaps,
                 nsamples_true,
                 sampling_true,
-                params.Nex,
+                self.params.Nex,
                 motion_op_true,
             )
 
-            kspace_vec = self.kspace[..., 0].reshape(self.Ncha, params.Nex, nsamples_true).flatten()
+            kspace_vec = self.kspace[..., 0].reshape(self.Ncha, self.params.Nex, nsamples_true).flatten()
             b = encoding_true.adjoint(kspace_vec)
             x0 = torch.zeros_like(b)
             solver = ConjugateGradientSolver(
                 encoding_true,
                 reg_lambda=0.0,
                 verbose=False,
-                early_stopping=params.cg_early_stopping,
-                max_stag_steps=params.cg_max_stag_steps,
-                max_more_steps=params.cg_max_more_steps,
-                use_reg_scale_proxy=params.cg_use_reg_scale_proxy,
-                reg_scale_num_probes=params.cg_reg_scale_num_probes,
+                early_stopping=self.params.cg_early_stopping,
+                max_stag_steps=self.params.cg_max_stag_steps,
+                max_more_steps=self.params.cg_max_more_steps,
+                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+                reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
             )
             img_vec = solver.solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
-            img_back = img_vec.reshape(params.Nex, self.Nx, self.Ny)
+            img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
             img_ref = self.image_ground_truth[..., 0]
 
             num = torch.linalg.norm((img_back - img_ref).flatten())
@@ -349,7 +359,7 @@ class DataLoader:
             show_and_save_image(
                 img_back[0],
                 "gn_input_consistency_recovered_image",
-                params.debug_folder,
+                self.params.debug_folder,
             )
 
 

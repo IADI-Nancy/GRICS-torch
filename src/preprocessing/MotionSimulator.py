@@ -10,16 +10,14 @@ from src.utils.save_alpha_component_map import save_alpha_component_map
 from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
 from src.utils.save_motion_debug_plots import save_motion_debug_plots
 
-from Parameters import Parameters
-params = Parameters()
-
 class MotionSimulator:
-    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, sp_device=None, t_device=None):
+    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, params, sp_device=None, t_device=None):
         self.image = image
         self.smaps = smaps
         self.ky_idx = ky_idx
         self.nex_idx = nex_idx
         self.ky_per_motion_state = ky_per_motion_state
+        self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
         self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  
@@ -38,7 +36,7 @@ class MotionSimulator:
 
     def apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
         if motion_type is None:
-            motion_type = params.motion_type
+            motion_type = self.params.motion_type
 
         self.MotionOperator = MotionOperator(
             self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal
@@ -48,14 +46,14 @@ class MotionSimulator:
             self.smaps,
             self.TotalKspaceSamples,
             self.sampling_idx,
-            params.Nex,
+            self.params.Nex,
             self.MotionOperator
         )
         kspace_corruped = E.forward(self.image)
-        self.kspace = kspace_corruped.reshape(self.Ncha, params.Nex, self.Nx, self.Ny, self.Nsli)
+        self.kspace = kspace_corruped.reshape(self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nsli)
 
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
-        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, params.Nex, -1, -1, -1), dim=0)
+        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
 
     # -------------------------------------------------------
     #------------------ Simulate zero motion ----------------
@@ -87,40 +85,40 @@ class MotionSimulator:
     
     def create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
-        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float64)
+        t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
 
         # 1) Generate random motion event times
         event_times = torch.sort(
-            torch.randint(0, self.Ny*params.Nex, (params.num_motion_events,), device=self.t_device)
+            torch.randint(0, self.Ny*self.params.Nex, (self.params.num_motion_events,), device=self.t_device)
         ).values
 
         # Motion transition sharpness (smaller tau -> faster motion)
-        tau = params.motion_tau
+        tau = self.params.motion_tau
 
         # 2) Generate random amplitudes for each event
-        A_tx  = params.max_tx  * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1)
-        A_ty  = params.max_ty  * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1)
-        A_phi = params.max_phi * (2 * torch.rand(params.num_motion_events, device=self.t_device) - 1) * (torch.pi/180)
+        A_tx  = self.params.max_tx  * (2 * torch.rand(self.params.num_motion_events, device=self.t_device) - 1)
+        A_ty  = self.params.max_ty  * (2 * torch.rand(self.params.num_motion_events, device=self.t_device) - 1)
+        A_phi = self.params.max_phi * (2 * torch.rand(self.params.num_motion_events, device=self.t_device) - 1) * (torch.pi/180)
 
         # 3) Build independent motion curves
-        tx  = torch.zeros(self.Ny*params.Nex, device=self.t_device)
-        ty  = torch.zeros(self.Ny*params.Nex, device=self.t_device)
-        phi = torch.zeros(self.Ny*params.Nex, device=self.t_device)
+        tx  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
+        ty  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
+        phi = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
 
         # Full time axis
-        t = torch.arange(self.Ny*params.Nex, device=self.t_device, dtype=torch.float64)
+        t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
 
         for i, ti in enumerate(event_times):
             ti = event_times[i].item()
-            t_end = min(ti + tau, self.Ny*params.Nex)
+            t_end = min(ti + tau, self.Ny*self.params.Nex)
             # Normalized time for the transition
             alpha = np.linspace(0.0, 1.0, t_end - ti)
             # Raised cosine ramp (finite, smooth)
             s = 0.5 * (1.0 - np.cos(np.pi * alpha))
 
-            f = torch.zeros(self.Ny*params.Nex, device=self.t_device)
+            f = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
             f[ti:t_end] = torch.from_numpy(s).to(self.t_device)
-            if t_end < self.Ny*params.Nex:
+            if t_end < self.Ny*self.params.Nex:
                 f[t_end:] = 1.0
 
             # Add motion contribution (same logic as tanh version)
@@ -145,8 +143,8 @@ class MotionSimulator:
         # Normalize navigator to [-1, 1] for stability
         navigator = navigator / navigator.abs().max()
         # save debug plots
-        if params.debug_flag:
-            save_motion_debug_plots(navigator, tx, ty, phi, params.debug_folder, event_times)
+        if self.params.debug_flag:
+            save_motion_debug_plots(navigator, tx, ty, phi, self.params.debug_folder, event_times)
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
 
@@ -164,14 +162,14 @@ class MotionSimulator:
         self.navigator, self.tx, self.ty, self.phi = self.create_realistic_motion_curves()
 
         # Apply simulated motion
-        alpha = torch.zeros(3, self.Ny * params.Nex, device=self.t_device)
+        alpha = torch.zeros(3, self.Ny * self.params.Nex, device=self.t_device)
         alpha[0, :] = self.tx
         alpha[1, :] = self.ty
         alpha[2, :] = self.phi
 
-        centers = torch.zeros((2, self.Ny * params.Nex), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + params.max_center_x * torch.ones(self.Ny * params.Nex, device=self.t_device)
-        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.randn(self.Ny * params.Nex, device=self.t_device)
+        centers = torch.zeros((2, self.Ny * self.params.Nex), device=self.t_device)
+        centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(self.Ny * self.params.Nex, device=self.t_device)
+        centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.randn(self.Ny * self.params.Nex, device=self.t_device)
 
         self.apply_motion(alpha, centers)
 
@@ -214,26 +212,26 @@ class MotionSimulator:
                 m += 1
 
     def create_discrete_motion_curves(self, ky_per_mot_state_idx):
-        Nshots = params.Nshots
+        Nshots = self.params.Nshots
 
         alpha = torch.zeros((3, Nshots), device=self.t_device)
 
         # Translation X: [-max_tx, +max_tx]
-        self.tx_mot_state = params.max_tx * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+        self.tx_mot_state = self.params.max_tx * (2 * torch.rand(Nshots, device=self.t_device) - 1)
         alpha[0, :] = self.tx_mot_state
 
         # Translation Y: [-max_ty, +max_ty]
-        self.ty_mot_state = params.max_ty * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+        self.ty_mot_state = self.params.max_ty * (2 * torch.rand(Nshots, device=self.t_device) - 1)
         alpha[1, :] = self.ty_mot_state
 
         # Rotation: [-max_phi, +max_phi] degrees → radians
-        self.phi_mot_state = params.max_phi * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
+        self.phi_mot_state = self.params.max_phi * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
         alpha[2, :] = self.phi_mot_state
 
         # Centers
         centers = torch.zeros((2, Nshots), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + params.max_center_x * torch.ones(Nshots, device=self.t_device)
-        centers[1, :] = self.Ny / 2 + params.max_center_y * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
+        centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(Nshots, device=self.t_device)
+        centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
 
         # -------------------------------------------------
         # Build navigator = first principal component
@@ -256,8 +254,8 @@ class MotionSimulator:
 
         self.expand_motion_to_ky(ky_per_mot_state_idx)
         # save debug plots
-        if params.debug_flag:
-            save_motion_debug_plots(self.navigator, self.tx, self.ty, self.phi, params.debug_folder)
+        if self.params.debug_flag:
+            save_motion_debug_plots(self.navigator, self.tx, self.ty, self.phi, self.params.debug_folder)
 
         return self.navigator, alpha, centers
 
@@ -327,25 +325,25 @@ class MotionSimulator:
         alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
         self.alpha_maps = alpha_maps
 
-        if params.debug_flag:
+        if self.params.debug_flag:
             print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
-            os.makedirs(params.debug_folder, exist_ok=True)
+            os.makedirs(self.params.debug_folder, exist_ok=True)
             save_alpha_component_map(
                 alpha_x,
                 "simulated_alpha_x",
-                os.path.join(params.debug_folder, "simulated_alpha_x.png"),
+                os.path.join(self.params.debug_folder, "simulated_alpha_x.png"),
             )
             save_alpha_component_map(
                 alpha_y,
                 "simulated_alpha_y",
-                os.path.join(params.debug_folder, "simulated_alpha_y.png"),
+                os.path.join(self.params.debug_folder, "simulated_alpha_y.png"),
             )
             save_nonrigid_quiver_with_contours(
                 alpha_x,
                 alpha_y,
                 self.image[0],
                 "simulated_motion_quiver",
-                os.path.join(params.debug_folder, "simulated_motion_quiver.png"),
+                os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
             )
 
         self.apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')

@@ -1,8 +1,6 @@
 import torch
 
-from Parameters import Parameters
 from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
-params = Parameters()
 
 def kmeans_torch(x, k, n_iter=20):
     N, D = x.shape
@@ -28,7 +26,7 @@ def kmeans_torch(x, k, n_iter=20):
 
 class MotionBinner:
     @staticmethod
-    def bin_motion(motion_curve, ky_idx, nex_idx, t_device):
+    def bin_motion(motion_curve, ky_idx, nex_idx, t_device, params):
         motion_curve = motion_curve.to(t_device)
 
         Nbins = params.N_mot_states

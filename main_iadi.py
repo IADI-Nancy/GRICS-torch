@@ -41,7 +41,7 @@ if params.debug_flag:
         torch.cuda.manual_seed(params.seed)
         torch.cuda.manual_seed_all(params.seed)
 
-data = DataLoader(t_device=t_device, sp_device=sp_device)
+data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
 image_ground_truth = data.image_ground_truth.clone()
 show_and_save_image(image_ground_truth[0], 'img_ground_truth', params.debug_folder)
 image_corrupted = data.image_no_moco.clone()
@@ -53,10 +53,10 @@ jointReconstructor = JointReconstructor(
     data.smaps,
     data.sampling_idx,
     motion_signal=data.motion_signal,
+    params=params,
     kspace_scale=data.kspace_scale,
 )
 start = time.time()
 jointReconstructor.run()
 end = time.time()
 print(f"Elapsed time joint image/motion reconstruction: {end - start:.2f} s")
-

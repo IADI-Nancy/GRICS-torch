@@ -1,11 +1,9 @@
 import torch
 
-from Parameters import Parameters
 from src.utils.visualize_ky_order import visualize_ky_order
-params = Parameters()
 
 class SamplingSimulator:
-    def __init__(self, Ny, t_device='cpu'):
+    def __init__(self, Ny, params, t_device='cpu'):
         self.params = params
         self.Ny = Ny
         self.t_device = t_device
@@ -15,8 +13,8 @@ class SamplingSimulator:
         visualize_ky_order(ky_per_shot, Ny, folder, fname)
 
     def build_ky_and_nex(self):
-        Nshots = params.NshotsPerNex
-        Nex    = params.Nex
+        Nshots = self.params.NshotsPerNex
+        Nex    = self.params.Nex
 
         # ky_per_shot[nex][shot]
         ky_per_shot = [[] for _ in range(Nex)]
@@ -28,7 +26,7 @@ class SamplingSimulator:
             ky_list  = []   # chronological chunks (per Nex)
             nex_list = []
 
-            if params.kspace_sampling_type == 'random':
+            if self.params.kspace_sampling_type == 'random':
                 # Independent random ky ordering for each Nex
                 ky_all = torch.randperm(self.Ny, device=self.t_device, dtype=torch.int32)
                 split_sizes = [
@@ -41,7 +39,7 @@ class SamplingSimulator:
                 shot_in_nex = shot
 
                 # ----- ky selection -----
-                if params.kspace_sampling_type == 'linear':
+                if self.params.kspace_sampling_type == 'linear':
                     start = shot_in_nex * self.Ny // Nshots
                     end   = (shot_in_nex + 1) * self.Ny // Nshots
                     ky = torch.arange(
@@ -50,13 +48,13 @@ class SamplingSimulator:
                         dtype=torch.int32
                     )
 
-                elif params.kspace_sampling_type == 'interleaved':
+                elif self.params.kspace_sampling_type == 'interleaved':
                     ky = torch.arange(
                         shot_in_nex, self.Ny, Nshots,
                         device=self.t_device,
                         dtype=torch.int32
                     )
-                elif params.kspace_sampling_type == 'random':
+                elif self.params.kspace_sampling_type == 'random':
                     end = start + split_sizes[shot]
                     ky = ky_all[start:end]
                     start = end  # advance the pointer
@@ -75,11 +73,11 @@ class SamplingSimulator:
             ky_idx.append(torch.cat(ky_list, dim=0))
             nex_idx.append(torch.cat(nex_list, dim=0))
         
-            if params.debug_flag:
+            if self.params.debug_flag:
                 SamplingSimulator.visualize_ky_order(
                     ky_per_shot[nex],
                     Ny=self.Ny,
-                    folder=params.debug_folder,
+                    folder=self.params.debug_folder,
                     fname=f"ky_order_nex{nex+1}.png"
                 )
 
