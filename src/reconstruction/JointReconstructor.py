@@ -1,5 +1,4 @@
 import torch
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import os
 
@@ -8,6 +7,9 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
 from src.utils.show_and_save_image import show_and_save_image
+from src.utils.save_alpha_component_map import save_alpha_component_map
+from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
+from src.utils.save_residual_convergence import save_residual_convergence
 
 from Parameters import Parameters
 params = Parameters()
@@ -55,25 +57,6 @@ def log_motion_parameters(alpha, res_level, gn_iter):
         for a in range(alpha.shape[0]):
             vals = alpha[a].detach().cpu().numpy()
             f.write(f"  alpha[{a}]: {vals}\n")
-
-def save_residual_convergence(residual_norms, title, res_level):
-    plt.figure()
-    plt.plot(residual_norms, marker="o")
-    plt.xlabel("GN iteration")
-    plt.ylabel("||residual||₂")
-    plt.title(f"Residual convergence ({title}, resolution level {res_level})")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.ylim(bottom=0)
-    plt.savefig(f"{params.logs_folder}residual_convergence_{title}_res{res_level}.png")
-    plt.close()
-
-    # Optional: save raw values
-    with open(f"{params.logs_folder}residual_convergence_{title}_res{res_level}.txt", "w") as f:
-        for i, v in enumerate(residual_norms):
-            f.write(f"{i+1}\t{v}\n")
-
-
 
 # --------------------------------------------------------------------------
 # Class that performs joint image–motion reconstruction
@@ -545,72 +528,71 @@ class JointReconstructor:
             alpha_y_for_quiver = alpha_y
 
         for comp_name, comp in components:
-            plt.figure(figsize=(5, 5))
-            plt.imshow(comp, cmap="jet", origin="upper")
-            plt.colorbar()
-            plt.axis("off")
-            plt.title(f"{comp_name} restart {restart_idx} level {level_idx}")
-            plt.savefig(
+            save_alpha_component_map(
+                comp,
+                f"{comp_name} restart {restart_idx} level {level_idx}",
                 os.path.join(
                     params.debug_folder,
                     f"{comp_name}_restart_{restart_idx}_level{level_idx}.png",
                 ),
-                bbox_inches="tight",
-                pad_inches=0,
             )
-            plt.close()
 
-        # Quiver plot: direction from (alpha_x, alpha_y), color by amplitude.
-        nx, ny = alpha_x_for_quiver.shape
-        step = max(1, min(nx, ny) // 32)
-
-        yy, xx = torch.meshgrid(
-            torch.arange(nx),
-            torch.arange(ny),
-            indexing="ij",
-        )
-        xx = xx[::step, ::step].numpy()
-        yy = yy[::step, ::step].numpy()
-        # Matrix-to-plot convention:
-        # first index (rows) -> vertical component, second index (cols) -> horizontal component.
-        # Motion operator is built from inverse-warp displacements, so flip sign here
-        # to visualize physical forward motion direction.
-        ux = (-alpha_y_for_quiver[::step, ::step]).numpy()
-        uy = (-alpha_x_for_quiver[::step, ::step]).numpy()
-        amp = torch.sqrt(alpha_x_for_quiver * alpha_x_for_quiver + alpha_y_for_quiver * alpha_y_for_quiver)[::step, ::step].numpy()
-
-        img = Data_res["ReconstructedImage"][0].detach().cpu()
-        if img.is_complex():
-            img = img.abs()
-        img = img.numpy()
-
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.imshow(img, cmap="gray", origin="upper", alpha=0.35)
-        q = ax.quiver(xx, yy, ux, uy, amp, cmap="jet", angles="xy", scale_units="xy", scale=None)
-        # Use explicit X/Y grid so contour follows the same coordinates as quiver.
-        ax.contour(
-            torch.arange(ny).cpu().numpy(),
-            torch.arange(nx).cpu().numpy(),
-            img,
-            levels=8,
-            colors="k",
-            linewidths=0.7,
-            alpha=0.8,
-        )
-        ax.set_aspect("equal")
-        ax.set_xlim(-0.5, ny - 0.5)
-        ax.set_ylim(nx - 0.5, -0.5)
-        ax.set_title(f"motion field restart {restart_idx} level {level_idx}")
-        fig.colorbar(q, ax=ax, label="|u|")
-        fig.savefig(
+        save_nonrigid_quiver_with_contours(
+            alpha_x_for_quiver,
+            alpha_y_for_quiver,
+            Data_res["ReconstructedImage"][0],
+            f"motion field restart {restart_idx} level {level_idx}",
             os.path.join(
                 params.debug_folder,
                 f"motion_quiver_restart_{restart_idx}_level{level_idx}.png",
             ),
-            bbox_inches="tight",
-            pad_inches=0,
         )
-        plt.close(fig)
+
+    def _save_final_nonrigid_alpha_maps(self, motion_model, reconstructed_image):
+        if params.motion_type != "non-rigid":
+            return
+        if motion_model is None or motion_model.ndim != 3 or motion_model.shape[0] < 2:
+            return
+
+        os.makedirs(params.results_folder, exist_ok=True)
+
+        alpha_x = motion_model[0].detach().cpu()
+        alpha_y = motion_model[1].detach().cpu()
+
+        if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
+            components = (
+                ("final_alpha_x_real", alpha_x.real),
+                ("final_alpha_y_real", alpha_y.real),
+                ("final_alpha_x_imag", alpha_x.imag),
+                ("final_alpha_y_imag", alpha_y.imag),
+            )
+            amp = torch.sqrt(alpha_x.real * alpha_x.real + alpha_y.real * alpha_y.real)
+        else:
+            components = (
+                ("final_alpha_x", alpha_x),
+                ("final_alpha_y", alpha_y),
+            )
+            amp = torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)
+
+        for name, comp in components:
+            save_alpha_component_map(
+                comp,
+                name,
+                os.path.join(params.results_folder, f"{name}.png"),
+            )
+
+        save_alpha_component_map(
+            amp,
+            "final_alpha_amplitude",
+            os.path.join(params.results_folder, "final_alpha_amplitude.png"),
+        )
+        save_nonrigid_quiver_with_contours(
+            alpha_x if not torch.is_complex(alpha_x) else alpha_x.real,
+            alpha_y if not torch.is_complex(alpha_y) else alpha_y.real,
+            reconstructed_image,
+            "final_motion_quiver",
+            os.path.join(params.results_folder, "final_motion_quiver.png"),
+        )
 
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
@@ -699,8 +681,18 @@ class JointReconstructor:
                         'image_restart_' + str(restart + 1) + '_resolution_level' + str(idx_res+1), params.debug_folder)
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
                 if params.verbose:
-                    save_residual_convergence(residual_recon_norms, 'recon_' + str(restart + 1) + '_', idx_res + 1)
-                    save_residual_convergence(residual_motion_norms, 'motion_' + str(restart + 1) + '_', idx_res + 1)
+                    save_residual_convergence(
+                        residual_recon_norms,
+                        'recon_' + str(restart + 1) + '_',
+                        idx_res + 1,
+                        params.logs_folder,
+                    )
+                    save_residual_convergence(
+                        residual_motion_norms,
+                        'motion_' + str(restart + 1) + '_',
+                        idx_res + 1,
+                        params.logs_folder,
+                    )
 
                 if restart_converged:
                     break
@@ -721,5 +713,6 @@ class JointReconstructor:
         global_best_image_unscaled = global_best_image * self.kspace_scale
         show_and_save_image(global_best_image_unscaled[0], 'reconstructed_image', params.results_folder)
         torch.save(global_best_motion, f"{params.results_folder}motion_model.pt")
+        self._save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0])
 
         return global_best_image_unscaled, global_best_motion

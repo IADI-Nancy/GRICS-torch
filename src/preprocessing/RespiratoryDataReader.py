@@ -3,8 +3,8 @@ import os
 import numpy as np
 from scipy.signal import butter, filtfilt
 from scipy.interpolate import interp1d
-import matplotlib.pyplot as plt
 from h5Saec import *
+from src.utils.save_line_plot import save_line_plot
 
 '''
 Code is not very clean for the moment!!!
@@ -184,8 +184,12 @@ class RespiratoryDataReader:
             sigma = np.std(respiratory_data_filtered)
 
             if path_to_graph is not None:
-                plt.plot(timestamps, respiratory_data_filtered)
-                plt.savefig(os.path.join(path_to_graph, path_to_graph))
+                save_line_plot(
+                    timestamps,
+                    respiratory_data_filtered,
+                    os.path.join(path_to_graph, "respiratory_data_filtered.png"),
+                    title="Filtered respiratory signal",
+                )
 
             return respiratory_data_filtered
 

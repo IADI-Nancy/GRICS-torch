@@ -50,7 +50,7 @@ class Parameters:
     use_scaled_motion_update = False  # whether to scale motion updates by the diagonal of J^H J
     ResolutionLevels = [0.25, 0.5, 1.0]  # multi-resolution levels (as fraction of full res)
     GN_iterations_per_level = 8
-    patience = 3
+    patience = 1
     residual_metric_type = "motion"  # "recon", "motion" or "combined"
     motion_weight = 1.0             # used only if combined
 
@@ -65,7 +65,7 @@ class Parameters:
     cg_reg_scale_num_probes = 8
 
     # Motion model parameters
-    lambda_m = 1 # 1.e7# 
+    lambda_m = 10.0
     max_iter_motion = 128
     tol_motion = 1e-3
 

@@ -20,6 +20,9 @@ def show_and_save_image(img: torch.Tensor, image_name: str, folder: str):
     if np.iscomplexobj(np_img):
         np_img = np.abs(np_img)
 
+    # Flip vertically to match expected visual orientation.
+    np_img = np.flipud(np_img)
+
     # Compute percentile-based intensity limits
     vmin = np.percentile(np_img, 2)
     vmax = np.percentile(np_img, 98)
@@ -37,4 +40,3 @@ def show_and_save_image(img: torch.Tensor, image_name: str, folder: str):
         pad_inches=0
     )
     plt.close()
-

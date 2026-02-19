@@ -1,9 +1,7 @@
 import torch
-import matplotlib.pyplot as plt
-import matplotlib
-import os
 
 from Parameters import Parameters
+from src.utils.visualize_ky_order import visualize_ky_order
 params = Parameters()
 
 class SamplingSimulator:
@@ -14,45 +12,7 @@ class SamplingSimulator:
 
     @staticmethod
     def visualize_ky_order(ky_per_shot, Ny, folder, fname="ky_sampling_order.png"):
-        """
-        Visualize ky acquisition order as a Ny x Ny square image.
-        - Each line colored by acquisition order (viridis colormap)
-        - Continuous, no separators
-        - Adds a colorbar
-        """
-        # Create empty image
-        img = torch.zeros((Ny, Ny, 3), dtype=torch.float64)  # RGB
-
-        # Concatenate all shot tensors for acquisition order
-        all_ky = torch.cat(ky_per_shot)
-
-        # Map ky line -> acquisition order (0..1)
-        order_map = torch.zeros(Ny, dtype=torch.float64)
-        order_map[all_ky] = torch.linspace(0, 1, len(all_ky))
-
-        # Use viridis colormap
-        cmap = plt.get_cmap("viridis")
-
-        # Fill image line by line
-        for ky in range(Ny):
-            img[ky, :, :] = torch.tensor(cmap(order_map[ky].item())[:3], dtype=torch.float64)
-
-        # Save image
-        os.makedirs(folder, exist_ok=True)
-        fig, ax = plt.subplots(figsize=(6, 6))
-        im = ax.imshow(img.numpy())
-        ax.axis("off")
-        ax.set_title("Ky Acquisition Order")
-
-        # Add colorbar for acquisition order
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(all_ky)))
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("Acquisition order (first → last)")
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(folder, fname))
-        plt.close(fig)
+        visualize_ky_order(ky_per_shot, Ny, folder, fname)
 
     def build_ky_and_nex(self):
         Nshots = params.NshotsPerNex

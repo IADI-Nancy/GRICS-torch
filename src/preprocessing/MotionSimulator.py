@@ -1,11 +1,14 @@
 import numpy as np
 import torch
+import os
 
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
-import matplotlib.pyplot as plt
+from src.utils.save_alpha_component_map import save_alpha_component_map
+from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
+from src.utils.save_motion_debug_plots import save_motion_debug_plots
 
 from Parameters import Parameters
 params = Parameters()
@@ -32,54 +35,6 @@ class MotionSimulator:
 
     def get_motion_information(self):
         return self.navigator, self.tx, self.ty, self.phi
-        
-    # -------------------------------------------------------
-    #------------------- Common functions -------------------
-    # -------------------------------------------------------
-    
-    def save_debug_plots(self, motion_curve, tx, ty, phi, event_times=None):
-        plt.figure()
-        plt.plot(motion_curve.cpu().numpy())
-        plt.title("Motion Curve")
-        plt.savefig("debug_outputs/motion_curve.png")
-        plt.close()
-
-        plt.figure()
-        plt.plot(tx.cpu().numpy())
-        plt.title("tx curve")
-        plt.savefig("debug_outputs/tx_curve.png")
-        plt.close()
-
-        plt.figure()
-        plt.plot(ty.cpu().numpy())
-        plt.title("ty curve")
-        plt.savefig("debug_outputs/ty_curve.png")
-        plt.close()
-
-        plt.figure()
-        plt.plot(phi.cpu().numpy())
-        plt.title("phi curve")
-        plt.savefig("debug_outputs/phi_curve.png")
-        plt.close()
-
-        plt.figure(figsize=(10, 4))
-        plt.plot(motion_curve.cpu().numpy(), label="PC1 Motion Curve", linewidth=2)
-        plt.plot(tx.cpu().numpy(), label="tx", alpha=0.8)
-        plt.plot(ty.cpu().numpy(), label="ty", alpha=0.8)
-        plt.plot(phi.cpu().numpy(), label="phi", alpha=0.8)
-
-        if event_times is not None:
-            # vertical lines at motion events
-            for e in event_times.cpu().numpy():
-                plt.axvline(x=e, color="black", linewidth=1)
-
-        plt.title("All motion curves (superimposed)")
-        plt.xlabel("Acquisition line number")
-        plt.ylabel("Amplitude")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig("debug_outputs/all_curves.png")
-        plt.close()
 
     def apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
         if motion_type is None:
@@ -191,7 +146,7 @@ class MotionSimulator:
         navigator = navigator / navigator.abs().max()
         # save debug plots
         if params.debug_flag:
-            self.save_debug_plots(navigator, tx, ty, phi, event_times)
+            save_motion_debug_plots(navigator, tx, ty, phi, params.debug_folder, event_times)
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
 
@@ -302,7 +257,7 @@ class MotionSimulator:
         self.expand_motion_to_ky(ky_per_mot_state_idx)
         # save debug plots
         if params.debug_flag:
-            self.save_debug_plots(self.navigator, self.tx, self.ty, self.phi)
+            save_motion_debug_plots(self.navigator, self.tx, self.ty, self.phi, params.debug_folder)
 
         return self.navigator, alpha, centers
 
@@ -374,22 +329,24 @@ class MotionSimulator:
 
         if params.debug_flag:
             print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
-            plt.figure(figsize=(10, 4))
-            plt.subplot(1, 2, 1)
-            plt.imshow(alpha_x.detach().cpu().numpy(), cmap="viridis")
-            plt.title("alpha_x")
-            plt.colorbar(fraction=0.046, pad=0.04)
-            plt.axis("off")
-
-            plt.subplot(1, 2, 2)
-            plt.imshow(alpha_y.detach().cpu().numpy(), cmap="viridis")
-            plt.title("alpha_y")
-            plt.colorbar(fraction=0.046, pad=0.04)
-            plt.axis("off")
-
-            plt.tight_layout()
-            plt.savefig(f"{params.debug_folder}nonrigid_alpha_fields.png")
-            plt.close()
+            os.makedirs(params.debug_folder, exist_ok=True)
+            save_alpha_component_map(
+                alpha_x,
+                "simulated_alpha_x",
+                os.path.join(params.debug_folder, "simulated_alpha_x.png"),
+            )
+            save_alpha_component_map(
+                alpha_y,
+                "simulated_alpha_y",
+                os.path.join(params.debug_folder, "simulated_alpha_y.png"),
+            )
+            save_nonrigid_quiver_with_contours(
+                alpha_x,
+                alpha_y,
+                self.image[0],
+                "simulated_motion_quiver",
+                os.path.join(params.debug_folder, "simulated_motion_quiver.png"),
+            )
 
         self.apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
 
