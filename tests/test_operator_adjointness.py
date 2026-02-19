@@ -8,7 +8,7 @@ os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
-from Parameters import Parameters
+from src.config.runtime_config import load_config
 
 
 def _complex_randn(shape, device, dtype=torch.complex128):
@@ -27,19 +27,29 @@ def _relative_adjoint_error(forward, adjoint, x, y):
 
 
 def _build_lowres_operators():
-    params = Parameters()
+    params = load_config(
+        [
+            "config/general.toml",
+            "config/shepp_logan.toml",
+            "config/sampling_simulation/interleaved.toml",
+            "config/motion_simulation/discrete_nonrigid.toml",
+            "config/reconstruction/nonrigid_fast.toml",
+        ]
+    )
     if params.motion_type != "non-rigid":
         raise RuntimeError("This test is intended for non-rigid motion_type.")
 
     torch.manual_seed(params.seed)
     device = torch.device("cpu")
-    data = DataLoader(t_device=device, sp_device=None)
+    data = DataLoader(params=params, t_device=device, sp_device=None)
 
     recon = JointReconstructor(
         data.kspace,
         data.smaps,
         data.sampling_idx,
         motion_signal=data.motion_signal,
+        params=params,
+        kspace_scale=data.kspace_scale,
     )
 
     res_factor = params.ResolutionLevels[0]
@@ -57,10 +67,10 @@ def _build_lowres_operators():
 
 
 def test_encoding_operator_adjointness():
-    _, _, data_res = _build_lowres_operators()
+    params, _, data_res = _build_lowres_operators()
     e = data_res["E"]
     ncoils = data_res["SensitivityMaps"].shape[0]
-    nex = Parameters().Nex
+    nex = params.Nex
     nx, ny = data_res["Nx"], data_res["Ny"]
     nsamples = data_res["Nsamples"]
 
@@ -75,10 +85,10 @@ def test_encoding_operator_adjointness():
 
 
 def test_motion_perturbation_operator_adjointness():
-    _, recon, data_res = _build_lowres_operators()
+    params, recon, data_res = _build_lowres_operators()
     j = data_res["J"]
     ncoils = data_res["SensitivityMaps"].shape[0]
-    nex = Parameters().Nex
+    nex = params.Nex
     nx, ny = data_res["Nx"], data_res["Ny"]
     nsamples = data_res["Nsamples"]
 

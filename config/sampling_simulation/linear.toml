@@ -1,0 +1,5 @@
+[sampling]
+kspace_sampling_type = "linear"
+NshotsPerNex = 8
+Nex = 1
+Nshots = 8

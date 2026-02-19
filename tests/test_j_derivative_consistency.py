@@ -7,22 +7,32 @@ import torch
 os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from Parameters import Parameters
+from src.config.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 
 
 def _build_lowres_context():
-    params = Parameters()
+    params = load_config(
+        [
+            "config/general.toml",
+            "config/shepp_logan.toml",
+            "config/sampling_simulation/interleaved.toml",
+            "config/motion_simulation/discrete_nonrigid.toml",
+            "config/reconstruction/nonrigid_fast.toml",
+        ]
+    )
     device = torch.device("cpu")
     torch.manual_seed(params.seed)
 
-    data = DataLoader(t_device=device, sp_device=None)
+    data = DataLoader(params=params, t_device=device, sp_device=None)
     recon = JointReconstructor(
         data.kspace,
         data.smaps,
         data.sampling_idx,
         motion_signal=data.motion_signal,
+        params=params,
+        kspace_scale=data.kspace_scale,
     )
 
     res_factor = params.ResolutionLevels[0]

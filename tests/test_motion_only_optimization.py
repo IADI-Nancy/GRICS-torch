@@ -8,7 +8,7 @@ import torch
 os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from Parameters import Parameters
+from src.config.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.show_and_save_image import show_and_save_image
@@ -45,7 +45,15 @@ def _build_data_res(recon, x_true, alpha):
 
 
 def run_motion_only_checks():
-    params = Parameters()
+    params = load_config(
+        [
+            "config/general.toml",
+            "config/shepp_logan.toml",
+            "config/sampling_simulation/interleaved.toml",
+            "config/motion_simulation/discrete_nonrigid.toml",
+            "config/reconstruction/nonrigid_fast.toml",
+        ]
+    )
     device = torch.device("cpu")
     debug_folder = Path(params.debug_folder) / "test_motion_only_optimization"
     debug_folder.mkdir(parents=True, exist_ok=True)
@@ -55,9 +63,16 @@ def run_motion_only_checks():
     if params.simulation_type != "discrete-non-rigid":
         raise RuntimeError("Set simulation_type='discrete-non-rigid' for this script.")
 
-    data = DataLoader(t_device=device, sp_device=None)
+    data = DataLoader(params=params, t_device=device, sp_device=None)
     x_true = data.image_ground_truth.squeeze(-1).to(device)
-    recon = JointReconstructor(data.kspace, data.smaps, data.sampling_idx, motion_signal=data.motion_signal)
+    recon = JointReconstructor(
+        data.kspace,
+        data.smaps,
+        data.sampling_idx,
+        motion_signal=data.motion_signal,
+        params=params,
+        kspace_scale=data.kspace_scale,
+    )
 
     nx, ny = x_true.shape[-2], x_true.shape[-1]
     alpha_true = _make_smooth_alpha(nx, ny, amp_x=2.0, amp_y=2.0, device=device)

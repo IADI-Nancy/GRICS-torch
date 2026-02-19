@@ -1,0 +1,22 @@
+[reconstruction]
+# General reconstruction parameters
+motion_type = "non-rigid"
+max_restarts = 1
+ResolutionLevels = [0.25, 0.5, 1.0]
+GN_iterations_per_level = [10, 4, 4]
+
+cg_early_stopping = true
+cg_max_stag_steps = 6
+cg_max_more_steps = 0
+cg_use_reg_scale_proxy = true
+cg_reg_scale_num_probes = 8
+
+# Image reconstruction parameters
+lambda_r = 5.063e-2
+max_iter_recon = 96
+tol_recon = 1.0e-3
+
+# Motion reconstruction parameters
+lambda_m = 10.0
+max_iter_motion = 64
+tol_motion = 1.0e-3

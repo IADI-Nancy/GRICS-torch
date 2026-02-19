@@ -7,7 +7,7 @@ import torch
 os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from Parameters import Parameters
+from src.config.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.fftnc import ifftnc
@@ -54,9 +54,19 @@ def _run_motion_only(recon, x_fixed, y_meas, alpha_true, n_iter=4):
 
 
 def test_motion_only_generated_vs_espirit_smaps():
-    Parameters.verbose = False
-    Parameters.debug_flag = False
-    params = Parameters()
+    params = load_config(
+        [
+            "config/general.toml",
+            "config/shepp_logan.toml",
+            "config/sampling_simulation/interleaved.toml",
+            "config/motion_simulation/discrete_nonrigid.toml",
+            "config/reconstruction/nonrigid_fast.toml",
+        ],
+        overrides={
+            "verbose": False,
+            "debug_flag": False,
+        },
+    )
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     if params.data_type != "shepp-logan":
@@ -64,7 +74,7 @@ def test_motion_only_generated_vs_espirit_smaps():
     if params.motion_type != "non-rigid" or params.simulation_type != "discrete-non-rigid":
         raise RuntimeError("Set motion_type='non-rigid' and simulation_type='discrete-non-rigid'.")
 
-    data = DataLoader(t_device=device, sp_device=None)
+    data = DataLoader(params=params, t_device=device, sp_device=None)
     if not hasattr(data, "smaps_generated"):
         raise RuntimeError("Generated sensitivity maps are unavailable in DataLoader.")
     if not hasattr(data, "alpha_maps_true"):
@@ -84,9 +94,21 @@ def test_motion_only_generated_vs_espirit_smaps():
 
     alpha_true = data.alpha_maps_true.to(device)
 
-    recon_esp = JointReconstructor(data.kspace, data.smaps, data.sampling_idx, motion_signal=data.motion_signal)
+    recon_esp = JointReconstructor(
+        data.kspace,
+        data.smaps,
+        data.sampling_idx,
+        motion_signal=data.motion_signal,
+        params=params,
+        kspace_scale=data.kspace_scale,
+    )
     recon_true = JointReconstructor(
-        data.kspace, data.smaps_generated, data.sampling_idx, motion_signal=data.motion_signal
+        data.kspace,
+        data.smaps_generated,
+        data.sampling_idx,
+        motion_signal=data.motion_signal,
+        params=params,
+        kspace_scale=data.kspace_scale,
     )
 
     res_esp, alpha_esp = _run_motion_only(recon_esp, x_esp, y_meas, alpha_true, n_iter=4)

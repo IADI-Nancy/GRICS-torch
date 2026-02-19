@@ -1,0 +1,5 @@
+[sampling]
+kspace_sampling_type = "interleaved"
+NshotsPerNex = 8
+Nex = 1
+Nshots = 8

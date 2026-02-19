@@ -1,12 +1,9 @@
 import torch
 import sigpy as sp
-import matplotlib.pyplot as plt
 import time
 
-from Parameters import Parameters
+from src.config.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
-from src.reconstruction.EncodingOperator import EncodingOperator
-from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.show_and_save_image import show_and_save_image
 
@@ -28,8 +25,21 @@ total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3  # in GB
 print(f"Total GPU memory: {total_mem:.2f} GB")
 # --- End optional CuPy import + capability check ---
 
-# Set parameters
-params = Parameters()
+params = load_config(
+    [
+        "config/general.toml",
+        "config/sampling_simulation/interleaved.toml",
+        "config/motion_simulation/discrete_rigid.toml",
+        "config/reconstruction/rigid_fast.toml",
+    ],
+    overrides={
+        "path_to_fastMRI_data": "data/kspace.npz",
+        "path_to_realworld_data": "data/breast_motion_data.h5",
+        "ismrmrd_file": "data/t2_1724.h5",
+        "saec_file": "data/2008-003 01-1724_S11_20210323_151329.h5",
+    },
+)
+
 # Set device for SigPy and PyTorch 
 sp_device = sp.Device(0) if _cupy_ok else sp.Device(-1)
 t_device = torch.device("cuda:0" if _cupy_ok and torch.cuda.is_available() else "cpu")

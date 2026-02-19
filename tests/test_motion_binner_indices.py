@@ -7,7 +7,6 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.preprocessing.MotionBinner import MotionBinner
-from Parameters import Parameters
 
 
 def _build_synthetic_inputs(nex, n_states, ny, device):
@@ -61,11 +60,10 @@ def _best_center_permutation(centers, state_signal):
 
 
 def test_motion_binner_recovers_initial_sampling_indices():
-    params = Parameters()
     device = torch.device("cpu")
 
-    nex = params.Nex
-    n_states = params.N_mot_states
+    nex = 1
+    n_states = 4
     ny = 32
 
     init_bins, ky_idx, nex_idx, motion_curve, state_signal = _build_synthetic_inputs(

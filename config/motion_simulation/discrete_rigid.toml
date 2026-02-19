@@ -1,0 +1,12 @@
+[motion]
+simulation_type = "discrete-rigid"
+num_motion_events = 4
+max_tx = 4.0
+max_ty = 3.0
+max_phi = 10.0
+max_center_x = 0
+max_center_y = 0
+seed = 1
+motion_tau = 2
+nonrigid_motion_amplitude = 1.0
+displacementfield_size = 1

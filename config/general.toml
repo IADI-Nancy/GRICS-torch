@@ -1,0 +1,17 @@
+[paths]
+debug_folder = "debug_outputs/"
+logs_folder = "logs/"
+results_folder = "results/"
+
+[runtime]
+debug_flag = true
+verbose = true
+
+[kspace_normalization]
+normalize_kspace = true
+kspace_norm_mode = "rms"
+kspace_norm_eps = 1.0e-12
+
+[coil_sensitivity]
+acs = 48
+kernel_width = 12

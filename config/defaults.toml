@@ -1,0 +1,70 @@
+[paths]
+debug_folder = "debug_outputs/"
+logs_folder = "logs/"
+results_folder = "results/"
+
+[runtime]
+debug_flag = true
+verbose = true
+seed = 1
+
+[data]
+data_type = "fastMRI"
+path_to_fastMRI_data = "data/kspace.npz"
+path_to_realworld_data = "data/breast_motion_data.h5"
+saec_file = "data/2008-003 01-1724_S11_20210323_151329.h5"
+ismrmrd_file = "data/t2_1724.h5"
+
+[shepp_logan]
+N_SheppLogan = 128
+Ncoils_SheppLogan = 4
+Nz_SheppLogan = 1
+
+[sampling]
+kspace_sampling_type = "interleaved"
+NshotsPerNex = 8
+Nex = 1
+Nshots = 8
+
+[motion]
+simulation_type = "discrete-rigid"
+motion_type = "rigid"
+N_mot_states = 8
+num_motion_events = 4
+max_tx = 4.0
+max_ty = 3.0
+max_phi = 10.0
+max_center_x = 0
+max_center_y = 0
+motion_tau = 2
+nonrigid_motion_amplitude = 1.0
+displacementfield_size = 1
+
+[coil_sensitivity]
+acs = 48
+kernel_width = 12
+
+[kspace_normalization]
+normalize_kspace = true
+kspace_norm_mode = "rms"
+kspace_norm_eps = 1.0e-12
+
+[reconstruction]
+max_restarts = 1
+use_scaled_motion_update = false
+ResolutionLevels = [0.25, 0.5, 1.0]
+GN_iterations_per_level = [12, 4, 4]
+
+cg_early_stopping = true
+cg_max_stag_steps = 6
+cg_max_more_steps = 0
+cg_use_reg_scale_proxy = true
+cg_reg_scale_num_probes = 8
+
+lambda_r = 5.063e-2
+max_iter_recon = 128
+tol_recon = 1.0e-3
+
+lambda_m = 1.0e-1
+max_iter_motion = 128
+tol_motion = 1.0e-3

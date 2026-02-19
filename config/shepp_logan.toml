@@ -1,0 +1,5 @@
+[shepp_logan]
+data_type = "shepp-logan"
+N_SheppLogan = 128
+Ncoils_SheppLogan = 4
+Nz_SheppLogan = 1
