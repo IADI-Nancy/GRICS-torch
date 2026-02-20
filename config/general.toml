@@ -15,6 +15,8 @@ debug_flag = true
 seed = 1
 # Print logs.
 verbose = true
+# Print JointReconstructor progress to console.
+print_to_console = true
 # Clean debug/log/results/input_data folders before each run.
 clean_output_folders_before_run = true
 

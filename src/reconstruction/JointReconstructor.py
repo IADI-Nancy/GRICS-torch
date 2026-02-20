@@ -96,6 +96,10 @@ class JointReconstructor:
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
 
+    def _console(self, message):
+        if getattr(self.params, "print_to_console", True):
+            print(message)
+
     def resize_img_2D(self, img, new_size):
         """
         Bilinear resize for complex or real images.
@@ -543,7 +547,7 @@ class JointReconstructor:
         )
 
     def _prepare_resolution_level(self, idx_res, r, restart):
-        print(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
+        self._console(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
         # Prepare low-resolution dataset
         Data_res = self.downsample_data(r)
@@ -756,7 +760,7 @@ class JointReconstructor:
 
                 # Gauss–Newton iterations
                 for it in range(GN_iter):
-                    print(f"  GN iteration {it+1}/{GN_iter}")
+                    self._console(f"  GN iteration {it+1}/{GN_iter}")
                     fp_t0 = time.perf_counter()
 
                     # -------------------------------IMAGE RECONSTRUCTION STEP -------------------------
@@ -766,7 +770,7 @@ class JointReconstructor:
                     Data_res["E"] = self.build_encoding_operator(Data_res)
 
                     # 2) Solve for image
-                    print("    Solving for image...")
+                    self._console("    Solving for image...")
                     t_img = time.perf_counter()
                     img = self.solve_image(Data_res)
                     img_elapsed = time.perf_counter() - t_img
@@ -788,7 +792,7 @@ class JointReconstructor:
                     residual_recon_norms.append(rel_res)
 
                     if it > 0 and rel_res > best_relres:
-                        print("    Relative residual increased — restoring best solution at this level.")
+                        self._console("    Relative residual increased — restoring best solution at this level.")
                         self._append_restart_log(
                             restart_log,
                             "    Relative residual increased - restoring best solution at this level.",
@@ -806,7 +810,7 @@ class JointReconstructor:
                     Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
 
                     # 4) Solve for motion update
-                    print("    Solving for motion update...")
+                    self._console("    Solving for motion update...")
                     t_mot = time.perf_counter()
                     if self.params.use_scaled_motion_update:
                         dm = self.solve_motion_scaled(Data_res, residual)
@@ -872,11 +876,11 @@ class JointReconstructor:
 
             if restart_converged:
                 global_converged = True
-                print("Stopping restarts: true convergence achieved.")
+                self._console("Stopping restarts: true convergence achieved.")
                 break
 
         if not global_converged:
-            print("⚠ WARNING: No restart reached tolerance.")
+            self._console("⚠ WARNING: No restart reached tolerance.")
 
         global_best_image_unscaled = global_best_image * self.kspace_scale
         show_and_save_image(

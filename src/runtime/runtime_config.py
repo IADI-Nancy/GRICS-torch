@@ -57,6 +57,8 @@ def refresh_derived(params):
         params.flip_for_display = params.data_type in {"real-world", "raw-data"}
     if not hasattr(params, "clean_output_folders_before_run"):
         params.clean_output_folders_before_run = True
+    if not hasattr(params, "print_to_console"):
+        params.print_to_console = True
 
     has_sampling_sim = hasattr(params, "NshotsPerNex") and hasattr(params, "Nex")
     if has_sampling_sim:

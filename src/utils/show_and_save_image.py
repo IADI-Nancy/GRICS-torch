@@ -8,6 +8,8 @@ def show_and_save_image(
     image_name: str,
     folder: str,
     flip_for_display: bool = False,
+    jupyter_notebook_flag: bool = False,
+    jupyter_display: bool | None = None,
 ):
     """
     Display and save a single 2D image (real or complex),
@@ -44,4 +46,8 @@ def show_and_save_image(
         bbox_inches="tight",
         pad_inches=0
     )
+    # Backward compatible alias: explicit jupyter_display wins if provided.
+    should_display = jupyter_notebook_flag if jupyter_display is None else bool(jupyter_display)
+    if should_display:
+        plt.show()
     plt.close()
