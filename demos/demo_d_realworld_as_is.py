@@ -15,7 +15,7 @@ def main():
     print("[Demo D] Loading config...")
     params = load_config(
         data_type="real-world",
-        reconstruction_config="config/reconstruction/nonrigid_high_quality.toml",
+        reconstruction_config="config/reconstruction/nonrigid_fast.toml",
     )
 
     print("[Demo D] Initializing runtime...")

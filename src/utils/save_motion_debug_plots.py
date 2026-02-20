@@ -29,20 +29,4 @@ def save_motion_debug_plots(motion_curve, tx, ty, phi, output_folder, event_time
     plt.savefig(os.path.join(output_folder, "phi_curve.png"))
     plt.close()
 
-    plt.figure(figsize=(10, 4))
-    plt.plot(motion_curve.detach().cpu().numpy(), label="PC1 Motion Curve", linewidth=2)
-    plt.plot(tx.detach().cpu().numpy(), label="tx", alpha=0.8)
-    plt.plot(ty.detach().cpu().numpy(), label="ty", alpha=0.8)
-    plt.plot(phi.detach().cpu().numpy(), label="phi", alpha=0.8)
-
-    if event_times is not None:
-        for e in event_times.detach().cpu().numpy():
-            plt.axvline(x=e, color="black", linewidth=1)
-
-    plt.title("All motion curves (superimposed)")
-    plt.xlabel("Acquisition line number")
-    plt.ylabel("Amplitude")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_folder, "all_curves.png"))
-    plt.close()
+    # Combined plot with clustered markers is generated in save_clustered_motion_plots.py

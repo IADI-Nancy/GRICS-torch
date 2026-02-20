@@ -118,9 +118,16 @@ class DataLoader:
                 if hasattr(motionSimulator, "alpha_maps"):
                     self.alpha_maps_true = motionSimulator.alpha_maps
 
-            motion_curve, _, _, _ = motionSimulator.get_motion_information()
+            motion_curve, tx, ty, phi = motionSimulator.get_motion_information()
             self.binned_indices, self.motion_signal = MotionBinner.bin_motion(
-                motion_curve, self.ky_idx, self.nex_idx, self.t_device, self.params
+                motion_curve,
+                self.ky_idx,
+                self.nex_idx,
+                self.t_device,
+                self.params,
+                tx=tx,
+                ty=ty,
+                phi=phi,
             )
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(

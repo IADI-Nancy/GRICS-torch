@@ -13,6 +13,8 @@ debug_flag = true
 seed = 1
 # Print logs.
 verbose = true
+# Clean debug/log/results folders before each run.
+clean_output_folders_before_run = true
 
 
 [kspace_normalization]

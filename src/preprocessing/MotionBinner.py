@@ -26,7 +26,7 @@ def kmeans_torch(x, k, n_iter=20):
 
 class MotionBinner:
     @staticmethod
-    def bin_motion(motion_curve, ky_idx, nex_idx, t_device, params):
+    def bin_motion(motion_curve, ky_idx, nex_idx, t_device, params, tx=None, ty=None, phi=None):
         motion_curve = motion_curve.to(t_device)
 
         Nbins = params.N_motion_states
@@ -60,6 +60,11 @@ class MotionBinner:
                 nex_idx=nex_idx,
                 nbins=Nbins,
                 output_folder=params.debug_folder,
+                resolution_levels=getattr(params, "ResolutionLevels", None),
+                tx=tx,
+                ty=ty,
+                phi=phi,
+                data_type=getattr(params, "data_type", None),
             )
 
         return binned_indices, centers.squeeze(1)
