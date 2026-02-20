@@ -1,5 +1,7 @@
 [sampling]
+# Sampling order model used by simulated acquisition.
 kspace_sampling_type = "linear"
+# Number of shots per average (Nex). Higher means more motion states for shot-wise simulations.
 NshotsPerNex = 8
+# Number of averages/repetitions acquired.
 Nex = 1
-Nshots = 8

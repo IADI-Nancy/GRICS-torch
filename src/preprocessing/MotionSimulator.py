@@ -65,18 +65,23 @@ class MotionSimulator:
         tx = ty = phi = 0 everywhere
         navigator = 0
         """
-        # Use shot-wise sampling (same as discrete motion)
-        ky_per_mot_state_idx = self.ky_idx.unsqueeze(0)
+        # Single motion state per Nex; retain full acquired ky set for each Nex.
+        if isinstance(self.ky_idx, list):
+            ky_per_mot_state_idx = [[ky] for ky in self.ky_idx]
+            ny_total = sum(ky.numel() for ky in self.ky_idx)
+        else:
+            ky_per_mot_state_idx = [[self.ky_idx]]
+            ny_total = int(self.ky_idx.numel())
 
         self.sampling_idx_per_nex = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
         
         self.TotalKspaceSamples = self.Nx * self.Ny
 
         # Expand zero motion to ky (chronological)
-        self.tx        = torch.zeros(self.Ny, device=self.t_device)
-        self.ty        = torch.zeros(self.Ny, device=self.t_device)
-        self.phi       = torch.zeros(self.Ny, device=self.t_device)
-        self.navigator = torch.zeros(self.Ny, device=self.t_device)
+        self.tx        = torch.zeros(ny_total, device=self.t_device)
+        self.ty        = torch.zeros(ny_total, device=self.t_device)
+        self.phi       = torch.zeros(ny_total, device=self.t_device)
+        self.navigator = torch.zeros(ny_total, device=self.t_device)
 
 
     # -------------------------------------------------------

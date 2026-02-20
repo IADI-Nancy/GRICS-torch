@@ -1,46 +1,26 @@
 import time
-import torch
-import sigpy as sp
 
 from src.config.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.show_and_save_image import show_and_save_image
-
-
-try:
-    import cupy as cp
-    _cupy_ok = cp.cuda.runtime.getDeviceCount() > 0
-except Exception:
-    cp = None
-    _cupy_ok = False
+from src.utils.runtime_setup import initialize_runtime
 
 
 def main():
     params = load_config(
-        [
-            "config/general.toml",
-            "config/sampling_simulation/from_data.toml",
-            "config/motion_simulation/as_is.toml",
-            "config/reconstruction/rigid_fast.toml",
-        ],
-        overrides={
-            "data_type": "real-world",
-            "path_to_realworld_data": "data/breast_motion_data.h5",
-            "path_to_fastMRI_data": "data/kspace.npz",
-        },
+        data_type="real-world",
+        reconstruction_config="config/reconstruction/rigid_fast.toml",
     )
 
-    sp_device = sp.Device(0) if _cupy_ok else sp.Device(-1)
-    t_device = torch.device("cuda:0" if _cupy_ok and torch.cuda.is_available() else "cpu")
+    sp_device, t_device = initialize_runtime(params)
 
-    if params.debug_flag:
-        torch.manual_seed(params.seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(params.seed)
-            torch.cuda.manual_seed_all(params.seed)
-
-    data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
+    data = DataLoader(
+        params=params,
+        t_device=t_device,
+        sp_device=sp_device,
+        filename="data/breast_motion_data.h5",
+    )
     show_and_save_image(data.image_ground_truth[0], "img_ground_truth", params.debug_folder)
     show_and_save_image(data.image_no_moco[0], "img_corrupted", params.debug_folder)
 

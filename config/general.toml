@@ -1,17 +1,30 @@
 [paths]
+# Folder for debug plots and intermediate diagnostics.
 debug_folder = "debug_outputs/"
+# Folder for optimizer logs and residual curves.
 logs_folder = "logs/"
+# Folder for final outputs (images, motion model).
 results_folder = "results/"
 
 [runtime]
+# Enable debug visualizations and deterministic behavior where possible.
 debug_flag = true
+# Random seed for reproducibility.
+seed = 1
+# Print verbose progress information.
 verbose = true
 
+
 [kspace_normalization]
+# Normalize k-space before optimization.
 normalize_kspace = true
+# Normalization mode: "rms" or "max".
 kspace_norm_mode = "rms"
+# Lower bound to avoid division by zero during normalization.
 kspace_norm_eps = 1.0e-12
 
 [coil_sensitivity]
+# Width of auto-calibration signal region for ESPIRiT.
 acs = 48
+# ESPIRiT kernel width.
 kernel_width = 12

@@ -19,20 +19,44 @@ from src.utils.show_and_save_image import show_and_save_image
 
 
 class DataLoader:
-    def __init__(self, params, sp_device=None, t_device=None):
+    def __init__(
+        self,
+        params,
+        sp_device=None,
+        t_device=None,
+        filename=None,
+        slice_idx=16,
+    ):
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
         self.kspace_scale = 1.0
+        self.filename = filename
+        self.slice_idx = slice_idx
         
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
-            self.load_fastMRI_data(self.params.path_to_fastMRI_data)
+            if self.filename is None:
+                raise ValueError("filename must be provided for data_type='fastMRI'.")
+            self.load_fastMRI_data(self.filename)
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
-            self.load_realworld_data(self.params.path_to_realworld_data, slice_idx=16)
+            if self.filename is None:
+                raise ValueError("filename must be provided for data_type='real-world'.")
+            self.load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
-            self.load_realworld_data_from_ismrm_and_saec(self.params.ismrmrd_file, self.params.saec_file, slice_idx=16)
+            if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
+                path_to_ismrm, path_to_saec = self.filename
+            elif isinstance(self.filename, dict):
+                path_to_ismrm = self.filename.get("ismrmrd_file")
+                path_to_saec = self.filename.get("saec_file")
+            else:
+                raise ValueError(
+                    "For data_type='raw-data', filename must be a 2-item tuple/list "
+                    "(ismrmrd_file, saec_file) or a dict with keys "
+                    "'ismrmrd_file' and 'saec_file'."
+                )
+            self.load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         else:
             raise ValueError("Unknown data_type")
 
@@ -58,24 +82,24 @@ class DataLoader:
             t_device=self.t_device,
         )
         
-        if self.params.simulation_type == 'as-it-is':
+        if self.params.motion_simulation_type == 'as-it-is':
             if self.params.data_type in ['real-world', 'raw-data']:
                 self.image_no_moco = self.image_ground_truth.clone()
             else:
                 raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
         else:
-            if self.params.simulation_type == 'no-motion':
+            if self.params.motion_simulation_type == 'no-motion':
                 motionSimulator.simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth.clone()
             else:      
-                if self.params.simulation_type == 'discrete-rigid':
+                if self.params.motion_simulation_type == 'discrete-rigid':
                     motionSimulator.simulate_discrete_rigid_motion()
-                elif self.params.simulation_type == 'rigid':
+                elif self.params.motion_simulation_type == 'rigid':
                     motionSimulator.simulate_realistic_rigid_motion()
-                elif self.params.simulation_type == 'discrete-non-rigid':
+                elif self.params.motion_simulation_type == 'discrete-non-rigid':
                     motionSimulator.simulate_discrete_non_rigid_motion()
                 else:
-                    raise ValueError("Unknown simulation_type")
+                    raise ValueError("Unknown motion_simulation_type")
                 self.kspace = motionSimulator.get_corrupted_kspace()
                 self.image_no_moco = motionSimulator.get_corrupted_image()
                 if hasattr(motionSimulator, "alpha_maps"):
@@ -92,7 +116,7 @@ class DataLoader:
             self.t_device
         )
 
-        if self.params.debug_flag and self.params.simulation_type in ['discrete-non-rigid', 'rigid', 'discrete-rigid']:
+        if self.params.debug_flag and self.params.motion_simulation_type in ['discrete-non-rigid', 'rigid', 'discrete-rigid']:
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
 
     def _normalize_kspace_if_enabled(self):
@@ -196,6 +220,11 @@ class DataLoader:
         data = reader.read_data_from_rawdata()
 
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
+        self.params.Nex = int(self.kspace.shape[1])
+        self.params.NshotsPerNex = int(self.kspace.shape[3])
+        self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
+        if self.params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
+            self.params.N_mot_states = self.params.Nshots
         self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
@@ -225,6 +254,11 @@ class DataLoader:
             data['kspace'] = f['kspace'][:]
 
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
+        self.params.Nex = int(self.kspace.shape[1])
+        self.params.NshotsPerNex = int(self.kspace.shape[3])
+        self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
+        if self.params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
+            self.params.N_mot_states = self.params.Nshots
         ky_dx = data['idx_ky'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
@@ -304,7 +338,7 @@ class DataLoader:
         # This consistency check is meaningful only for simulated non-rigid data.
         if self.params.motion_type != "non-rigid":
             return
-        if self.params.simulation_type != "discrete-non-rigid":
+        if self.params.motion_simulation_type != "discrete-non-rigid":
             return
         if not hasattr(motionSimulator, "alpha_maps"):
             return

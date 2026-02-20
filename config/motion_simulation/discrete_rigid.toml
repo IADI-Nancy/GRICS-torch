@@ -1,12 +1,13 @@
 [motion]
-simulation_type = "discrete-rigid"
-num_motion_events = 4
+# Motion simulation model used for synthetic corruption.
+motion_simulation_type = "discrete-rigid"
+# Maximum x-translation amplitude in pixels for each shot state.
 max_tx = 4.0
+# Maximum y-translation amplitude in pixels for each shot state.
 max_ty = 3.0
+# Maximum in-plane rotation amplitude in degrees for each shot state.
 max_phi = 10.0
+# Maximum x-offset for rotation center in pixels.
 max_center_x = 0
+# Maximum y-offset for rotation center in pixels.
 max_center_y = 0
-seed = 1
-motion_tau = 2
-nonrigid_motion_amplitude = 1.0
-displacementfield_size = 1

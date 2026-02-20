@@ -55,13 +55,14 @@ def _run_motion_only(recon, x_fixed, y_meas, alpha_true, n_iter=4):
 
 def test_motion_only_generated_vs_espirit_smaps():
     params = load_config(
-        [
-            "config/general.toml",
-            "config/shepp_logan.toml",
-            "config/sampling_simulation/interleaved.toml",
-            "config/motion_simulation/discrete_nonrigid.toml",
-            "config/reconstruction/nonrigid_fast.toml",
-        ],
+        data_type="shepp-logan",
+        motion_type="non-rigid",
+        reconstruction_config="config/reconstruction/nonrigid_fast.toml",
+        shepp_logan_config="config/shepp_logan.toml",
+        sampling_config="config/sampling_simulation/interleaved.toml",
+        kspace_sampling_type="interleaved",
+        motion_simulation_config="config/motion_simulation/discrete_nonrigid.toml",
+        motion_simulation_type="discrete-non-rigid",
         overrides={
             "verbose": False,
             "debug_flag": False,
@@ -71,8 +72,8 @@ def test_motion_only_generated_vs_espirit_smaps():
 
     if params.data_type != "shepp-logan":
         raise RuntimeError("This comparison test is intended for shepp-logan data_type.")
-    if params.motion_type != "non-rigid" or params.simulation_type != "discrete-non-rigid":
-        raise RuntimeError("Set motion_type='non-rigid' and simulation_type='discrete-non-rigid'.")
+    if params.motion_type != "non-rigid" or params.motion_simulation_type != "discrete-non-rigid":
+        raise RuntimeError("Set motion_type='non-rigid' and motion_simulation_type='discrete-non-rigid'.")
 
     data = DataLoader(params=params, t_device=device, sp_device=None)
     if not hasattr(data, "smaps_generated"):

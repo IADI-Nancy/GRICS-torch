@@ -1,7 +1,0 @@
-[sampling]
-# Sampling order is read from input data.
-# kspace_sampling_type is ignored in this mode.
-data_type = "real-world"
-NshotsPerNex = 8
-Nex = 1
-Nshots = 8

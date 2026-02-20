@@ -475,7 +475,7 @@ class JointReconstructor:
         log_path = os.path.join(self.params.logs_folder, f"restart_{restart_idx}.log")
         param_items = {}
         simulation_param_keys = {
-            "simulation_type",
+            "motion_simulation_type",
             "num_motion_events",
             "max_tx",
             "max_ty",

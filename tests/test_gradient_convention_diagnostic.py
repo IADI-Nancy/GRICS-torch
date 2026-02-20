@@ -14,13 +14,14 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 
 def _build_context():
     params = load_config(
-        [
-            "config/general.toml",
-            "config/shepp_logan.toml",
-            "config/sampling_simulation/interleaved.toml",
-            "config/motion_simulation/discrete_nonrigid.toml",
-            "config/reconstruction/nonrigid_fast.toml",
-        ]
+        data_type="shepp-logan",
+        motion_type="non-rigid",
+        reconstruction_config="config/reconstruction/nonrigid_fast.toml",
+        shepp_logan_config="config/shepp_logan.toml",
+        sampling_config="config/sampling_simulation/interleaved.toml",
+        kspace_sampling_type="interleaved",
+        motion_simulation_config="config/motion_simulation/discrete_nonrigid.toml",
+        motion_simulation_type="discrete-non-rigid",
     )
     device = torch.device("cpu")
     torch.manual_seed(params.seed)

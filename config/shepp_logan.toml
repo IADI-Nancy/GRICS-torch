@@ -1,5 +1,7 @@
 [shepp_logan]
-data_type = "shepp-logan"
+# Phantom matrix size (Nx=Ny).
 N_SheppLogan = 128
+# Number of synthetic receive coils.
 Ncoils_SheppLogan = 4
+# Number of slices for the phantom volume.
 Nz_SheppLogan = 1
