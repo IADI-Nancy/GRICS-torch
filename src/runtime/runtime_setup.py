@@ -1,8 +1,105 @@
+import atexit
+import gc
+import signal
+import sys
+
 import torch
 import sigpy as sp
 
 
+_GUARDS_INSTALLED = False
+
+
+def cleanup_runtime():
+    """Best-effort cleanup to release Python/CUDA memory between runs."""
+    gc.collect()
+
+    try:
+        import cupy as cp
+
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+    except Exception:
+        pass
+
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+        except Exception:
+            pass
+        torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+
+def cleanup_notebook_namespace(
+    namespace,
+    aggressive=False,
+    shutdown_kernel=False,
+    restart_kernel=False,
+):
+    """
+    Remove heavy objects from a notebook global namespace, then run runtime cleanup.
+    """
+    heavy_names = {
+        "data",
+        "recon",
+        "jointReconstructor",
+        "joint_reconstructor",
+        "kspace",
+        "kspace_corrupted",
+        "image_corrupted",
+        "image_ground_truth",
+        "motion_model",
+        "result",
+    }
+    for name in heavy_names:
+        namespace.pop(name, None)
+
+    if aggressive:
+        for name, value in list(namespace.items()):
+            if name.startswith("_"):
+                continue
+            if isinstance(value, torch.Tensor):
+                namespace.pop(name, None)
+
+    cleanup_runtime()
+
+    if shutdown_kernel:
+        try:
+            from IPython import get_ipython
+
+            ip = get_ipython()
+            if ip is not None and getattr(ip, "kernel", None) is not None:
+                ip.kernel.do_shutdown(restart=restart_kernel)
+        except Exception:
+            pass
+
+
+def _signal_cleanup_handler(signum, frame):
+    cleanup_runtime()
+    raise SystemExit(128 + signum)
+
+
+def install_runtime_safety_guards():
+    global _GUARDS_INSTALLED
+    if _GUARDS_INSTALLED:
+        return
+
+    atexit.register(cleanup_runtime)
+    # In notebook/ipykernel, custom SIGINT handlers can kill the kernel.
+    # Keep only atexit cleanup there, and install signal handlers for scripts.
+    if "ipykernel" not in sys.modules:
+        signal.signal(signal.SIGINT, _signal_cleanup_handler)
+        signal.signal(signal.SIGTERM, _signal_cleanup_handler)
+    _GUARDS_INSTALLED = True
+
+
 def initialize_runtime(params, print_gpu_info=False):
+    install_runtime_safety_guards()
+
     try:
         import cupy as cp
         cupy_ok = cp.cuda.runtime.getDeviceCount() > 0

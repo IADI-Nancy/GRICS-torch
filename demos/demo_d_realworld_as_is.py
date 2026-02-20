@@ -12,22 +12,27 @@ from src.runtime.runtime_setup import initialize_runtime
 
 
 def main():
+    print("[Demo D] Loading config...")
     params = load_config(
         data_type="real-world",
-        reconstruction_config="config/reconstruction/rigid_fast.toml",
+        reconstruction_config="config/reconstruction/nonrigid_high_quality.toml",
     )
 
+    print("[Demo D] Initializing runtime...")
     sp_device, t_device = initialize_runtime(params)
 
+    print("[Demo D] Loading data and building operators...")
     data = DataLoader(
         params=params,
         t_device=t_device,
         sp_device=sp_device,
         filename="data/breast_motion_data.h5",
     )
-    show_and_save_image(data.image_ground_truth[0], "img_ground_truth", params.debug_folder)
-    show_and_save_image(data.image_no_moco[0], "img_corrupted", params.debug_folder)
+    print("[Demo D] Saving debug images...")
+    show_and_save_image(data.image_ground_truth[0], "img_ground_truth", params.debug_folder, flip_for_display=getattr(params, "flip_for_display", params.data_type in {"real-world", "raw-data"}))
+    show_and_save_image(data.image_no_moco[0], "img_corrupted", params.debug_folder, flip_for_display=getattr(params, "flip_for_display", params.data_type in {"real-world", "raw-data"}))
 
+    print("[Demo D] Starting reconstruction...")
     recon = JointReconstructor(
         data.kspace,
         data.smaps,

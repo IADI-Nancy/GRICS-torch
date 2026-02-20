@@ -26,6 +26,7 @@ class DataLoader:
         t_device=None,
         filename=None,
         slice_idx=16,
+        recalculate_n_motion_states_from_navigator=False,
     ):
         self.params = params
         self.sp_device = sp_device
@@ -33,6 +34,19 @@ class DataLoader:
         self.kspace_scale = 1.0
         self.filename = filename
         self.slice_idx = slice_idx
+        self.recalculate_n_motion_states_from_navigator = recalculate_n_motion_states_from_navigator
+
+        if (
+            self.recalculate_n_motion_states_from_navigator
+            and self.params.data_type in {"real-world", "raw-data"}
+            and self.params.motion_type == "rigid"
+        ):
+            # TODO: detect rigid motion events from navigator/belt signal and update
+            # params.N_motion_states automatically before motion binning/reconstruction.
+            raise NotImplementedError(
+                "recalculate_n_motion_states_from_navigator is not implemented yet for "
+                "real-world/raw-data rigid motion."
+            )
 
         if self.params.data_type != "shepp-logan" and self.filename is None:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
@@ -223,7 +237,7 @@ class DataLoader:
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
         if self.params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
-            self.params.N_mot_states = self.params.Nshots
+            self.params.N_motion_states = self.params.Nshots
         self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
@@ -257,7 +271,7 @@ class DataLoader:
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
         if self.params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
-            self.params.N_mot_states = self.params.Nshots
+            self.params.N_motion_states = self.params.Nshots
         ky_dx = data['idx_ky'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
@@ -396,6 +410,11 @@ class DataLoader:
                 img_back[0],
                 "gn_input_consistency_recovered_image",
                 self.params.debug_folder,
+                flip_for_display=getattr(
+                    self.params,
+                    "flip_for_display",
+                    self.params.data_type in {"real-world", "raw-data"},
+                ),
             )
 
 

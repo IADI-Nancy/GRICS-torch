@@ -44,8 +44,8 @@ def _build_lowres_context():
     d["ReconstructedImage"] = img
 
     if params.motion_type == "rigid":
-        d["MotionModel"] = torch.zeros((recon.Nalpha, params.N_mot_states), device=device)
-        nparams = recon.Nalpha * params.N_mot_states
+        d["MotionModel"] = torch.zeros((recon.Nalpha, params.N_motion_states), device=device)
+        nparams = recon.Nalpha * params.N_motion_states
     else:
         d["MotionModel"] = torch.zeros((recon.Nalpha, nx, ny), device=device)
         nparams = recon.Nalpha * nx * ny
@@ -58,7 +58,7 @@ def _build_lowres_context():
 
 def _unvec_motion(params, recon, d, v):
     if params.motion_type == "rigid":
-        return v.reshape(recon.Nalpha, params.N_mot_states)
+        return v.reshape(recon.Nalpha, params.N_motion_states)
     return v.reshape(recon.Nalpha, d["Nx"], d["Ny"])
 
 

@@ -53,6 +53,9 @@ def _drop_keys(cfg, keys):
 def refresh_derived(params):
     torch.set_default_dtype(torch.float64)
 
+    if not hasattr(params, "flip_for_display"):
+        params.flip_for_display = params.data_type in {"real-world", "raw-data"}
+
     has_sampling_sim = hasattr(params, "NshotsPerNex") and hasattr(params, "Nex")
     if has_sampling_sim:
         params.Nshots = int(params.NshotsPerNex) * int(params.Nex)
@@ -62,19 +65,22 @@ def refresh_derived(params):
     if not hasattr(params, "motion_simulation_type"):
         params.motion_simulation_type = "as-it-is"
 
+    manual_states = int(getattr(params, "N_motion_states", 4))
+    if manual_states < 1:
+        raise ValueError("N_motion_states must be >= 1.")
+    params.N_motion_states = manual_states
+
     if params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
-        if not hasattr(params, "N_mot_states"):
-            params.N_mot_states = params.Nshots
+        # Simulated motion active: use simulation-driven state count.
+        params.N_motion_states = params.Nshots
     elif params.motion_simulation_type == "rigid":
+        # Simulated motion active: use simulation-driven state count.
         if not hasattr(params, "num_motion_events"):
             raise ValueError("Missing 'num_motion_events' for rigid simulation.")
-        params.N_mot_states = int(params.num_motion_events) + 1
-    elif params.motion_simulation_type == "no-motion":
-        if not hasattr(params, "N_mot_states"):
-            params.N_mot_states = 1
-    elif params.motion_simulation_type == "as-it-is":
-        if not hasattr(params, "N_mot_states"):
-            params.N_mot_states = params.Nshots if hasattr(params, "Nshots") else 1
+        params.N_motion_states = int(params.num_motion_events) + 1
+    elif params.motion_simulation_type in ["no-motion", "as-it-is"]:
+        # No simulated motion: keep manual reconstruction value.
+        params.N_motion_states = manual_states
 
     if not hasattr(params, "Nex"):
         params.Nex = 1
@@ -101,6 +107,7 @@ def load_config(
     kspace_sampling_type=None,
     NshotsPerNex=None,
     Nex=None,
+    flip_for_display=None,
     overrides=None,
 ):
     repo_root = Path(__file__).resolve().parents[2]
@@ -145,6 +152,8 @@ def load_config(
         cfg["NshotsPerNex"] = int(NshotsPerNex)
     if Nex is not None:
         cfg["Nex"] = int(Nex)
+    if flip_for_display is not None:
+        cfg["flip_for_display"] = bool(flip_for_display)
 
     if not hasattr(SimpleNamespace(**cfg), "motion_type"):
         raise ValueError(
@@ -187,6 +196,9 @@ def load_config(
 
     for key, value in (overrides or {}).items():
         cfg[key] = value
+
+    if "flip_for_display" not in cfg:
+        cfg["flip_for_display"] = data_type in {"real-world", "raw-data"}
 
     params = SimpleNamespace(**cfg)
     return refresh_derived(params)

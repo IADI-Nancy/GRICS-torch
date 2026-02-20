@@ -1,6 +1,9 @@
 [reconstruction]
 # Motion model used by reconstruction ("rigid" or "non-rigid").
 motion_type = "non-rigid"
+# Manual number of motion states used for reconstruction.
+# This value is selected only if manual mode is selected (i.e., no motion simulation override).
+N_motion_states = 4
 # Number of random restarts for joint optimization - fixed to 1 for the non-rigid case.
 max_restarts = 1
 # Apply extra scaling to motion updates during GN iterations.
@@ -15,7 +18,7 @@ cg_early_stopping = true
 # Allowed consecutive stagnating CG steps.
 cg_max_stag_steps = 6
 # Extra CG steps after the first stopping criterion is met.
-cg_max_more_steps = 0
+cg_max_more_steps = 12
 # Estimate regularization scaling internally from probes.
 cg_use_reg_scale_proxy = true
 # Number of probes for regularization scaling estimate.

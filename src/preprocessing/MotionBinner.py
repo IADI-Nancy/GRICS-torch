@@ -29,7 +29,7 @@ class MotionBinner:
     def bin_motion(motion_curve, ky_idx, nex_idx, t_device, params):
         motion_curve = motion_curve.to(t_device)
 
-        Nbins = params.N_mot_states
+        Nbins = params.N_motion_states
         Nex = params.Nex
 
         # ---- K-means clustering (global, across all Nex) ----

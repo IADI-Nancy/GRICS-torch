@@ -11,7 +11,7 @@ results_folder = "results/"
 debug_flag = true
 # Random seed for reproducibility.
 seed = 1
-# Print verbose progress information.
+# Print logs.
 verbose = true
 
 

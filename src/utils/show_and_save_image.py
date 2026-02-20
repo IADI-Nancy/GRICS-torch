@@ -3,7 +3,12 @@ import numpy as np
 import torch
 import os
 
-def show_and_save_image(img: torch.Tensor, image_name: str, folder: str):
+def show_and_save_image(
+    img: torch.Tensor,
+    image_name: str,
+    folder: str,
+    flip_for_display: bool = False,
+):
     """
     Display and save a single 2D image (real or complex),
     scaled between the 2nd and 98th percentile.
@@ -20,8 +25,8 @@ def show_and_save_image(img: torch.Tensor, image_name: str, folder: str):
     if np.iscomplexobj(np_img):
         np_img = np.abs(np_img)
 
-    # Flip vertically to match expected visual orientation.
-    np_img = np.flipud(np_img)
+    if flip_for_display:
+        np_img = np.flipud(np_img)
 
     # Compute percentile-based intensity limits
     vmin = np.percentile(np_img, 2)

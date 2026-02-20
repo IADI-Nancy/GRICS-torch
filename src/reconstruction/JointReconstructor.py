@@ -14,9 +14,9 @@ from src.utils.save_residual_subplots import save_residual_subplots
 
 def test_J_singularity(motionSimulator):
     Nalpha = motionSimulator.Nalpha
-    N_mot_states = len(motionSimulator.SamplingIndices[0])
+    N_motion_states = len(motionSimulator.SamplingIndices[0])
 
-    dim = Nalpha * N_mot_states
+    dim = Nalpha * N_motion_states
 
     # Build JHJ matrix explicitly (small system only!)
     JHJ = torch.zeros((dim, dim), device=motionSimulator.device)
@@ -197,7 +197,7 @@ class JointReconstructor:
 
         mot_prev = Data_prev["MotionModel"]
         if self.params.motion_type == "rigid":
-            Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
+            Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_motion_states), device=self.device)
             Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
             Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
             Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
@@ -292,7 +292,7 @@ class JointReconstructor:
     # # ----------------------------------------------------------------------
     def _n_motion_params(self, Data_res):
         if self.params.motion_type == "rigid":
-            return self.Nalpha * self.params.N_mot_states
+            return self.Nalpha * self.params.N_motion_states
         return self.Nalpha * Data_res["Nx"] * Data_res["Ny"]
 
     def solve_motion(self, Data_res, residual):
@@ -348,7 +348,7 @@ class JointReconstructor:
         self._last_motion_cg_info = solver.last_info
 
         if self.params.motion_type == "rigid":
-            motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_mot_states)
+            motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_motion_states)
         else:
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"])
         return motion_perturb
@@ -357,7 +357,7 @@ class JointReconstructor:
         if self.params.motion_type != "rigid":
             return self.solve_motion(Data_res, residual)
 
-        Nparams = self.Nalpha * self.params.N_mot_states
+        Nparams = self.Nalpha * self.params.N_motion_states
         with torch.no_grad():
             diag_JHJ = torch.zeros(Nparams, dtype=torch.complex128, device=self.device)
 
@@ -372,7 +372,7 @@ class JointReconstructor:
             eps = 1e-8
             scale = torch.sqrt(diag_JHJ + eps)
 
-        # Nparams = self.Nalpha * self.params.N_mot_states
+        # Nparams = self.Nalpha * self.params.N_motion_states
         device = residual.device
 
         J = Data_res["J"]
@@ -428,7 +428,7 @@ class JointReconstructor:
         # ---- Unscale back to physical parameters ----
         delta = delta_tilde / scale
 
-        motion_perturb = delta.reshape(self.Nalpha, self.params.N_mot_states)
+        motion_perturb = delta.reshape(self.Nalpha, self.params.N_motion_states)
 
         return motion_perturb
     
@@ -436,7 +436,7 @@ class JointReconstructor:
         if self.params.motion_type != "rigid":
             raise RuntimeError("random_motion_init() is only for rigid motion.")
         Nalpha = self.Nalpha                    # should be 3
-        Nshots = self.params.N_mot_states            # number of motion states
+        Nshots = self.params.N_motion_states            # number of motion states
 
         alpha = torch.zeros((Nalpha, Nshots), device=self.device)
 
@@ -543,7 +543,7 @@ class JointReconstructor:
             
             if self.params.motion_type == "rigid":
                 if restart == 0:
-                    Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_mot_states), device=self.device)
+                    Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_motion_states), device=self.device)
                 else:
                     Data_res["MotionModel"] = self.random_motion_init()
             elif self.params.motion_type == "non-rigid":
@@ -690,7 +690,7 @@ class JointReconstructor:
 
                 self._append_restart_log(
                     restart_log,
-                    f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x1, {Data_res['Ny']} views, {self.params.N_mot_states} virtual times)",
+                    f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x1, {Data_res['Ny']} views, {self.params.N_motion_states} virtual times)",
                 )
                 self._append_restart_log(
                     restart_log,
@@ -783,8 +783,16 @@ class JointReconstructor:
                     if best_image is not None and best_motion is not None:
                         Data_res["ReconstructedImage"] = best_image
                         Data_res["MotionModel"] = best_motion
-                    show_and_save_image(Data_res["ReconstructedImage"][0], \
-                        'image_restart_' + str(restart + 1) + '_resolution_level' + str(idx_res+1), self.params.debug_folder)
+                    show_and_save_image(
+                        Data_res["ReconstructedImage"][0],
+                        'image_restart_' + str(restart + 1) + '_resolution_level' + str(idx_res+1),
+                        self.params.debug_folder,
+                        flip_for_display=getattr(
+                            self.params,
+                            "flip_for_display",
+                            self.params.data_type in {"real-world", "raw-data"},
+                        ),
+                    )
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
                 restart_log["recon_residuals_by_level"][idx_res] = residual_recon_norms
                 restart_log["motion_residuals_by_level"][idx_res] = residual_motion_norms
@@ -818,7 +826,16 @@ class JointReconstructor:
             print("⚠ WARNING: No restart reached tolerance.")
 
         global_best_image_unscaled = global_best_image * self.kspace_scale
-        show_and_save_image(global_best_image_unscaled[0], 'reconstructed_image', self.params.results_folder)
+        show_and_save_image(
+            global_best_image_unscaled[0],
+            'reconstructed_image',
+            self.params.results_folder,
+            flip_for_display=getattr(
+                self.params,
+                "flip_for_display",
+                self.params.data_type in {"real-world", "raw-data"},
+            ),
+        )
         torch.save(global_best_motion, f"{self.params.results_folder}motion_model.pt")
         self._save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0])
 

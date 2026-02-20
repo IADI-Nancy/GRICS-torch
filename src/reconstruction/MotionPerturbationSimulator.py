@@ -50,10 +50,10 @@ class MotionPerturbationSimulator:
 
     def forward(self, MotionModelPerturbation):
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
+        N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
 
         if self.motionOperator.motion_type == "rigid":
-            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_mot_states)
+            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_motion_states)
         else:
             MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
             motion_signal = torch.as_tensor(
@@ -67,7 +67,7 @@ class MotionPerturbationSimulator:
                                      device=self.device)
 
         # ---- Loop over motion states ----
-        for motion_state in range(N_mot_states):
+        for motion_state in range(N_motion_states):
               
             MotionOp = self.motionOperator.get_sparse_operator(motion_state)
 
@@ -116,16 +116,16 @@ class MotionPerturbationSimulator:
         Input:
             ResidualKspace: flattened k-space residual, shape [Nsamples*Ncoils]
         Output:
-            MotionModelAdjoint: shape [2, N_mot_states]
+            MotionModelAdjoint: shape [2, N_motion_states]
         """
 
         Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
-        N_mot_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_mot_states]
+        N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
 
         ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
 
         if self.motionOperator.motion_type == "rigid":
-            MotionModelPerturbation = torch.zeros((self.Nalpha, N_mot_states),
+            MotionModelPerturbation = torch.zeros((self.Nalpha, N_motion_states),
                                             dtype=torch.complex128,
                                             device=self.device)
         else:
@@ -138,7 +138,7 @@ class MotionPerturbationSimulator:
                 dtype=MotionModelPerturbation.dtype,
             )
 
-        for motion_state in range(N_mot_states):
+        for motion_state in range(N_motion_states):
             
             MotionOp     = self.motionOperator.get_sparse_operator(motion_state)
             
