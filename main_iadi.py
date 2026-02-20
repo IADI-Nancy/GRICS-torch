@@ -1,14 +1,14 @@
 import time
 
-from src.config.runtime_config import load_config
+from src.runtime.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.show_and_save_image import show_and_save_image
-from src.utils.runtime_setup import initialize_runtime
+from src.runtime.runtime_setup import initialize_runtime
 
 params = load_config(
     data_type="fastMRI",
-    reconstruction_config="config/reconstruction/rigid_fast.toml",
+    reconstruction_config="config/reconstruction/rigid_high_quality.toml",
     sampling_config="config/sampling_simulation/interleaved.toml",
     motion_simulation_config="config/motion_simulation/discrete_rigid.toml",
 )

@@ -8,7 +8,7 @@ os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
-from src.config.runtime_config import load_config
+from src.runtime.runtime_config import load_config
 
 
 def _complex_randn(shape, device, dtype=torch.complex128):

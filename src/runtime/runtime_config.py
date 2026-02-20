@@ -41,6 +41,7 @@ _NONRIGID_MOTION_KEYS = {
 _CODE_DEFAULTS = {
     "seed": 1,
     "use_scaled_motion_update": False,
+    "espirit_max_iter": 100,
 }
 
 
@@ -156,6 +157,12 @@ def load_config(
         _drop_keys(cfg, {"kspace_sampling_type", "NshotsPerNex", "Nex", "Nshots"})
         sampling_from_data = True
 
+    if data_type != "real-world" and sampling_from_data:
+        raise ValueError(
+            "Sampling configuration is required when data_type is not 'real-world'. "
+            "Provide sampling_config or kspace_sampling_type (+ Nex/NshotsPerNex)."
+        )
+
     motion_simulation_type_final = cfg.get("motion_simulation_type")
     if motion_simulation_type_final is None and sampling_from_data:
         motion_simulation_type_final = "as-it-is"
@@ -163,10 +170,11 @@ def load_config(
         motion_simulation_type_final = "no-motion"
     cfg["motion_simulation_type"] = motion_simulation_type_final
 
-    if data_type in {"shepp-logan", "fastMRI"} and "kspace_sampling_type" not in cfg:
-        raise ValueError(
-            "kspace_sampling_type is required for shepp-logan/fastMRI when no sampling_config is provided."
-        )
+    if "kspace_sampling_type" in cfg:
+        if "NshotsPerNex" not in cfg or "Nex" not in cfg:
+            raise ValueError(
+                "NshotsPerNex and Nex are required when kspace_sampling_type is specified."
+            )
 
     if cfg["motion_simulation_type"] in {"as-it-is", "no-motion"}:
         _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)

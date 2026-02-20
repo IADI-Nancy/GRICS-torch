@@ -21,4 +21,5 @@ data/
 debug_outputs/
 logs/
 results/
+tests/artifacts/
 bart-*

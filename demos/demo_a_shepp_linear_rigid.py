@@ -1,17 +1,21 @@
 import time
+import sys
+from pathlib import Path
 
-from src.config.runtime_config import load_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.runtime.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.show_and_save_image import show_and_save_image
-from src.utils.runtime_setup import initialize_runtime
+from src.runtime.runtime_setup import initialize_runtime
 
 
 def main():
     params = load_config(
         data_type="shepp-logan",
-        reconstruction_config="config/reconstruction/rigid_fast.toml",
         shepp_logan_config="config/shepp_logan.toml",
+        reconstruction_config="config/reconstruction/rigid_fast.toml",
         sampling_config="config/sampling_simulation/linear.toml",
         motion_simulation_config="config/motion_simulation/rigid.toml",
     )

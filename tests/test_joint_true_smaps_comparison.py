@@ -7,7 +7,7 @@ import torch
 os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.runtime_config import load_config
+from src.runtime.runtime_config import load_config
 
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor

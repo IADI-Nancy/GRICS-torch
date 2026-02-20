@@ -33,16 +33,15 @@ class DataLoader:
         self.kspace_scale = 1.0
         self.filename = filename
         self.slice_idx = slice_idx
+
+        if self.params.data_type != "shepp-logan" and self.filename is None:
+            raise ValueError("filename is required when data_type is not 'shepp-logan'.")
         
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
-            if self.filename is None:
-                raise ValueError("filename must be provided for data_type='fastMRI'.")
             self.load_fastMRI_data(self.filename)
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
-            if self.filename is None:
-                raise ValueError("filename must be provided for data_type='real-world'.")
             self.load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
             if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
@@ -281,6 +280,7 @@ class DataLoader:
     def calc_espirit_maps(self):
         acs=self.params.acs
         kernel_width=self.params.kernel_width
+        espirit_max_iter = getattr(self.params, "espirit_max_iter", 100)
         sp_device=self.sp_device
         kspace = self.kspace
         device = kspace.device             # torch device of input
@@ -307,6 +307,7 @@ class DataLoader:
                 maps_cp = spmri.app.EspiritCalib(
                     kspace_cp, calib_width=acs,
                     kernel_width=kernel_width,
+                    max_iter=espirit_max_iter,
                     device=sp_device
                 ).run()
                 maps_cp = maps_cp.astype(cp.complex128, copy=False)
@@ -319,6 +320,7 @@ class DataLoader:
                 maps_np = spmri.app.EspiritCalib(
                     kspace_np, calib_width=acs,
                     kernel_width=kernel_width,
+                    max_iter=espirit_max_iter,
                     device=sp_device
                 ).run()
                 maps_np = maps_np.astype(np.complex128, copy=False)
