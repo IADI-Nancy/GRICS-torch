@@ -16,6 +16,7 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.utils.show_and_save_image import show_and_save_image
+from src.utils.save_clustered_motion_plots import compute_motion_y_limits
 
 
 class DataLoader:
@@ -34,6 +35,7 @@ class DataLoader:
         self.kspace_scale = 1.0
         self.filename = filename
         self.slice_idx = slice_idx
+        self.motion_plot_context = None
         self.recalculate_n_motion_states_from_navigator = recalculate_n_motion_states_from_navigator
 
         if (
@@ -119,7 +121,14 @@ class DataLoader:
                     self.alpha_maps_true = motionSimulator.alpha_maps
 
             motion_curve, tx, ty, phi = motionSimulator.get_motion_information()
-            self.binned_indices, self.motion_signal = MotionBinner.bin_motion(
+            y_limits = compute_motion_y_limits(motion_curve, tx=tx, ty=ty, phi=phi)
+            (
+                self.binned_indices,
+                self.motion_signal,
+                self.motion_labels,
+                self.ky_idx_chronological,
+                self.nex_idx_chronological,
+            ) = MotionBinner.bin_motion(
                 motion_curve,
                 self.ky_idx,
                 self.nex_idx,
@@ -128,7 +137,18 @@ class DataLoader:
                 tx=tx,
                 ty=ty,
                 phi=phi,
+                y_limits=y_limits,
+                return_debug_data=True,
             )
+            self.motion_plot_context = {
+                "motion_curve": motion_curve,
+                "labels": self.motion_labels,
+                "ky_idx": self.ky_idx_chronological,
+                "nex_idx": self.nex_idx_chronological,
+                "resolution_levels": getattr(self.params, "ResolutionLevels", None),
+                "data_type": getattr(self.params, "data_type", None),
+                "y_limits": y_limits,
+            }
         
         self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
             self.binned_indices,  # [Nex][Nmotion]
@@ -249,9 +269,27 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(
+        y_limits = compute_motion_y_limits(motion_data)
+        (
+            self.ky_per_motion,
+            self.motion_signal,
+            self.motion_labels,
+            self.ky_idx_chronological,
+            self.nex_idx_chronological,
+        ) = MotionBinner.bin_motion(
             motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params
+            , y_limits=y_limits
+            , return_debug_data=True
         )
+        self.motion_plot_context = {
+            "motion_curve": motion_data,
+            "labels": self.motion_labels,
+            "ky_idx": self.ky_idx_chronological,
+            "nex_idx": self.nex_idx_chronological,
+            "resolution_levels": getattr(self.params, "ResolutionLevels", None),
+            "data_type": getattr(self.params, "data_type", None),
+            "y_limits": y_limits,
+        }
         self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
@@ -284,9 +322,27 @@ class DataLoader:
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
         motion_data = data['motion_data'][slice_idx, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
-        self.ky_per_motion, self.motion_signal = MotionBinner.bin_motion(
+        y_limits = compute_motion_y_limits(motion_data)
+        (
+            self.ky_per_motion,
+            self.motion_signal,
+            self.motion_labels,
+            self.ky_idx_chronological,
+            self.nex_idx_chronological,
+        ) = MotionBinner.bin_motion(
             motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params
+            , y_limits=y_limits
+            , return_debug_data=True
         )
+        self.motion_plot_context = {
+            "motion_curve": motion_data,
+            "labels": self.motion_labels,
+            "ky_idx": self.ky_idx_chronological,
+            "nex_idx": self.nex_idx_chronological,
+            "resolution_levels": getattr(self.params, "ResolutionLevels", None),
+            "data_type": getattr(self.params, "data_type", None),
+            "y_limits": y_limits,
+        }
         self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 

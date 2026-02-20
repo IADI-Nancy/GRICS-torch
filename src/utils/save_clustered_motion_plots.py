@@ -45,6 +45,27 @@ def _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels):
         ax.axvline(right, color=color, linestyle="--", linewidth=1.4, alpha=0.9)
 
 
+def compute_motion_y_limits(motion_curve, tx=None, ty=None, phi=None, pad_ratio=0.05):
+    vals = [torch.as_tensor(motion_curve).detach().flatten().cpu()]
+    if tx is not None:
+        vals.append(torch.as_tensor(tx).detach().flatten().cpu())
+    if ty is not None:
+        vals.append(torch.as_tensor(ty).detach().flatten().cpu())
+    if phi is not None:
+        vals.append(torch.as_tensor(phi).detach().flatten().cpu())
+
+    all_vals = torch.cat(vals) if vals else torch.tensor([0.0])
+    y_min = float(torch.min(all_vals).item())
+    y_max = float(torch.max(all_vals).item())
+    if not np.isfinite(y_min) or not np.isfinite(y_max):
+        return None
+    if abs(y_max - y_min) < 1e-12:
+        d = max(abs(y_max), 1.0) * 0.1
+        return (y_min - d, y_max + d)
+    pad = (y_max - y_min) * float(pad_ratio)
+    return (y_min - pad, y_max + pad)
+
+
 def save_clustered_motion_plots(
     motion_curve,
     labels,
@@ -57,6 +78,7 @@ def save_clustered_motion_plots(
     ty=None,
     phi=None,
     data_type=None,
+    y_limits=None,
 ):
     os.makedirs(output_folder, exist_ok=True)
 
@@ -131,6 +153,8 @@ def save_clustered_motion_plots(
     ax.set_xlabel("Time / acquisition order")
     ax.set_ylabel("Motion amplitude")
     ax.set_title("Chronological rigid parameter curves + clustered PC1 samples")
+    if y_limits is not None:
+        ax.set_ylim(y_limits[0], y_limits[1])
     ax.legend(title="Legend", loc="best")
     sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
     sm.set_array([])
@@ -157,6 +181,8 @@ def save_clustered_motion_plots(
     ax.set_xlabel("Line index (ky)")
     ax.set_ylabel("Motion amplitude")
     ax.set_title("Clustered PC1 motion samples vs ky")
+    if y_limits is not None:
+        ax.set_ylim(y_limits[0], y_limits[1])
     _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels)
     ax.legend(title="Legend", loc="best")
     sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)

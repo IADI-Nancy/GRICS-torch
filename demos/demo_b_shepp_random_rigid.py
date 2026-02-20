@@ -33,6 +33,7 @@ def main():
         motion_signal=data.motion_signal,
         params=params,
         kspace_scale=data.kspace_scale,
+        motion_plot_context=getattr(data, "motion_plot_context", None),
     )
     t0 = time.time()
     recon.run()

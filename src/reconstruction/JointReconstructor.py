@@ -11,6 +11,7 @@ from src.utils.show_and_save_image import show_and_save_image
 from src.utils.save_alpha_component_map import save_alpha_component_map
 from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
 from src.utils.save_residual_subplots import save_residual_subplots
+from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
 
 def test_J_singularity(motionSimulator):
     Nalpha = motionSimulator.Nalpha
@@ -58,7 +59,16 @@ def _format_cg_info(cg_info):
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0):
+    def __init__(
+        self,
+        KspaceData,
+        smaps,
+        SamplingIndices,
+        motion_signal,
+        params,
+        kspace_scale=1.0,
+        motion_plot_context=None,
+    ):
         Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
@@ -70,6 +80,7 @@ class JointReconstructor:
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
         self.motion_signal = motion_signal.to(self.device)
+        self.motion_plot_context = motion_plot_context or {}
         self._last_image_cg_info = None
         self._last_motion_cg_info = None
 
@@ -665,6 +676,40 @@ class JointReconstructor:
             os.path.join(self.params.results_folder, "final_motion_quiver.png"),
         )
 
+    def _save_final_rigid_motion_plots(self, motion_model):
+        if self.params.motion_type != "rigid":
+            return
+        if motion_model is None or motion_model.ndim != 2 or motion_model.shape[0] < 3:
+            return
+        motion_curve = self.motion_plot_context.get("motion_curve")
+        labels_in = self.motion_plot_context.get("labels")
+        ky_idx = self.motion_plot_context.get("ky_idx")
+        nex_idx = self.motion_plot_context.get("nex_idx")
+        if motion_curve is None or labels_in is None or ky_idx is None or nex_idx is None:
+            return
+
+        labels = labels_in.to(dtype=torch.long, device=motion_model.device)
+        tx = motion_model[0, labels]
+        ty = motion_model[1, labels]
+        phi = motion_model[2, labels]
+
+        save_clustered_motion_plots(
+            motion_curve=motion_curve,
+            labels=labels_in,
+            ky_idx=ky_idx,
+            nex_idx=nex_idx,
+            nbins=self.params.N_motion_states,
+            output_folder=self.params.results_folder,
+            resolution_levels=self.motion_plot_context.get(
+                "resolution_levels", getattr(self.params, "ResolutionLevels", None)
+            ),
+            tx=tx,
+            ty=ty,
+            phi=phi,
+            data_type=self.motion_plot_context.get("data_type", getattr(self.params, "data_type", None)),
+            y_limits=self.motion_plot_context.get("y_limits"),
+        )
+
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
     # ----------------------------------------------------------------------
@@ -836,7 +881,10 @@ class JointReconstructor:
                 self.params.data_type in {"real-world", "raw-data"},
             ),
         )
-        torch.save(global_best_motion, f"{self.params.results_folder}motion_model.pt")
+        if self.params.motion_type == "rigid":
+            self._save_final_rigid_motion_plots(global_best_motion)
+        else:
+            torch.save(global_best_motion, f"{self.params.results_folder}motion_model.pt")
         self._save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0])
 
         return global_best_image_unscaled, global_best_motion
