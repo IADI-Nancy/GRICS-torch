@@ -102,6 +102,7 @@ def clean_run_output_folders(params):
     _clean_folder_contents(params.debug_folder)
     _clean_folder_contents(params.logs_folder)
     _clean_folder_contents(params.results_folder)
+    _clean_folder_contents(params.input_data_folder)
 
 
 def install_runtime_safety_guards():

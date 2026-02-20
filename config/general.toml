@@ -5,6 +5,8 @@ debug_folder = "debug_outputs/"
 logs_folder = "logs/"
 # Folder for final outputs (images, motion model).
 results_folder = "results/"
+# Folder for saved input data artifacts (ground truth/distorted images, motion signals, etc.).
+input_data_folder = "input_data/"
 
 [runtime]
 # Enable debug visualizations and deterministic behavior where possible.
@@ -13,7 +15,7 @@ debug_flag = true
 seed = 1
 # Print logs.
 verbose = true
-# Clean debug/log/results folders before each run.
+# Clean debug/log/results/input_data folders before each run.
 clean_output_folders_before_run = true
 
 

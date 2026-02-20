@@ -1,9 +1,18 @@
 import os
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 
 
-def save_nonrigid_quiver_with_contours(alpha_x, alpha_y, image, title, out_path, flip_vertical=True):
+def save_nonrigid_quiver_with_contours(
+    alpha_x,
+    alpha_y,
+    image,
+    title,
+    out_path,
+    flip_vertical=True,
+    amp_vmax=None,
+):
     alpha_x = alpha_x.detach().cpu()
     alpha_y = alpha_y.detach().cpu()
     img = image.detach().cpu()
@@ -32,8 +41,13 @@ def save_nonrigid_quiver_with_contours(alpha_x, alpha_y, image, title, out_path,
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(img_np, cmap="gray", origin="upper", alpha=0.35)
-    q = ax.quiver(xx, yy, ux, uy, amp, cmap="bwr", angles="xy", scale_units="xy", scale=None)
+    ax.set_facecolor("white")
+    norm = None
+    if amp_vmax is not None:
+        norm = Normalize(vmin=0.0, vmax=float(amp_vmax))
+    q = ax.quiver(
+        xx, yy, ux, uy, amp, cmap="cividis_r", norm=norm, angles="xy", scale_units="xy", scale=None
+    )
     ax.contour(
         torch.arange(ny).cpu().numpy(),
         torch.arange(nx).cpu().numpy(),

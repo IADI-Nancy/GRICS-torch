@@ -73,13 +73,12 @@ class SamplingSimulator:
             ky_idx.append(torch.cat(ky_list, dim=0))
             nex_idx.append(torch.cat(nex_list, dim=0))
         
-            if self.params.debug_flag:
-                SamplingSimulator.visualize_ky_order(
-                    ky_per_shot[nex],
-                    Ny=self.Ny,
-                    folder=self.params.debug_folder,
-                    fname=f"ky_order_nex{nex+1}.png"
-                )
+            SamplingSimulator.visualize_ky_order(
+                ky_per_shot[nex],
+                Ny=self.Ny,
+                folder=getattr(self.params, "input_data_folder", self.params.debug_folder),
+                fname=f"ky_order_nex{nex+1}.png"
+            )
 
         return ky_idx, nex_idx, ky_per_shot
     

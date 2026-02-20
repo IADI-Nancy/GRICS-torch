@@ -640,6 +640,10 @@ class JointReconstructor:
 
         alpha_x = motion_model[0].detach().cpu()
         alpha_y = motion_model[1].detach().cpu()
+        scale = self.motion_plot_context.get("alpha_visual_scale", None)
+        alpha_abs_max_x = None if scale is None else scale.get("alpha_abs_max_x")
+        alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
+        amp_max = None if scale is None else scale.get("amp_max")
 
         if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
             components = (
@@ -648,32 +652,36 @@ class JointReconstructor:
                 ("final_alpha_x_imag", alpha_x.imag),
                 ("final_alpha_y_imag", alpha_y.imag),
             )
-            amp = torch.sqrt(alpha_x.real * alpha_x.real + alpha_y.real * alpha_y.real)
         else:
             components = (
                 ("final_alpha_x", alpha_x),
                 ("final_alpha_y", alpha_y),
             )
-            amp = torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)
 
         for name, comp in components:
+            if "alpha_x" in name:
+                abs_max = alpha_abs_max_x
+            elif "alpha_y" in name:
+                abs_max = alpha_abs_max_y
+            else:
+                abs_max = None
             save_alpha_component_map(
                 comp,
                 name,
                 os.path.join(self.params.results_folder, f"{name}.png"),
+                abs_max=abs_max,
             )
 
-        save_alpha_component_map(
-            amp,
-            "final_alpha_amplitude",
-            os.path.join(self.params.results_folder, "final_alpha_amplitude.png"),
-        )
         save_nonrigid_quiver_with_contours(
             alpha_x if not torch.is_complex(alpha_x) else alpha_x.real,
             alpha_y if not torch.is_complex(alpha_y) else alpha_y.real,
             reconstructed_image,
             "final_motion_quiver",
             os.path.join(self.params.results_folder, "final_motion_quiver.png"),
+            flip_vertical=getattr(
+                self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
+            ),
+            amp_vmax=amp_max,
         )
 
     def _save_final_rigid_motion_plots(self, motion_model):
@@ -883,8 +891,6 @@ class JointReconstructor:
         )
         if self.params.motion_type == "rigid":
             self._save_final_rigid_motion_plots(global_best_motion)
-        else:
-            torch.save(global_best_motion, f"{self.params.results_folder}motion_model.pt")
         self._save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0])
 
         return global_best_image_unscaled, global_best_motion

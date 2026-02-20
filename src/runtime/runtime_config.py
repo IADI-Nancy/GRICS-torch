@@ -93,6 +93,7 @@ def refresh_derived(params):
     os.makedirs(params.debug_folder, exist_ok=True)
     os.makedirs(params.logs_folder, exist_ok=True)
     os.makedirs(params.results_folder, exist_ok=True)
+    os.makedirs(params.input_data_folder, exist_ok=True)
 
     return params
 

@@ -62,22 +62,21 @@ class MotionBinner:
                 mask = nex_mask & (labels == b)
                 binned_indices[nex][b] = ky_idx[mask]
 
-        # ---- Debug plots ----
-        if params.debug_flag:
-            save_clustered_motion_plots(
-                motion_curve=motion_curve,
-                labels=labels,
-                ky_idx=ky_idx,
-                nex_idx=nex_idx,
-                nbins=Nbins,
-                output_folder=params.debug_folder,
-                resolution_levels=getattr(params, "ResolutionLevels", None),
-                tx=tx,
-                ty=ty,
-                phi=phi,
-                data_type=getattr(params, "data_type", None),
-                y_limits=y_limits,
-            )
+        # ---- Input data plots (always saved) ----
+        save_clustered_motion_plots(
+            motion_curve=motion_curve,
+            labels=labels,
+            ky_idx=ky_idx,
+            nex_idx=nex_idx,
+            nbins=Nbins,
+            output_folder=getattr(params, "input_data_folder", params.debug_folder),
+            resolution_levels=getattr(params, "ResolutionLevels", None),
+            tx=tx,
+            ty=ty,
+            phi=phi,
+            data_type=getattr(params, "data_type", None),
+            y_limits=y_limits,
+        )
 
         if return_debug_data:
             return binned_indices, centers.squeeze(1), labels, ky_idx, nex_idx
