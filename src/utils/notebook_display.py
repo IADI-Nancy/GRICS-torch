@@ -18,6 +18,15 @@ def _first_existing_path(*paths):
     return str(paths[0])
 
 
+def _first_existing_glob(folder, *patterns):
+    folder = Path(folder)
+    for pattern in patterns:
+        matches = sorted(folder.glob(pattern))
+        if matches:
+            return str(matches[0])
+    return str(folder / patterns[0])
+
+
 def display_image_row(image_paths, subtitles, title=None, figsize=None):
     present = []
     for path, subtitle in zip(image_paths, subtitles):
@@ -66,7 +75,6 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
     input_folder = Path(params.input_data_folder)
     results_folder = Path(params.results_folder)
 
-    recon_global_logs = sorted(logs_folder.glob("residual_recon_global_restart_*.png"))
     recon_logs = sorted(logs_folder.glob("residual_recon_restart_*.png"))
     motion_logs = sorted(logs_folder.glob("residual_motion_restart_*.png"))
     logs_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
@@ -77,14 +85,7 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
             title=None,
             figsize=logs_figsize,
         )
-    if recon_global_logs:
-        display_image_row(
-            [str(recon_global_logs[-1])],
-            [""],
-            title=None,
-            figsize=logs_figsize,
-        )
-    elif recon_logs:
+    if recon_logs:
         display_image_row(
             [str(recon_logs[-1])],
             [""],
@@ -97,12 +98,16 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
         str(results_folder / "reconstructed_image.png"),
     ]
     subtitles = ["Corrupted", "Corrected"]
+    images_figsize = None
     if has_ground_truth:
         image_paths.append(
             _first_existing_path(input_folder / "img_ground_truth.png", input_folder / "input_ground_truth.png")
         )
         subtitles.append("Ground truth")
-    display_image_row(image_paths, subtitles, title="Images")
+        images_figsize = (13.0, 4.8)
+    else:
+        images_figsize = (10.0, 4.8)
+    display_image_row(image_paths, subtitles, title="Images", figsize=images_figsize)
 
     if motion_type == "rigid":
         display_image_row(
@@ -112,6 +117,7 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
             ],
             ["Simulated / input motion (chronological)", "Reconstructed motion (chronological)"],
             title="Rigid Motion",
+            figsize=(images_figsize[0], 3.4),
         )
     elif motion_type == "non-rigid":
         display_image_row(
@@ -122,3 +128,26 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
             ["Simulated / input alpha quiver", "Reconstructed alpha quiver"],
             title="Non-rigid Motion",
         )
+
+
+def display_input_sampling_motion_panels(params, has_ground_truth=True, jupyter_notebook_flag=False):
+    if not jupyter_notebook_flag:
+        return
+
+    input_folder = Path(params.input_data_folder)
+    row_width = 13.0 if has_ground_truth else 10.0
+    sampling_path = _first_existing_glob(
+        input_folder,
+        "ky_order_nex*.png",
+        "ky_order_realworld_slice*.png",
+        "ky_order_rawdata_slice*.png",
+        "ky_sampling_order.png",
+    )
+    motion_vs_ky_path = str(input_folder / "clustered_motion_curve_sorted_ky.png")
+
+    display_image_row(
+        [sampling_path, motion_vs_ky_path],
+        ["Sampling order (ky)", "Motion curve in ky order"],
+        title="Sampling And Motion",
+        figsize=(row_width, 4.8),
+    )

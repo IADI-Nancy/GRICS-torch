@@ -5,6 +5,13 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
 
+def _add_mesh(ax):
+    # Add major+minor grid lines for easier reading of rigid motion curves.
+    ax.minorticks_on()
+    ax.grid(which="major", linestyle="-", linewidth=0.6, alpha=0.45)
+    ax.grid(which="minor", linestyle=":", linewidth=0.4, alpha=0.3)
+
+
 def _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels):
     if resolution_levels is None:
         return
@@ -155,6 +162,7 @@ def save_clustered_motion_plots(
     ax.set_title("Chronological rigid parameter curves + clustered PC1 samples")
     if y_limits is not None:
         ax.set_ylim(y_limits[0], y_limits[1])
+    _add_mesh(ax)
     ax.legend(title="Legend", loc="best")
     sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
     sm.set_array([])
@@ -179,11 +187,12 @@ def save_clustered_motion_plots(
             label=f"{sample_label_prefix} (rep {int(nex) + 1})",
         )
     ax.set_xlabel("Line index (ky)")
-    ax.set_ylabel("Motion amplitude")
+    ax.set_ylabel("Motion curve value")
     ax.set_title("Clustered PC1 motion samples vs ky")
     if y_limits is not None:
         ax.set_ylim(y_limits[0], y_limits[1])
     _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels)
+    _add_mesh(ax)
     ax.legend(title="Legend", loc="best")
     sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
     sm.set_array([])
