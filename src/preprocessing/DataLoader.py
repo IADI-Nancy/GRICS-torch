@@ -213,19 +213,25 @@ class DataLoader:
             self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
         )
 
-        if hasattr(self, "image_ground_truth") and self.image_ground_truth is not None:
+        if (
+            self._has_simulated_motion()
+            and hasattr(self, "image_ground_truth")
+            and self.image_ground_truth is not None
+        ):
             show_and_save_image(
                 self.image_ground_truth[0],
-                "input_ground_truth",
+                "img_ground_truth",
                 folder,
                 flip_for_display=flip_for_display,
+                jupyter_display=False,
             )
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
             show_and_save_image(
                 self.image_no_moco[0],
-                "input_distorted",
+                "img_corrupted",
                 folder,
                 flip_for_display=flip_for_display,
+                jupyter_display=False,
             )
 
         if (
@@ -264,6 +270,13 @@ class DataLoader:
                     flip_vertical=flip_for_display,
                     amp_vmax=amp_max,
                 )
+
+    def _has_simulated_motion(self):
+        return self.params.motion_simulation_type in {
+            "rigid",
+            "discrete-rigid",
+            "discrete-non-rigid",
+        }
 
 
     def load_fastMRI_data(self, path_to_mri_data):
@@ -472,7 +485,7 @@ class DataLoader:
                 ).run()
                 maps_cp = maps_cp.astype(cp.complex128, copy=False)
                 maps_cp = cp.ascontiguousarray(maps_cp)
-                maps_t = sp.to_pytorch(maps_cp)
+                maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
 
             # ---- CPU path ----
             else:

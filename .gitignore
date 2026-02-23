@@ -24,3 +24,9 @@ results/
 input_data/
 tests/artifacts/
 bart-*
+
+# Local dev/runtime environment files
+.env
+.jupyter_local/
+.vscode/*
+!.vscode/settings.json

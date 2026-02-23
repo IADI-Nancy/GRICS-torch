@@ -1,0 +1,10 @@
+{
+  "python.envFile": "${workspaceFolder}/.env",
+  "terminal.integrated.env.linux": {
+    "JUPYTER_CONFIG_DIR": "${workspaceFolder}/.jupyter_local/config",
+    "JUPYTER_DATA_DIR": "${workspaceFolder}/.jupyter_local/data",
+    "JUPYTER_RUNTIME_DIR": "${workspaceFolder}/.jupyter_local/runtime",
+    "IPYTHONDIR": "${workspaceFolder}/.jupyter_local",
+    "NUMBA_CACHE_DIR": "/tmp/numba_cache"
+  }
+}

@@ -11,7 +11,8 @@ COPY conda_environment.yml /tmp/conda_environment.yml
 # -------------------------------------------------------------------
 # Install system dependencies (pinned versions)
 # -------------------------------------------------------------------
-RUN apt update \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
+    && apt update \
     && apt install -y --no-install-recommends \
         wget=1.21.2-2ubuntu1.1 \
         unzip=6.0-26ubuntu3.2 \

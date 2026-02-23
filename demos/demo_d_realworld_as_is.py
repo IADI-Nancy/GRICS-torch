@@ -11,7 +11,6 @@ sys.path.insert(0, str(_REPO_ROOT))
 from src.runtime.runtime_config import load_config
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
-from src.utils.show_and_save_image import show_and_save_image
 from src.utils.notebook_display import display_run_panels
 from src.runtime.runtime_setup import initialize_runtime
 
@@ -40,21 +39,6 @@ def main():
         t_device=t_device,
         sp_device=sp_device,
         filename="data/breast_motion_data.h5",
-    )
-    print("[Demo D] Saving debug images...")
-    show_and_save_image(
-        data.image_ground_truth[0],
-        "img_ground_truth",
-        params.debug_folder,
-        flip_for_display=getattr(params, "flip_for_display", params.data_type in {"real-world", "raw-data"}),
-        jupyter_notebook_flag=params.jupyter_notebook_flag,
-    )
-    show_and_save_image(
-        data.image_no_moco[0],
-        "img_corrupted",
-        params.debug_folder,
-        flip_for_display=getattr(params, "flip_for_display", params.data_type in {"real-world", "raw-data"}),
-        jupyter_notebook_flag=params.jupyter_notebook_flag,
     )
 
     print("[Demo D] Starting reconstruction...")

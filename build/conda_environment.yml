@@ -8,5 +8,8 @@ dependencies:
   - sigpy=0.1.27
   - matplotlib=3.10.8
   - cupy=13.6.0
+  - cudnn
   - ipykernel=7.1.0
-
+  - ipywidgets
+  - jupyterlab_widgets
+  - widgetsnbextension

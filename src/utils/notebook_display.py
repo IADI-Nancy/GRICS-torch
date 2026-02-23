@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
@@ -10,26 +11,50 @@ def _load_image(path):
         return None
     return mpimg.imread(p)
 
+def _first_existing_path(*paths):
+    for path in paths:
+        if Path(path).exists():
+            return str(path)
+    return str(paths[0])
 
-def display_image_row(image_paths, subtitles, title=None, figsize=(10, 3)):
-    n = len(image_paths)
-    fig, axes = plt.subplots(1, n, figsize=figsize)
+
+def display_image_row(image_paths, subtitles, title=None, figsize=None):
+    present = []
+    for path, subtitle in zip(image_paths, subtitles):
+        img = _load_image(path)
+        if img is not None:
+            present.append((img, subtitle))
+
+    if not present:
+        return
+
+    n = len(present)
+    if figsize is None:
+        if n == 1:
+            figsize = (7.0, 7.0)
+        elif n == 2:
+            figsize = (10.0, 4.8)
+        else:
+            figsize = (13.0, 4.8)
+
+    fig, axes = plt.subplots(1, n, figsize=figsize, gridspec_kw={"wspace": 0.02})
     if n == 1:
         axes = [axes]
 
-    for ax, path, subtitle in zip(axes, image_paths, subtitles):
-        img = _load_image(path)
-        if img is None:
-            ax.axis("off")
-            ax.set_title(f"{subtitle}\n(missing)")
-            continue
+    for ax, (img, subtitle) in zip(axes, present):
         ax.imshow(img)
         ax.axis("off")
-        ax.set_title(subtitle, fontsize=9)
+        ax.set_title(subtitle, fontsize=10, pad=4)
 
     if title:
-        fig.suptitle(title, fontsize=11)
-    fig.tight_layout()
+        fig.suptitle(title, fontsize=11, y=0.985)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"This figure includes Axes that are not compatible with tight_layout.*",
+            category=UserWarning,
+        )
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965), pad=0.15)
     plt.show()
 
 
@@ -43,23 +68,33 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
 
     recon_logs = sorted(logs_folder.glob("residual_recon_restart_*.png"))
     motion_logs = sorted(logs_folder.glob("residual_motion_restart_*.png"))
-    if recon_logs and motion_logs:
+    logs_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
+    if motion_logs:
         display_image_row(
-            [str(recon_logs[-1]), str(motion_logs[-1])],
-            ["Reconstruction residuals", "Motion residuals"],
-            title="Logs",
-            figsize=(8, 3),
+            [str(motion_logs[-1])],
+            [""],
+            title=None,
+            figsize=logs_figsize,
+        )
+    if recon_logs:
+        display_image_row(
+            [str(recon_logs[-1])],
+            [""],
+            title=None,
+            figsize=logs_figsize,
         )
 
     image_paths = [
-        str(input_folder / "input_distorted.png"),
+        _first_existing_path(input_folder / "img_corrupted.png", input_folder / "input_distorted.png"),
         str(results_folder / "reconstructed_image.png"),
     ]
     subtitles = ["Corrupted", "Corrected"]
     if has_ground_truth:
-        image_paths.append(str(input_folder / "input_ground_truth.png"))
+        image_paths.append(
+            _first_existing_path(input_folder / "img_ground_truth.png", input_folder / "input_ground_truth.png")
+        )
         subtitles.append("Ground truth")
-    display_image_row(image_paths, subtitles, title="Images", figsize=(10, 3))
+    display_image_row(image_paths, subtitles, title="Images")
 
     if motion_type == "rigid":
         display_image_row(
@@ -69,7 +104,6 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
             ],
             ["Simulated / input motion (chronological)", "Reconstructed motion (chronological)"],
             title="Rigid Motion",
-            figsize=(10, 3),
         )
     elif motion_type == "non-rigid":
         display_image_row(
@@ -79,5 +113,4 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
             ],
             ["Simulated / input alpha quiver", "Reconstructed alpha quiver"],
             title="Non-rigid Motion",
-            figsize=(10, 3),
         )
