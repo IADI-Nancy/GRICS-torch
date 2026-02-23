@@ -14,12 +14,10 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.notebook_display import display_run_panels
 from src.runtime.runtime_setup import initialize_runtime
 
-
 jupyter_notebook_flag = False
 
-
 def main():
-    print("[Demo D] Loading config...")
+    print("[Demo E] Loading config...")
     params = load_config(
         data_type="real-world",
         reconstruction_config="config/reconstruction/nonrigid_fast.toml",
@@ -30,10 +28,10 @@ def main():
         },
     )
 
-    print("[Demo D] Initializing runtime...")
+    print("[Demo E] Initializing runtime...")
     sp_device, t_device = initialize_runtime(params)
 
-    print("[Demo D] Loading data and building operators...")
+    print("[Demo E] Loading data and building operators...")
     data = DataLoader(
         params=params,
         t_device=t_device,
@@ -41,7 +39,7 @@ def main():
         filename="data/breast_motion_data.h5",
     )
 
-    print("[Demo D] Starting reconstruction...")
+    print("[Demo E] Starting reconstruction...")
     recon = JointReconstructor(
         data.kspace,
         data.smaps,
@@ -57,7 +55,10 @@ def main():
     display_run_panels(
         params,
         motion_type=params.motion_type,
-        has_ground_truth=(params.data_type == "shepp-logan"),
+        has_ground_truth=(
+            getattr(params, "motion_simulation_type", None)
+            not in {"as-it-is", "no-motion"}
+        ),
         jupyter_notebook_flag=params.jupyter_notebook_flag,
     )
 

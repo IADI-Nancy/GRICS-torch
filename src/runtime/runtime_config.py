@@ -36,12 +36,16 @@ _RIGID_MOTION_KEYS = {
 _NONRIGID_MOTION_KEYS = {
     "nonrigid_motion_amplitude",
     "displacementfield_size",
+    "nonrigid_resp_cycles_min",
+    "nonrigid_resp_cycles_max",
 }
 
 _CODE_DEFAULTS = {
     "seed": 1,
     "use_scaled_motion_update": False,
     "espirit_max_iter": 100,
+    "nonrigid_resp_cycles_min": 2.0,
+    "nonrigid_resp_cycles_max": 5.0,
 }
 
 
@@ -82,6 +86,9 @@ def refresh_derived(params):
         if not hasattr(params, "num_motion_events"):
             raise ValueError("Missing 'num_motion_events' for rigid simulation.")
         params.N_motion_states = int(params.num_motion_events) + 1
+    elif params.motion_simulation_type == "non-rigid":
+        # For realistic non-rigid simulation, keep user-defined reconstruction bins.
+        params.N_motion_states = manual_states
     elif params.motion_simulation_type in ["no-motion", "as-it-is"]:
         # No simulated motion: keep manual reconstruction value.
         params.N_motion_states = manual_states
@@ -194,7 +201,7 @@ def load_config(
         _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
     elif cfg["motion_simulation_type"] in {"rigid", "discrete-rigid"}:
         _drop_keys(cfg, _NONRIGID_MOTION_KEYS)
-    elif cfg["motion_simulation_type"] == "discrete-non-rigid":
+    elif cfg["motion_simulation_type"] in {"discrete-non-rigid", "non-rigid"}:
         _drop_keys(cfg, _RIGID_MOTION_KEYS)
     else:
         raise ValueError(f"Unsupported motion_simulation_type: {cfg['motion_simulation_type']}")

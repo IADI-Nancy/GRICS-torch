@@ -173,8 +173,20 @@ def save_clustered_motion_plots(
     fig.savefig(os.path.join(output_folder, "clustered_motion_curves_chronological.png"))
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    for nex in torch.unique(nex_cpu):
+    unique_nex = torch.unique(nex_cpu)
+    n_nex = int(unique_nex.numel())
+    fig, axes = plt.subplots(
+        n_nex,
+        1,
+        figsize=(10, max(3.6, 2.9 * n_nex)),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
+    )
+    if n_nex == 1:
+        axes = [axes]
+
+    for ax, nex in zip(axes, unique_nex):
         mask = nex_cpu == nex
         ax.scatter(
             ky_idx_cpu[mask],
@@ -186,19 +198,26 @@ def save_clustered_motion_plots(
             marker=markers[int(nex) % len(markers)],
             label=f"{sample_label_prefix} (rep {int(nex) + 1})",
         )
-    ax.set_xlabel("Line index (ky)")
-    ax.set_ylabel("Motion curve value")
-    ax.set_title("Clustered PC1 motion samples vs ky")
-    if y_limits is not None:
-        ax.set_ylim(y_limits[0], y_limits[1])
-    _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels)
-    _add_mesh(ax)
-    ax.legend(title="Legend", loc="best")
+        ax.set_ylabel("Motion curve value")
+        ax.set_title(f"Clustered PC1 motion samples vs ky (rep {int(nex) + 1})")
+        if y_limits is not None:
+            ax.set_ylim(y_limits[0], y_limits[1])
+        _add_resolution_center_lines(ax, ky_idx_cpu[mask], resolution_levels)
+        _add_mesh(ax)
+        ax.legend(title="Legend", loc="best")
+
+    axes[-1].set_xlabel("Line index (ky)")
+
     sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax)
+    cbar = fig.colorbar(
+        sm,
+        ax=axes,
+        location="right",
+        fraction=0.03,
+        pad=0.02,
+    )
     cbar.set_label("Motion bin")
     cbar.set_ticks(range(nbins))
-    fig.tight_layout()
     fig.savefig(os.path.join(output_folder, "clustered_motion_curve_sorted_ky.png"))
     plt.close(fig)

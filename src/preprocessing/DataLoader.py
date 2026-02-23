@@ -116,6 +116,8 @@ class DataLoader:
                     motionSimulator.simulate_realistic_rigid_motion()
                 elif self.params.motion_simulation_type == 'discrete-non-rigid':
                     motionSimulator.simulate_discrete_non_rigid_motion()
+                elif self.params.motion_simulation_type == 'non-rigid':
+                    motionSimulator.simulate_realistic_non_rigid_motion()
                 else:
                     raise ValueError("Unknown motion_simulation_type")
                 self.kspace = motionSimulator.get_corrupted_kspace()
@@ -154,7 +156,7 @@ class DataLoader:
                 "alpha_visual_scale": None,
             }
             if (
-                self.params.motion_simulation_type == "discrete-non-rigid"
+                self.params.motion_simulation_type in {"discrete-non-rigid", "non-rigid"}
                 and hasattr(self, "alpha_maps_true")
                 and self.alpha_maps_true is not None
             ):
@@ -237,7 +239,7 @@ class DataLoader:
         if (
             hasattr(self, "alpha_maps_true")
             and self.alpha_maps_true is not None
-            and self.params.motion_simulation_type == "discrete-non-rigid"
+            and self.params.motion_simulation_type in {"discrete-non-rigid", "non-rigid"}
         ):
             alpha = self.alpha_maps_true
             if alpha.ndim == 3 and alpha.shape[0] >= 2:
@@ -274,6 +276,7 @@ class DataLoader:
     def _has_simulated_motion(self):
         return self.params.motion_simulation_type in {
             "rigid",
+            "non-rigid",
             "discrete-rigid",
             "discrete-non-rigid",
         }
@@ -513,7 +516,7 @@ class DataLoader:
         # This consistency check is meaningful only for simulated non-rigid data.
         if self.params.motion_type != "non-rigid":
             return
-        if self.params.motion_simulation_type != "discrete-non-rigid":
+        if self.params.motion_simulation_type not in {"discrete-non-rigid", "non-rigid"}:
             return
         if not hasattr(motionSimulator, "alpha_maps"):
             return

@@ -92,9 +92,10 @@ class MotionSimulator:
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
 
-        # 1) Generate random motion event times
+        # 1) Generate random motion event times over the full acquisition.
+        total_lines = self.Ny * self.params.Nex
         event_times = torch.sort(
-            torch.randint(0, self.Ny*self.params.Nex, (self.params.num_motion_events,), device=self.t_device)
+            torch.randint(0, total_lines, (self.params.num_motion_events,), device=self.t_device)
         ).values
 
         # Motion transition sharpness (smaller tau -> faster motion)
@@ -278,6 +279,9 @@ class MotionSimulator:
 
         self.apply_motion(alpha, centers)
 
+
+    
+
     def create_discrete_non_rigid_alpha_fields(self):
         # MATLAB-equivalent coordinates and Gaussian maps for motion_type_flag == 2:
         # [X,Y] = meshgrid(1:N,1:N), sigma = N/4
@@ -358,6 +362,76 @@ class MotionSimulator:
         self.ty_mot_state = ty_vec
         self.phi_mot_state = phi_vec
         self.expand_motion_to_ky(ky_per_mot_state_idx)
+
+    def create_realistic_non_rigid_motion_curve(self):
+        """
+        Create a respiratory-like sinusoidal motion curve with unit amplitude.
+        Frequency (cycles per image/Nex block) and phase are randomized.
+        """
+        n_lines_total = self.Ny * self.params.Nex
+        line_idx = torch.arange(n_lines_total, device=self.t_device, dtype=torch.float64)
+
+        cycles_min = float(getattr(self.params, "nonrigid_resp_cycles_min", 2.0))
+        cycles_max = float(getattr(self.params, "nonrigid_resp_cycles_max", 5.0))
+        if cycles_min <= 0 or cycles_max <= 0:
+            raise ValueError("nonrigid_resp_cycles_min/max must be > 0.")
+        if cycles_min > cycles_max:
+            cycles_min, cycles_max = cycles_max, cycles_min
+
+        cycles = cycles_min + (cycles_max - cycles_min) * torch.rand(1, device=self.t_device).item()
+        phase = 2.0 * np.pi * torch.rand(1, device=self.t_device).item()
+        # Angular increment per acquired ky line: cycles are expressed per image.
+        # This keeps the same respiration frequency per image when Nex changes,
+        # while remaining continuous across Nex boundaries.
+        omega = 2.0 * np.pi * cycles / max(float(self.Ny), 1.0)
+        signal = torch.sin(omega * line_idx + phase)
+
+        # Numerical guard for exact unit-amplitude scaling.
+        signal = signal / torch.clamp(torch.max(torch.abs(signal)), min=1e-12)
+        return signal
+
+    def simulate_realistic_non_rigid_motion(self):
+        print("Simulating realistic non-rigid motion fields...")
+
+        # Each acquired ky line is treated as its own temporal motion sample.
+        ky_per_mot_state_idx = [ky_line.unsqueeze(-1) for ky_line in self.ky_idx]
+        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
+            ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device
+        )
+        self.TotalKspaceSamples = self.Ny * self.Nx
+
+        alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
+        amp = float(getattr(self.params, "nonrigid_motion_amplitude", 1.0))
+        alpha_maps = alpha_maps * amp
+        self.alpha_maps = alpha_maps
+
+        self.navigator = self.create_realistic_non_rigid_motion_curve()
+        self.apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
+
+        # Keep compatibility with downstream plotting/debug interfaces.
+        self.tx = self.navigator.clone()
+        self.ty = torch.zeros_like(self.navigator)
+        self.phi = torch.zeros_like(self.navigator)
+
+        if self.params.debug_flag:
+            os.makedirs(self.params.debug_folder, exist_ok=True)
+            save_alpha_component_map(
+                alpha_x * amp,
+                "simulated_alpha_x",
+                os.path.join(self.params.debug_folder, "simulated_alpha_x.png"),
+            )
+            save_alpha_component_map(
+                alpha_y * amp,
+                "simulated_alpha_y",
+                os.path.join(self.params.debug_folder, "simulated_alpha_y.png"),
+            )
+            save_nonrigid_quiver_with_contours(
+                alpha_x * amp,
+                alpha_y * amp,
+                self.image[0],
+                "simulated_motion_quiver",
+                os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
+            )
 
 
 

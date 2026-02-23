@@ -27,6 +27,13 @@ def _first_existing_glob(folder, *patterns):
     return str(folder / patterns[0])
 
 
+def _infer_has_ground_truth(params):
+    motion_sim_type = getattr(params, "motion_simulation_type", None)
+    if motion_sim_type is None:
+        return getattr(params, "data_type", None) == "shepp-logan"
+    return motion_sim_type not in {"as-it-is", "no-motion"}
+
+
 def display_image_row(image_paths, subtitles, title=None, figsize=None):
     present = []
     for path, subtitle in zip(image_paths, subtitles):
@@ -67,9 +74,11 @@ def display_image_row(image_paths, subtitles, title=None, figsize=None):
     plt.show()
 
 
-def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_notebook_flag=False):
+def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_notebook_flag=False):
     if not jupyter_notebook_flag:
         return
+    if has_ground_truth is None:
+        has_ground_truth = _infer_has_ground_truth(params)
 
     logs_folder = Path(params.logs_folder)
     input_folder = Path(params.input_data_folder)
@@ -125,14 +134,16 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
                 str(input_folder / "simulated_motion_quiver_input.png"),
                 str(results_folder / "final_motion_quiver.png"),
             ],
-            ["Simulated / input alpha quiver", "Reconstructed alpha quiver"],
-            title="Non-rigid Motion",
+            ["", ""],
+            title="Non-rigid motion model",
         )
 
 
-def display_input_sampling_motion_panels(params, has_ground_truth=True, jupyter_notebook_flag=False):
+def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_notebook_flag=False):
     if not jupyter_notebook_flag:
         return
+    if has_ground_truth is None:
+        has_ground_truth = _infer_has_ground_truth(params)
 
     input_folder = Path(params.input_data_folder)
     row_width = 13.0 if has_ground_truth else 10.0

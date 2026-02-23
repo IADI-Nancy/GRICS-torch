@@ -50,7 +50,10 @@ def main():
     display_run_panels(
         params,
         motion_type=params.motion_type,
-        has_ground_truth=(params.data_type == "shepp-logan"),
+        has_ground_truth=(
+            getattr(params, "motion_simulation_type", None)
+            not in {"as-it-is", "no-motion"}
+        ),
         jupyter_notebook_flag=params.jupyter_notebook_flag,
     )
 

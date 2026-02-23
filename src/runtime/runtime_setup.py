@@ -36,50 +36,6 @@ def cleanup_runtime():
             pass
 
 
-def cleanup_notebook_namespace(
-    namespace,
-    aggressive=False,
-    shutdown_kernel=False,
-    restart_kernel=False,
-):
-    """
-    Remove heavy objects from a notebook global namespace, then run runtime cleanup.
-    """
-    heavy_names = {
-        "data",
-        "recon",
-        "jointReconstructor",
-        "joint_reconstructor",
-        "kspace",
-        "kspace_corrupted",
-        "image_corrupted",
-        "image_ground_truth",
-        "motion_model",
-        "result",
-    }
-    for name in heavy_names:
-        namespace.pop(name, None)
-
-    if aggressive:
-        for name, value in list(namespace.items()):
-            if name.startswith("_"):
-                continue
-            if isinstance(value, torch.Tensor):
-                namespace.pop(name, None)
-
-    cleanup_runtime()
-
-    if shutdown_kernel:
-        try:
-            from IPython import get_ipython
-
-            ip = get_ipython()
-            if ip is not None and getattr(ip, "kernel", None) is not None:
-                ip.kernel.do_shutdown(restart=restart_kernel)
-        except Exception:
-            pass
-
-
 def _signal_cleanup_handler(signum, frame):
     cleanup_runtime()
     raise SystemExit(128 + signum)

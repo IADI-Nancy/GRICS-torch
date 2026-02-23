@@ -19,12 +19,13 @@ jupyter_notebook_flag = False
 
 
 def main():
+    print("[Demo D] Loading config...")
     params = load_config(
         data_type="shepp-logan",
         reconstruction_config="config/reconstruction/nonrigid_fast.toml",
         shepp_logan_config="config/shepp_logan.toml",
-        sampling_config="config/sampling_simulation/interleaved.toml",
-        motion_simulation_config="config/motion_simulation/discrete_nonrigid.toml",
+        sampling_config="config/sampling_simulation/linear.toml",
+        motion_simulation_config="config/motion_simulation/nonrigid.toml",
         overrides={
             "jupyter_notebook_flag": jupyter_notebook_flag,
             "print_to_console": not jupyter_notebook_flag,
@@ -32,10 +33,13 @@ def main():
         },
     )
 
+    print("[Demo D] Initializing runtime...")
     sp_device, t_device = initialize_runtime(params)
 
+    print("[Demo D] Loading data and building operators...")
     data = DataLoader(params=params, t_device=t_device, sp_device=sp_device)
 
+    print("[Demo D] Starting reconstruction...")
     recon = JointReconstructor(
         data.kspace,
         data.smaps,
