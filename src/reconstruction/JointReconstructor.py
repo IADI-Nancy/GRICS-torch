@@ -2,6 +2,9 @@ import torch
 import torch.nn.functional as F
 import os
 import time
+from contextlib import nullcontext
+
+from tqdm.auto import tqdm
 
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.MotionOperator import MotionOperator
@@ -95,6 +98,7 @@ class JointReconstructor:
             for ms in range(len(SamplingIndices[0]))
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
+        self._full_kspace_norm = torch.linalg.norm(self.Data_full["KspaceData"].flatten()).item()
 
     def _console(self, message):
         if getattr(self.params, "print_to_console", True):
@@ -221,6 +225,45 @@ class JointReconstructor:
             mot_res[0] = mot_res[0] * Data_res["Nx"] / Data_prev["Nx"]
             mot_res[1] = mot_res[1] * Data_res["Ny"] / Data_prev["Ny"]
             Data_res["MotionModel"] = mot_res
+
+    def _project_to_full_resolution(self, Data_res):
+        nx_full, ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
+        nx_res, ny_res = Data_res["Nx"], Data_res["Ny"]
+
+        if nx_res == nx_full and ny_res == ny_full:
+            image_full = Data_res["ReconstructedImage"]
+            motion_full = Data_res["MotionModel"]
+        else:
+            image_full = self.resize_img_2D(Data_res["ReconstructedImage"], (nx_full, ny_full))
+            mot_res = Data_res["MotionModel"]
+            if self.params.motion_type == "rigid":
+                motion_full = torch.zeros_like(mot_res)
+                motion_full[0, :] = mot_res[0, :] * nx_full / nx_res
+                motion_full[1, :] = mot_res[1, :] * ny_full / ny_res
+                motion_full[2, :] = mot_res[2, :]
+            else:
+                motion_full = self.resize_img_2D(mot_res, (nx_full, ny_full))
+                motion_full[0] = motion_full[0] * nx_full / nx_res
+                motion_full[1] = motion_full[1] * ny_full / ny_res
+
+        return {
+            "Nx": nx_full,
+            "Ny": ny_full,
+            "SensitivityMaps": self.Data_full["SensitivityMaps"],
+            "SamplingIndices": self.Data_full["SamplingIndices"],
+            "KspaceData": self.Data_full["KspaceData"],
+            "Nsamples": self.Data_full["Nsamples"],
+            "ReconstructedImage": image_full,
+            "MotionModel": motion_full,
+        }
+
+    def _compute_global_recon_relative_residual(self, Data_res):
+        data_eval = self._project_to_full_resolution(Data_res)
+        data_eval["MotionOperator"] = self.build_motion_operator(data_eval)
+        data_eval["E"] = self.build_encoding_operator(data_eval)
+        y_full = data_eval["E"].forward(data_eval["ReconstructedImage"].flatten())
+        residual_full = self.Data_full["KspaceData"].flatten() - y_full
+        return torch.linalg.norm(residual_full).item() / (self._full_kspace_norm + 1e-12)
 
     # ----------------------------------------------------------------------
     # Build Ux, Uy fields and Motion Operators
@@ -523,6 +566,7 @@ class JointReconstructor:
         return {
             "path": log_path,
             "recon_residuals_by_level": [[] for _ in range(n_levels)],
+            "recon_global_residuals_by_level": [[] for _ in range(n_levels)],
             "motion_residuals_by_level": [[] for _ in range(n_levels)],
         }
 
@@ -532,12 +576,19 @@ class JointReconstructor:
 
     def _save_restart_residual_plots(self, restart_log, restart_idx):
         recon_path = os.path.join(self.params.logs_folder, f"residual_recon_restart_{restart_idx}.png")
+        recon_global_path = os.path.join(self.params.logs_folder, f"residual_recon_global_restart_{restart_idx}.png")
         motion_path = os.path.join(self.params.logs_folder, f"residual_motion_restart_{restart_idx}.png")
         save_residual_subplots(
             restart_log["recon_residuals_by_level"],
             title=f"Reconstruction residuals - restart {restart_idx}",
             y_label="Relative residual",
             out_path=recon_path,
+        )
+        save_residual_subplots(
+            restart_log["recon_global_residuals_by_level"],
+            title=f"Reconstruction global residuals - restart {restart_idx}",
+            y_label="||r_full||2 / (||s_full||2 + eps)",
+            out_path=recon_global_path,
         )
         save_residual_subplots(
             restart_log["motion_residuals_by_level"],
@@ -567,11 +618,12 @@ class JointReconstructor:
 
     def _initialize_level_tracking(self):
         residual_recon_norms = []
+        residual_recon_global_norms = []
         residual_motion_norms = []
         best_relres = float("inf")
         best_image = None
         best_motion = None
-        return residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion
+        return residual_recon_norms, residual_recon_global_norms, residual_motion_norms, best_relres, best_image, best_motion
 
     def _update_global_best(self, best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion):
         # ----------------------------------------------------------
@@ -755,84 +807,119 @@ class JointReconstructor:
                 )
                 self._append_restart_log(restart_log, "")
 
-                residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion = self._initialize_level_tracking()
+                (
+                    residual_recon_norms,
+                    residual_recon_global_norms,
+                    residual_motion_norms,
+                    best_relres,
+                    best_image,
+                    best_motion,
+                ) = self._initialize_level_tracking()
                 s_res = Data_res["KspaceData"].flatten()
+                show_bar = getattr(self.params, "jupyter_notebook_flag", False)
+                bar_ctx = tqdm(
+                    total=GN_iter,
+                    desc=f"Resolution level {idx_res + 1}/{len(ResLevels)}",
+                    disable=(not show_bar),
+                    leave=False,
+                    dynamic_ncols=True,
+                ) if GN_iter > 0 else nullcontext()
 
                 # Gauss–Newton iterations
-                for it in range(GN_iter):
-                    self._console(f"  GN iteration {it+1}/{GN_iter}")
-                    fp_t0 = time.perf_counter()
+                with bar_ctx as pbar:
+                    for it in range(GN_iter):
+                        self._console(f"  GN iteration {it+1}/{GN_iter}")
+                        fp_t0 = time.perf_counter()
 
-                    # -------------------------------IMAGE RECONSTRUCTION STEP -------------------------
+                        # -------------------------------IMAGE RECONSTRUCTION STEP -------------------------
 
-                    # 1) Build motion and encoding operators
-                    Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
-                    Data_res["E"] = self.build_encoding_operator(Data_res)
+                        # 1) Build motion and encoding operators
+                        Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
+                        Data_res["E"] = self.build_encoding_operator(Data_res)
 
-                    # 2) Solve for image
-                    self._console("    Solving for image...")
-                    t_img = time.perf_counter()
-                    img = self.solve_image(Data_res)
-                    img_elapsed = time.perf_counter() - t_img
-                    Data_res["ReconstructedImage"] = img
-                    self._append_restart_log(
-                        restart_log,
-                        f"    Reconstruction step : {_format_cg_info(self._last_image_cg_info)}, elapsed time = {img_elapsed:.6f} s",
-                    )
-
-                    if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
-                        break
-
-                    # 3) Compute residual
-                    x = img.flatten()
-                    y = Data_res["E"].forward(x)
-                    residual = s_res - y
-                    res_norm = torch.linalg.norm(residual).item()
-                    rel_res = res_norm / (torch.linalg.norm(s_res).item() + 1e-12)
-                    residual_recon_norms.append(rel_res)
-
-                    if it > 0 and rel_res > best_relres:
-                        self._console("    Relative residual increased — restoring best solution at this level.")
+                        # 2) Solve for image
+                        self._console("    Solving for image...")
+                        t_img = time.perf_counter()
+                        img = self.solve_image(Data_res)
+                        img_elapsed = time.perf_counter() - t_img
+                        Data_res["ReconstructedImage"] = img
                         self._append_restart_log(
                             restart_log,
-                            "    Relative residual increased - restoring best solution at this level.",
+                            f"    Reconstruction step : {_format_cg_info(self._last_image_cg_info)}, elapsed time = {img_elapsed:.6f} s",
                         )
-                        break
 
-                    # Residual improved: store current image/motion as level-best.
-                    best_relres = rel_res
-                    best_image = Data_res["ReconstructedImage"].clone()
-                    best_motion = Data_res["MotionModel"].clone()
+                        if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
+                            if pbar is not None:
+                                pbar.update(1)
+                            break
 
-                    # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
+                        # 3) Compute residual
+                        x = img.flatten()
+                        y = Data_res["E"].forward(x)
+                        residual = s_res - y
+                        res_norm = torch.linalg.norm(residual).item()
+                        rel_res = res_norm / (torch.linalg.norm(s_res).item() + 1e-12)
+                        residual_recon_norms.append(rel_res)
+                        global_rel_res = self._compute_global_recon_relative_residual(Data_res)
+                        residual_recon_global_norms.append(global_rel_res)
+                        if pbar is not None:
+                            pbar.set_postfix(
+                                recon=f"{rel_res:.2e}",
+                                recon_global=f"{global_rel_res:.2e}",
+                            )
 
-                    # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
-                    Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
+                        if it > 0 and rel_res > best_relres:
+                            self._console("    Relative residual increased — restoring best solution at this level.")
+                            self._append_restart_log(
+                                restart_log,
+                                "    Relative residual increased - restoring best solution at this level.",
+                            )
+                            if pbar is not None:
+                                pbar.update(1)
+                            break
 
-                    # 4) Solve for motion update
-                    self._console("    Solving for motion update...")
-                    t_mot = time.perf_counter()
-                    if self.params.use_scaled_motion_update:
-                        dm = self.solve_motion_scaled(Data_res, residual)
-                    else:
-                        dm = self.solve_motion(Data_res, residual)
-                    mot_elapsed = time.perf_counter() - t_mot
+                        # Residual improved: store current image/motion as level-best.
+                        best_relres = rel_res
+                        best_image = Data_res["ReconstructedImage"].clone()
+                        best_motion = Data_res["MotionModel"].clone()
 
-                    Data_res["MotionModel"] += dm.real
-                    dm_norm = torch.linalg.norm(dm.flatten()).item()
-                    alpha_norm = torch.linalg.norm(Data_res["MotionModel"].flatten()).item()
-                    dm_rel_norm = dm_norm / (alpha_norm + 1e-12)
-                    residual_motion_norms.append(dm_rel_norm)
-                    self._append_restart_log(
-                        restart_log,
-                        f"    Model optimization step: {_format_cg_info(self._last_motion_cg_info)}, elapsed time = {mot_elapsed:.6f} s",
-                    )
-                    fp_elapsed = time.perf_counter() - fp_t0
-                    self._append_restart_log(
-                        restart_log,
-                        f"    Fixed point iter {it}: recon_rel_residual = {rel_res:.6e}, motion_rel_residual = {dm_rel_norm:.6e}, motion_norm = {dm_norm:.6e} : {fp_elapsed:.6f} s",
-                    )
-                    self._append_restart_log(restart_log, "")
+                        # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
+
+                        # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
+                        Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
+
+                        # 4) Solve for motion update
+                        self._console("    Solving for motion update...")
+                        t_mot = time.perf_counter()
+                        if self.params.use_scaled_motion_update:
+                            dm = self.solve_motion_scaled(Data_res, residual)
+                        else:
+                            dm = self.solve_motion(Data_res, residual)
+                        mot_elapsed = time.perf_counter() - t_mot
+
+                        Data_res["MotionModel"] += dm.real
+                        dm_norm = torch.linalg.norm(dm.flatten()).item()
+                        alpha_norm = torch.linalg.norm(Data_res["MotionModel"].flatten()).item()
+                        dm_rel_norm = dm_norm / (alpha_norm + 1e-12)
+                        residual_motion_norms.append(dm_rel_norm)
+                        self._append_restart_log(
+                            restart_log,
+                            f"    Model optimization step: {_format_cg_info(self._last_motion_cg_info)}, elapsed time = {mot_elapsed:.6f} s",
+                        )
+                        fp_elapsed = time.perf_counter() - fp_t0
+                        self._append_restart_log(
+                            restart_log,
+                            (
+                                f"    Fixed point iter {it}: "
+                                f"recon_rel_residual = {rel_res:.6e}, "
+                                f"recon_global_rel_residual = {global_rel_res:.6e}, "
+                                f"motion_rel_residual = {dm_rel_norm:.6e}, "
+                                f"motion_norm = {dm_norm:.6e} : {fp_elapsed:.6f} s"
+                            ),
+                        )
+                        self._append_restart_log(restart_log, "")
+                        if pbar is not None:
+                            pbar.update(1)
 
                     # ------------------------- LOGGING and PATIENCE CHECK -------------------------
 
@@ -852,6 +939,7 @@ class JointReconstructor:
                     )
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
                 restart_log["recon_residuals_by_level"][idx_res] = residual_recon_norms
+                restart_log["recon_global_residuals_by_level"][idx_res] = residual_recon_global_norms
                 restart_log["motion_residuals_by_level"][idx_res] = residual_motion_norms
                 level_elapsed = time.perf_counter() - level_t0
                 self._append_restart_log(

@@ -66,6 +66,7 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
     input_folder = Path(params.input_data_folder)
     results_folder = Path(params.results_folder)
 
+    recon_global_logs = sorted(logs_folder.glob("residual_recon_global_restart_*.png"))
     recon_logs = sorted(logs_folder.glob("residual_recon_restart_*.png"))
     motion_logs = sorted(logs_folder.glob("residual_motion_restart_*.png"))
     logs_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
@@ -76,7 +77,14 @@ def display_run_panels(params, motion_type, has_ground_truth=True, jupyter_noteb
             title=None,
             figsize=logs_figsize,
         )
-    if recon_logs:
+    if recon_global_logs:
+        display_image_row(
+            [str(recon_global_logs[-1])],
+            [""],
+            title=None,
+            figsize=logs_figsize,
+        )
+    elif recon_logs:
         display_image_row(
             [str(recon_logs[-1])],
             [""],
