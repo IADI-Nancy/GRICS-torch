@@ -34,6 +34,30 @@ class MotionSimulator:
     def get_motion_information(self):
         return self.navigator, self.tx, self.ty, self.phi
 
+    def _build_sampling_per_line_global_states(self):
+        """
+        Build sampling indices with one global motion state per acquired ky line.
+        Output shape is [Nex][Ny_total], where Ny_total = Nex * Ny.
+        """
+        ky_flat = torch.cat([k.reshape(-1) for k in self.ky_idx], dim=0)
+        nex_flat = torch.cat([n.reshape(-1) for n in self.nex_idx], dim=0).to(torch.int64)
+        ny_total = int(ky_flat.numel())
+        nex_total = int(self.params.Nex)
+
+        sampling = [
+            [torch.empty(0, dtype=torch.int64, device=self.t_device) for _ in range(ny_total)]
+            for _ in range(nex_total)
+        ]
+        kx = torch.arange(self.Nx, device=self.t_device, dtype=torch.int64)
+
+        for state in range(ny_total):
+            nex = int(nex_flat[state].item())
+            ky = ky_flat[state].to(torch.int64).reshape(1)
+            samp = (ky[:, None] + self.Ny * kx[None, :]).reshape(-1)
+            sampling[nex][state] = samp
+
+        return sampling
+
     def apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
         if motion_type is None:
             motion_type = self.params.motion_type
@@ -155,13 +179,8 @@ class MotionSimulator:
         return navigator, tx, ty, phi
 
     def simulate_realistic_rigid_motion(self):
-        # Each kspace line is its own motion state
-        ky_per_mot_state_idx = [
-            ky_line.unsqueeze(-1) for ky_line in self.ky_idx
-        ]
-        # self.sampling_idx = \
-        #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
+        # One global motion state per acquired ky line (Ny * Nex states).
+        self.sampling_idx = self._build_sampling_per_line_global_states()
 
         self.TotalKspaceSamples = self.Ny * self.Nx
         # generate motion curves and parameters
@@ -393,11 +412,8 @@ class MotionSimulator:
     def simulate_realistic_non_rigid_motion(self):
         print("Simulating realistic non-rigid motion fields...")
 
-        # Each acquired ky line is treated as its own temporal motion sample.
-        ky_per_mot_state_idx = [ky_line.unsqueeze(-1) for ky_line in self.ky_idx]
-        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
-            ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device
-        )
+        # One global motion state per acquired ky line (Ny * Nex states).
+        self.sampling_idx = self._build_sampling_per_line_global_states()
         self.TotalKspaceSamples = self.Ny * self.Nx
 
         alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()

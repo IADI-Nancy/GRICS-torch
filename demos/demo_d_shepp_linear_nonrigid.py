@@ -22,7 +22,7 @@ def main():
     print("[Demo D] Loading config...")
     params = load_config(
         data_type="shepp-logan",
-        reconstruction_config="config/reconstruction/nonrigid_fast.toml",
+        reconstruction_config="config/reconstruction/nonrigid_high_quality.toml",
         shepp_logan_config="config/shepp_logan.toml",
         sampling_config="config/sampling_simulation/linear.toml",
         motion_simulation_config="config/motion_simulation/nonrigid.toml",

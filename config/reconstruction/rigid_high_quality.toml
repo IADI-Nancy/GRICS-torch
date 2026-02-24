@@ -19,9 +19,9 @@ GN_iterations_per_level = [14, 6, 6]
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
 # Allowed consecutive stagnating CG steps.
-cg_max_stag_steps = 6
+cg_max_stag_steps = 8
 # Extra CG steps after the first stopping criterion is met.
-cg_max_more_steps = 12
+cg_max_more_steps = 6
 # Estimate regularization scaling internally from probes.
 cg_use_reg_scale_proxy = true
 # Number of probes for regularization scaling estimate.

@@ -4,5 +4,5 @@ motion_simulation_type = "non-rigid"
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 1.0
 # Random respiratory cycles over full acquisition duration.
-nonrigid_resp_cycles_min = 3.0
-nonrigid_resp_cycles_max = 5.0
+nonrigid_resp_cycles_min = 9.0
+nonrigid_resp_cycles_max = 11.0

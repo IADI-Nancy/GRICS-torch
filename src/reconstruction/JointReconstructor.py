@@ -733,6 +733,8 @@ class JointReconstructor:
         gn_iters_per_level = self._resolve_gn_iterations_per_level(ResLevels)
 
         global_best_metric, global_best_image, global_best_motion, global_converged = self._initialize_global_tracking()
+        last_image = None
+        last_motion = None
 
         for restart in range(self.params.max_restarts):
             restart_idx = restart + 1
@@ -894,6 +896,9 @@ class JointReconstructor:
                 if restart_converged:
                     break
                 Data_prev = Data_res
+                if "ReconstructedImage" in Data_res and "MotionModel" in Data_res:
+                    last_image = Data_res["ReconstructedImage"].clone()
+                    last_motion = Data_res["MotionModel"].clone()
             if best_image is not None and best_motion is not None:
                 global_best_metric, global_best_image, global_best_motion = self._update_global_best(
                     best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
@@ -912,6 +917,13 @@ class JointReconstructor:
 
         if not global_converged:
             self._console("⚠ WARNING: No restart reached tolerance.")
+
+        # Robust fallback for degenerate short-run settings (e.g. one GN step).
+        if global_best_image is None or global_best_motion is None:
+            if last_image is None or last_motion is None:
+                raise RuntimeError("Reconstruction did not produce a valid image/motion solution.")
+            global_best_image = last_image
+            global_best_motion = last_motion
 
         global_best_image_unscaled = global_best_image * self.kspace_scale
         show_and_save_image(
