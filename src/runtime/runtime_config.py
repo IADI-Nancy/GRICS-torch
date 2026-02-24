@@ -142,8 +142,6 @@ def load_config(
         if not shepp_logan_config:
             raise ValueError("shepp_logan_config is required when data_type='shepp-logan'.")
         cfg.update(_load_toml_flat(shepp_logan_config))
-    elif data_type == "fastMRI":
-        pass
     elif data_type in {"real-world", "raw-data"}:
         pass
     else:

@@ -140,7 +140,7 @@ def save_clustered_motion_plots(
 
     if data_type in {"real-world", "raw-data"}:
         sample_label_prefix = "Measured motion signal samples"
-    elif data_type in {"shepp-logan", "fastMRI"}:
+    elif data_type == "shepp-logan":
         sample_label_prefix = "PC1 motion samples"
     else:
         sample_label_prefix = "Motion signal samples"

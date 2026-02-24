@@ -58,8 +58,6 @@ class DataLoader:
         
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self.generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
-        elif self.params.data_type == 'fastMRI': # Only kspace data per coil, but no acquisition order => simulate sampling
-            self.load_fastMRI_data(self.filename)
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
             self.load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
@@ -281,14 +279,6 @@ class DataLoader:
             "discrete-non-rigid",
         }
 
-
-    def load_fastMRI_data(self, path_to_mri_data):
-        self.kspace = np.load(path_to_mri_data)['arr_0']
-        self.kspace = torch.from_numpy(self.kspace).to(self.t_device)
-        self.kspace = self.kspace.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
-        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
-        samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
     # Ncoils should be a perfect square (or close) for coil map generation
     def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
