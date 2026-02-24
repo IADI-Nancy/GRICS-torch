@@ -30,3 +30,4 @@ bart-*
 .jupyter_local/
 .vscode/*
 !.vscode/settings.json
+tests/
