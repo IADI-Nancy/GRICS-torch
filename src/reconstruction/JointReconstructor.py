@@ -481,11 +481,16 @@ class JointReconstructor:
         if isinstance(gn_cfg, int):
             return [gn_cfg] * len(res_levels)
         if isinstance(gn_cfg, (list, tuple)):
-            if len(gn_cfg) != len(res_levels):
+            if len(gn_cfg) == 0:
+                raise ValueError("GN_iterations_per_level list/tuple cannot be empty.")
+            gn_list = [int(v) for v in gn_cfg]
+            if len(gn_list) != len(res_levels):
                 raise ValueError(
-                    f"GN_iterations_per_level length ({len(gn_cfg)}) must match ResolutionLevels length ({len(res_levels)})."
+                    "Inconsistent config: "
+                    f"GN_iterations_per_level has {len(gn_list)} values, "
+                    f"but ResolutionLevels has {len(res_levels)} values."
                 )
-            return [int(v) for v in gn_cfg]
+            return gn_list
         raise ValueError("GN_iterations_per_level must be int, list, or tuple.")
 
     def _init_restart_logging(self, restart_idx, n_levels, gn_iters_per_level):
