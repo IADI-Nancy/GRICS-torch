@@ -1,9 +1,5 @@
 FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
-LABEL org.opencontainers.image.source=https://github.com/IADI-Nancy/GRICS-torch
-LABEL org.opencontainers.image.description="GRICS-torch: A PyTorch-based framework for MRI reconstruction with motion compensation, developed by the IADI lab in Nancy, France."
-LABEL org.opencontainers.image.licenses="CC BY-NC 4.0"
-
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
 
@@ -11,6 +7,9 @@ COPY conda_environment.yml /tmp/conda_environment.yml
 
 # -------------------------------------------------------------------
 # Install system dependencies
+# -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Install system dependencies (pinned versions)
 # -------------------------------------------------------------------
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
     && apt update \
@@ -30,6 +29,8 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu
         libfftw3-dev \
         libpng-dev \
     && rm -rf /var/lib/apt/lists/*
+
+
 
 # -------------------------------------------------------------------
 # Install Miniconda and conda environment
@@ -115,8 +116,29 @@ ENV PYTHONPATH=/opt/bart/python:/opt/wrapperHDF5
 # -------------------------------------------------------------------
 
 RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL\n\
+Defaults    env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY"\n\
 Defaults    env_keep += "PATH"' >> /etc/sudoers \
-	&& sed -i '/^Defaults\tsecure_path.*$/ d' /etc/sudoers
+	&& sed -i '/^Defaults\tsecure_path.*$/ d' /etc/sudoers \
+	&& echo '[distutils]\n\
+index-servers =\n\
+    pypi\n\
+    virtus\n\
+\n\
+[pypi]\n\
+repository: https://pypi.python.org/pypi\n\
+username:\n\
+password:\n\
+\n\
+[virtus]\n\
+repository: http://virtus.iadi.lan:8081/repository/virtus-pip/\n\
+username:\n\
+password:' >> /root/.pypirc \
+	&& mkdir -p /root/.config/pip/ \
+	&& echo '[global]\n\
+index = https://pypi.python.org/pypi/\n\
+index-url=https://pypi.python.org/simple/\n\
+extra-index-url=http://virtus.iadi.lan:8081/repository/virtus-pip/simple/\n\
+trusted-host = virtus.iadi.lan' >> /root/.config/pip/pip.conf
 
 COPY startup.sh /tmp
 RUN chmod 774 /tmp/startup.sh

@@ -1,22 +1,27 @@
-IMAGE_NAME=ghcr.io/iadi-nancy/grics-torch
-IMAGE_VERSION=1.0.0
+IMAGE_NAME=virtus.iadi.lan:8123/iadi/grics-torch
+IMAGE_VERSION=2.3.0-cuda12.1-cudnn8-devel
 
 IMAGE="${IMAGE_NAME}:${IMAGE_VERSION}"
 CONTAINER_SUFFIX=grics-torch
 
 WKDIR=$(pwd)
 
-EXTRAS=(  )
+# !!!!!!!!!!!!!!!!!!
+EXTRAS=( -v ~/.cicit-nancy:/home/pyuser/.cicit-nancy -v .bashrcoverride:/home/pyuser/.bashrcoverride )
 # put this in extras
 # if you want to add something into .bashrc without loosing it
 # -v .bashrcoverride:/home/pyuser/.bashrcoverride
+# if you use ArchiMedConnector
+# -v ~/.cicit-nancy:/home/pyuser/.cicit-nancy
 
 GPU_NUMBER=0
 #########################################
 
+# ????????????
 #avoid root ownership on these files
 mkdir -p $WKDIR
 mkdir -p ~/.ssh
+mkdir -p ~/.cicit-nancy
 touch ~/.gitconfig
 
 MOUNTS=( -v $WKDIR:/home/pyuser/wkdir -v ~/.ssh:/home/pyuser/.ssh -v ~/.gitconfig:/home/pyuser/.gitconfig )
