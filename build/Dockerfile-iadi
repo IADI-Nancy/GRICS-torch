@@ -8,19 +8,16 @@ COPY conda_environment.yml /tmp/conda_environment.yml
 # -------------------------------------------------------------------
 # Install system dependencies
 # -------------------------------------------------------------------
-# -------------------------------------------------------------------
-# Install system dependencies (pinned versions)
-# -------------------------------------------------------------------
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
     && apt update \
     && apt install -y --no-install-recommends \
         wget=1.21.2-2ubuntu1.1 \
-        unzip=6.0-26ubuntu3.2 \
-        git=1:2.34.1-1ubuntu1.15 \
+        unzip \
+        git \
         openssh-client=1:8.9p1-3ubuntu0.13 \
         sudo=1.9.9-1ubuntu2.5 \
         ca-certificates=20240203~22.04.1 \
-        bzip2=1.0.8-5build1 \
+        bzip2 \
         build-essential=12.9ubuntu3 \
         cmake=3.22.1-1ubuntu1.22.04.2 \
         liblapacke-dev=3.10.0-2ubuntu1 \
@@ -92,7 +89,7 @@ RUN mkdir -p /opt/bart \
         NVCC=$NVCC \
         CC=gcc-11 \
         CXX=g++-11 \
-        CPPFLAGS="-I/opt/bart/src -I$CUDA_PATH/include" \ 
+        CPPFLAGS="-I/opt/bart/src -I$CUDA_PATH/include" \
         CFLAGS="-I/opt/bart/src -I$CUDA_PATH/include" \
         LDFLAGS="-L$CUDA_PATH/lib64" \
         make -j$(nproc) 

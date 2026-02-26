@@ -22,9 +22,10 @@ GPU_NUMBER=0
 mkdir -p $WKDIR
 mkdir -p ~/.ssh
 mkdir -p ~/.cicit-nancy
+mkdir -p ~/.codex
 touch ~/.gitconfig
 
-MOUNTS=( -v $WKDIR:/home/pyuser/wkdir -v ~/.ssh:/home/pyuser/.ssh -v ~/.gitconfig:/home/pyuser/.gitconfig )
+MOUNTS=( -v $WKDIR:/home/pyuser/wkdir -v ~/.ssh:/home/pyuser/.ssh -v ~/.gitconfig:/home/pyuser/.gitconfig -v ~/.codex:/home/pyuser/.codex )
 GPU=( --gpus device=$GPU_NUMBER )
 #GPU=( )
 
@@ -35,11 +36,20 @@ SHM=( )
 USERCUT=$(echo $USER | cut -d@ -f1)
 DOCKER_NAME="${USERCUT}-${CONTAINER_SUFFIX}"
 
+HTTP_PROXY="http://proxy-pc.chu-nancy.fr:8080/"
+HTTPS_PROXY="http://proxy-pc.chu-nancy.fr:8080/"
+NO_PROXY=".iadi.lan,localhost,127.0.0.1,192.168.139.0/24"
+
 case "$1" in
 run)	
 	echo "Run docker " $DOCKER_NAME
 	if [ -z "$(docker ps -a | grep $DOCKER_NAME)" ]; then
-		docker run -d ${EXTRAS[@]} ${MOUNTS[@]} ${GPU[@]} ${SHM[@]} --name ${DOCKER_NAME} -e USERCUT=${USERCUT} -e UID=$(id -u) -e GID=$(id -g) $IMAGE 
+		docker run -d --network host ${EXTRAS[@]} ${MOUNTS[@]} ${GPU[@]} ${SHM[@]} --name ${DOCKER_NAME} \
+			-e USERCUT=${USERCUT} -e UID=$(id -u) -e GID=$(id -g) \
+			-e HTTP_PROXY="${HTTP_PROXY}" -e HTTPS_PROXY="${HTTPS_PROXY}" \
+			-e NO_PROXY="${NO_PROXY}" -e http_proxy="${HTTP_PROXY}" \
+			-e https_proxy="${HTTPS_PROXY}" -e no_proxy="${NO_PROXY}" \
+			$IMAGE 
 	else
 		docker start ${DOCKER_NAME}
 	fi
@@ -103,11 +113,11 @@ rm)
 	;;
 
 build)
-	docker build -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --rm=true build/
+	docker build -f build/Dockerfile-iadi -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --rm=true build/
 	;;
 
 build-nocache)
-	docker build -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --no-cache --rm=true build/
+	docker build -f build/Dockerfile-iadi -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --no-cache --rm=true build/
 	;;
 
 push)
