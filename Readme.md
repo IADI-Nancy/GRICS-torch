@@ -1,50 +1,22 @@
-# GRICS MRI Motion-Corrected Reconstruction
+# GRICS-torch: GRICS MRI Motion-Corrected Reconstruction in PyTorch
 
-This repository contains a 2D MRI reconstruction pipeline with joint image-motion estimation for:
-- rigid motion
-- non-rigid motion
-- synthetic Shepp-Logan simulations
-- real-world/as-is motion data
+This repository currently contains a 2D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support reuse.
 
-The workflow is currently notebook-first, with five demos at repository root.
+Please contact https://github.com/KarynaIsaieva (Karyna Isaieva) for any bug reports.
 
-## Repository Layout
+## Repository layout
 
 - `src/preprocessing/`: data loading, sampling simulation, motion simulation, motion binning
 - `src/reconstruction/`: encoding/motion operators, Jacobian, CG solver, joint reconstructor
 - `src/runtime/`: config loading and runtime initialization
 - `src/utils/`: plotting, diagnostics, notebook display helpers
 - `config/`: TOML configs for reconstruction, sampling, motion simulation, and general runtime
-- `demo_a_shepp_linear_rigid.ipynb`
-- `demo_b_shepp_random_rigid.ipynb`
-- `demo_c_shepp_interleaved_nonrigid.ipynb`
-- `demo_d_shepp_linear_nonrigid.ipynb`
-- `demo_e_realworld_as_is.ipynb`
+
+\+ five demos
 
 ## Environment Setup
 
-Use the conda file in `build/`:
-
-```bash
-conda env create -f build/conda_environment.yml
-conda activate environment_grics
-```
-
-If you use Jupyter:
-
-```bash
-python -m ipykernel install --user --name environment_grics
-```
-
-## Running Demos
-
-Open one of the demo notebooks and run all cells:
-
-- `demo_a_shepp_linear_rigid.ipynb`: Shepp-Logan, linear sampling, rigid simulation
-- `demo_b_shepp_random_rigid.ipynb`: Shepp-Logan, random sampling, rigid simulation
-- `demo_c_shepp_interleaved_nonrigid.ipynb`: Shepp-Logan, interleaved sampling, non-rigid simulation
-- `demo_d_shepp_linear_nonrigid.ipynb`: Shepp-Logan, linear sampling, realistic non-rigid simulation
-- `demo_e_realworld_as_is.ipynb`: real-world data, as-is motion
+A Dockerfile is provided in the `build/` folder. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
 
 ## Config System
 
@@ -55,58 +27,39 @@ Main config groups:
 - `config/reconstruction/*.toml`: solver/reconstruction settings
 - `config/sampling_simulation/*.toml`: synthetic k-space ordering
 - `config/motion_simulation/*.toml`: synthetic motion model parameters
-- `config/shepp_logan.toml`: phantom generation parameters
+- `config/shepp_logan.toml`: Shepp-Logan phantom generation parameters
 
 Important consistency rule:
 - `GN_iterations_per_level` must match `ResolutionLevels` length exactly.
 
 ## Data Types
 
-The `data_type` selected in `load_config(...)` controls how input data is built/loaded.
+The `data_type` selected in `load_config(...)` controls how input data is built or loaded.
 
 ### `shepp-logan`
 
-Synthetic phantom data generated in `DataLoader.generate_shepp_logan(...)`:
-- 2D Shepp-Logan phantom resized to `N_SheppLogan x N_SheppLogan`
-- synthetic complex coil sensitivity maps (Gaussian profiles + random phase)
-- FFT to k-space
-- synthetic sampling trajectory from `config/sampling_simulation/*.toml`
-
-Used config:
+Synthetic phantom data generated in `DataLoader.generate_shepp_logan(...)`.
+Required config files:
 - `config/shepp_logan.toml`
-- one sampling config in `config/sampling_simulation/`
-- optional motion simulation config in `config/motion_simulation/`
-
-### `fastMRI`
-
-Loaded via `DataLoader.load_fastMRI_data(...)` from a `.npz` file with key `arr_0`.
-Expected k-space shape is interpreted as `(coils, Nx, Ny, slices)`, then replicated across `Nex`.
-Sampling order is simulated from `config/sampling_simulation/*.toml`.
+- a sampling simulation config file
+- a motion simulation config file (otherwise there is nothing to correct)
 
 ### `real-world`
 
 Loaded via `DataLoader.load_realworld_data(...)` from HDF5 with datasets:
 - `kspace`
-- `motion_data`
-- `idx_ky`
-- `idx_kz`
-- `idx_nex`
+- `motion_data` - already reordered 
+- sampling order (`idx_ky`, `idx_kz` and `idx_nex`)
 
-No synthetic sampling is needed in this mode, acquisition order and motion signal come from file.
+No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
 
 ### `raw-data`
 
-Loaded from raw scanner + physiological files using `RawDataReader`:
-- ISMRMRD file (`ismrmrd_file`)
-- SAEC physiological file (`saec_file`)
+Loaded from raw scanner and physiological files using `RawDataReader`:
+- the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
+- physiological data file in SAEC [3, 4] format (`saec_file`)
 
-Pipeline:
-- parse acquisitions and k-space coordinates from ISMRMRD
-- read/filter respiratory signal from SAEC (`BELT`)
-- interpolate respiratory signal to acquisition timestamps
-- optional export to HDF5-like structure in memory
-
-## Sampling Modes (Synthetic Acquisition)
+## Sampling Modes (synthetic acquisition)
 
 Configured with:
 - `kspace_sampling_type`
@@ -141,13 +94,13 @@ Implemented in `src/preprocessing/MotionSimulator.py`.
 
 No synthetic corruption added. Only valid for `real-world`/`raw-data` (already motion-corrupted).
 
-### `no-motion`
+### `no-motion-data`
 
-No synthetic corruption; zero motion signal.
+Adds no synthetic corruption and replaces the available motion signal with zeros. Use this if you want to reconstruct with the same algorithm but without motion correction.
 
 ### `discrete-rigid`
 
-Shot-wise rigid states:
+Shot-wise states:
 - one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
 - random `(tx, ty, phi)` per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
@@ -158,14 +111,15 @@ Continuous rigid curve over full acquisition:
 - random event times over `Ny * Nex` lines
 - smooth raised-cosine transitions (`motion_tau`)
 - random event amplitudes for `tx`, `ty`, `phi`
+- data is then reclustered to `N_motion_states` from the simulated navigator signal (first principal component of the simulated rigid motion parameters)
 
 For corruption, simulation uses one global state per acquired line (`Ny * Nex` states).
 
 ### `discrete-non-rigid`
 
 Shot-wise non-rigid with fixed spatial basis maps:
-- displacement field maps `alpha_x`, `alpha_y` are centered Gaussian-like patterns
-- one random scalar per shot (`S`) drives temporal amplitude
+- displacement field maps `alpha_x`, `alpha_y` simulate respiration
+- one random scalar per shot (`S`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
 - displacement at state `m`: `[ux, uy] = [alpha_x, alpha_y] * S[m]`
 
 ### `non-rigid` (realistic respiratory-like)
@@ -176,82 +130,35 @@ Continuous sinusoidal temporal curve:
 - normalized to unit amplitude
 
 Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y`) scaled by `nonrigid_motion_amplitude`.
-For corruption, simulation also uses one global state per acquired line (`Ny * Nex` states).
+For corruption, simulation uses one state per acquired line (`Ny * Nex` states).
 
 ## Motion Binning and Reconstruction States
 
-After loading/simulation, the motion curve is clustered with k-means (`MotionBinner.bin_motion`) into reconstruction states.
+After loading or simulation, the motion curve is clustered with k-means (`MotionBinner.bin_motion`) into reconstruction states.
 
-Key point:
+Key points:
 - simulation state count and reconstruction state count can differ.
 - corruption may be line-wise (`Ny * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
 
-State-count rules set in `runtime_config.refresh_derived(...)`:
+State-count rules are set in `runtime_config.refresh_derived(...)`:
 - `discrete-rigid` and `discrete-non-rigid`: `N_motion_states = Nshots`
 - `rigid`: `N_motion_states = num_motion_events + 1`
-- `non-rigid`: `N_motion_states` stays the reconstruction config value
-- `as-it-is` and `no-motion`: `N_motion_states` stays the reconstruction config value
-
-## Minimal Config Recipes
-
-### Synthetic rigid (Shepp-Logan)
-
-- `data_type = "shepp-logan"`
-- sampling config: one of `linear.toml`, `interleaved.toml`, `random.toml`
-- motion sim config: `rigid.toml` or `discrete_rigid.toml`
-- reconstruction config: `config/reconstruction/rigid_*.toml`
-
-### Synthetic non-rigid (Shepp-Logan)
-
-- `data_type = "shepp-logan"`
-- sampling config: one of `config/sampling_simulation/*.toml`
-- motion sim config: `nonrigid.toml` or `discrete_nonrigid.toml`
-- reconstruction config: `config/reconstruction/nonrigid_*.toml`
-
-### Real-world as-is
-
-- `data_type = "real-world"` (or `raw-data`)
-- no synthetic sampling config needed
-- motion sim type should be `as-it-is` (default in data-driven mode)
-- reconstruction config can be rigid or non-rigid depending on target model
+- `non-rigid`, `as-it-is` and `no-motion-data`: `N_motion_states` stays the reconstruction config value
 
 ## Outputs
 
 Each run writes into folders from `config/general.toml`:
 
-- `input_data/`: input artifacts (sampling order, motion curves, simulated references)
-- `debug_outputs/`: debug diagnostics
+- `input_data/`: sampling order, motion curves, corrupted and ground-truth images (if they exist), and simulated motion (if it exists)
+- `debug_outputs/`: results per reconstruction level
 - `logs/`: residual curves and per-restart logs
 - `results/`: final reconstructed outputs
 
 By default, these folders are cleaned before each run (`clean_output_folders_before_run = true`).
 
-## Reproducibility Notes
+## References
 
-- `debug_flag = true` enables deterministic settings where possible.
-- For strict CUDA determinism in PyTorch with CuBLAS, set before launching Python:
-
-```bash
-export CUBLAS_WORKSPACE_CONFIG=:4096:8
-```
-
-- Keep the same seed (`seed` in config) and same environment/package versions.
-
-## Common Issues
-
-### `GN_iterations_per_level` mismatch error
-
-Set the same number of entries in:
-- `ResolutionLevels`
-- `GN_iterations_per_level`
-
-### Jupyter kernels remain alive after runs
-
-Notebook completion does not automatically terminate kernels. Shut them down manually from Jupyter/VSCode kernel manager.
-
-### Local files that should not be versioned
-
-Already ignored (or should be ignored) in `.gitignore`:
-- `.jupyter_local/`
-- `.env`
-- local IDE/cache artifacts
+[1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine: An Official Journal of the International Society for Magnetic Resonance in Medicine, 60(1), 146-157.
+[2] https://fastmri.med.nyu.edu/ 
+[3] Isaieva, K., Fauvel, M., Weber, N., Vuissoz, P. A., Felblinger, J., Oster, J., & Odille, F. (2022). A hardware and software system for MRI applications requiring external device data. Magnetic Resonance in Medicine, 88(3), 1406-1418.
+[4] https://github.com/IADI-Nancy/wrapperHDF5 
