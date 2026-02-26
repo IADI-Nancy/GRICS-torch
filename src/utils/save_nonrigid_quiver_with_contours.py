@@ -5,16 +5,16 @@ from matplotlib.colors import Normalize
 
 
 def save_nonrigid_quiver_with_contours(
-    alpha_x,
-    alpha_y,
+    alpha_axis0,
+    alpha_axis1,
     image,
     title,
     out_path,
     flip_vertical=True,
     amp_vmax=None,
 ):
-    alpha_x = alpha_x.detach().cpu()
-    alpha_y = alpha_y.detach().cpu()
+    alpha_axis0 = alpha_axis0.detach().cpu()
+    alpha_axis1 = alpha_axis1.detach().cpu()
     img = image.detach().cpu()
 
     if img.ndim == 3 and img.shape[-1] == 1:
@@ -25,18 +25,20 @@ def save_nonrigid_quiver_with_contours(
         img = img.abs()
 
     if flip_vertical:
-        alpha_x = torch.flip(alpha_x, dims=[0])
-        alpha_y = torch.flip(alpha_y, dims=[0])
+        alpha_axis0 = torch.flip(alpha_axis0, dims=[0])
+        alpha_axis1 = torch.flip(alpha_axis1, dims=[0])
         img = torch.flip(img, dims=[0])
 
-    nx, ny = alpha_x.shape
+    nx, ny = alpha_axis0.shape
     step = max(1, min(nx, ny) // 32)
     yy, xx = torch.meshgrid(torch.arange(nx), torch.arange(ny), indexing="ij")
     xx = xx[::step, ::step].numpy()
     yy = yy[::step, ::step].numpy()
-    ux = (-alpha_y[::step, ::step]).numpy()
-    uy = (alpha_x[::step, ::step]).numpy()
-    amp = torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)[::step, ::step].numpy()
+    # Internal inverse-warp axis components -> forward Cartesian quiver:
+    # x = -axis1, y = +axis0
+    ux = (-alpha_axis1[::step, ::step]).numpy()
+    uy = (alpha_axis0[::step, ::step]).numpy()
+    amp = torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)[::step, ::step].numpy()
     img_np = img.numpy()
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)

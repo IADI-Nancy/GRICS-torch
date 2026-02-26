@@ -9,14 +9,14 @@ max_restarts = 1
 # Apply extra scaling to motion updates during GN iterations.
 use_scaled_motion_update = false
 # Multi-resolution scale factors (relative to full resolution).
-ResolutionLevels = [0.2, 0.5, 1.0]
+ResolutionLevels = [0.25, 0.5, 1.0]
 # Number of GN iterations for each resolution level.
 GN_iterations_per_level = [10, 4, 4]
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
 # Allowed consecutive stagnating CG steps.
-cg_max_stag_steps = 3
+cg_max_stag_steps = 6
 # Extra CG steps after the first stopping criterion is met.
 cg_max_more_steps = 0
 # Estimate regularization scaling internally from probes.
@@ -32,7 +32,7 @@ max_iter_recon = 96
 tol_recon = 1.0e-3
 
 # Motion reconstruction regularization weight.
-lambda_m = 1.0
+lambda_m = 10.0
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 64
 # Convergence tolerance for motion update.

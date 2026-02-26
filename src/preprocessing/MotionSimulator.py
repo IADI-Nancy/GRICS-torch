@@ -9,6 +9,7 @@ from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimens
 from src.utils.save_alpha_component_map import save_alpha_component_map
 from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
 from src.utils.save_motion_debug_plots import save_motion_debug_plots
+from src.utils.nonrigid_display import to_cartesian_components
 
 class MotionSimulator:
     def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, params, sp_device=None, t_device=None):
@@ -302,8 +303,18 @@ class MotionSimulator:
     
 
     def create_discrete_non_rigid_alpha_fields(self):
-        # MATLAB-equivalent coordinates and Gaussian maps for motion_type_flag == 2:
-        # [X,Y] = meshgrid(1:N,1:N), sigma = N/4
+        spatial_model = getattr(self.params, "nonrigid_spatial_model", "respiratory")
+        if spatial_model == "gaussian":
+            return self._create_gaussian_non_rigid_alpha_fields()
+        if spatial_model != "respiratory":
+            raise ValueError(
+                f"Unknown nonrigid_spatial_model: {spatial_model}. "
+                "Supported: 'respiratory', 'gaussian'."
+            )
+        return self._create_respiratory_non_rigid_alpha_fields()
+
+    def _create_gaussian_non_rigid_alpha_fields(self):
+        # Legacy Gaussian field kept as an optional fallback.
         x = torch.arange(1, self.Nx + 1, device=self.t_device, dtype=torch.float64)
         y = torch.arange(1, self.Ny + 1, device=self.t_device, dtype=torch.float64)
         X, Y = torch.meshgrid(x, y, indexing='ij')
@@ -325,6 +336,46 @@ class MotionSimulator:
             2 * torch.exp(- (X - mu_yx) ** 2 / (2 * sigma_x ** 2))
             * torch.exp(- (Y - mu_yy) ** 2 / (2 * sigma_y ** 2))
         )
+        alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
+        return alpha_x, alpha_y, alpha_maps
+
+    def _create_respiratory_non_rigid_alpha_fields(self):
+        # Respiration-like 2D field:
+        # - dominant superior-inferior displacement near inferior (diaphragm-like) region
+        # - weaker left-right component with opposite direction across the midline
+        x = torch.linspace(-1.0, 1.0, self.Nx, device=self.t_device, dtype=torch.float64)
+        y = torch.linspace(-1.0, 1.0, self.Ny, device=self.t_device, dtype=torch.float64)
+        SI, LR = torch.meshgrid(x, y, indexing="ij")
+
+        diaphragm_level = float(getattr(self.params, "nonrigid_diaphragm_level", 0.2))
+        diaphragm_sharpness = float(getattr(self.params, "nonrigid_diaphragm_sharpness", 10.0))
+        lateral_sigma = float(getattr(self.params, "nonrigid_lateral_sigma", 0.45))
+        ap_fraction = float(getattr(self.params, "nonrigid_ap_fraction", 0.30))
+        inferior_gain = float(getattr(self.params, "nonrigid_inferior_gain", 0.35))
+        top_decay = float(getattr(self.params, "nonrigid_top_decay", 0.5))
+
+        # Smooth mask that activates motion predominantly in the upper anatomy.
+        region_mask = torch.sigmoid((-SI - diaphragm_level) * diaphragm_sharpness)
+        # Concentrate motion near the central body region laterally.
+        lateral_envelope = torch.exp(-0.5 * (LR / max(lateral_sigma, 1e-6)) ** 2)
+
+        # Convention in this codebase:
+        # alpha[0] -> Ux -> displacement along axis 0 (rows, SI-like direction)
+        # alpha[1] -> Uy -> displacement along axis 1 (cols, LR-like direction)
+        # We keep SI in alpha_x and use a negative sign so simulated respiratory
+        # motion direction is inverted (as requested) without changing display logic.
+        top_coord = torch.clamp(-SI, min=0.0)
+        top_taper = torch.clamp(1.0 - top_decay * top_coord, min=0.05)
+        region_gain = top_taper * (1.0 + inferior_gain * torch.clamp(-SI, min=0.0))
+        si_profile = region_mask * lateral_envelope * region_gain
+        si_profile = si_profile / torch.clamp(torch.max(torch.abs(si_profile)), min=1e-12)
+        alpha_x = -si_profile
+
+        # Weaker LR displacement: opposite directions on left/right sides.
+        lr_profile = -LR * region_mask * lateral_envelope
+        lr_profile = lr_profile / torch.clamp(torch.max(torch.abs(lr_profile)), min=1e-12)
+        alpha_y = ap_fraction * lr_profile
+
         alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
         return alpha_x, alpha_y, alpha_maps
 
@@ -356,15 +407,21 @@ class MotionSimulator:
         if self.params.debug_flag:
             print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
             os.makedirs(self.params.debug_folder, exist_ok=True)
+            flip_for_display = getattr(
+                self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
+            )
+            alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
             save_alpha_component_map(
-                alpha_x,
+                alpha_x_cart,
                 "simulated_alpha_x",
                 os.path.join(self.params.debug_folder, "simulated_alpha_x.png"),
+                flip_vertical=flip_for_display,
             )
             save_alpha_component_map(
-                alpha_y,
+                alpha_y_cart,
                 "simulated_alpha_y",
                 os.path.join(self.params.debug_folder, "simulated_alpha_y.png"),
+                flip_vertical=flip_for_display,
             )
             save_nonrigid_quiver_with_contours(
                 alpha_x,
@@ -372,6 +429,7 @@ class MotionSimulator:
                 self.image[0],
                 "simulated_motion_quiver",
                 os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
+                flip_vertical=flip_for_display,
             )
 
         self.apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
@@ -431,15 +489,21 @@ class MotionSimulator:
 
         if self.params.debug_flag:
             os.makedirs(self.params.debug_folder, exist_ok=True)
+            flip_for_display = getattr(
+                self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
+            )
+            alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x * amp, alpha_y * amp)
             save_alpha_component_map(
-                alpha_x * amp,
+                alpha_x_cart,
                 "simulated_alpha_x",
                 os.path.join(self.params.debug_folder, "simulated_alpha_x.png"),
+                flip_vertical=flip_for_display,
             )
             save_alpha_component_map(
-                alpha_y * amp,
+                alpha_y_cart,
                 "simulated_alpha_y",
                 os.path.join(self.params.debug_folder, "simulated_alpha_y.png"),
+                flip_vertical=flip_for_display,
             )
             save_nonrigid_quiver_with_contours(
                 alpha_x * amp,
@@ -447,6 +511,7 @@ class MotionSimulator:
                 self.image[0],
                 "simulated_motion_quiver",
                 os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
+                flip_vertical=flip_for_display,
             )
 
 

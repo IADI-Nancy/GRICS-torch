@@ -169,6 +169,9 @@ class MotionOperator:
         signal = torch.as_tensor(self.motion_signal, device=self.device, dtype=alpha.dtype)
 
         self.sparseMotionOperator = []
+        # Axis convention:
+        # alpha[0] -> Ux -> axis 0 displacement (rows)
+        # alpha[1] -> Uy -> axis 1 displacement (cols)
         alpha_x = alpha[0]
         alpha_y = alpha[1]
         n_states = signal.numel()

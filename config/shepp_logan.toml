@@ -5,3 +5,5 @@ N_SheppLogan = 128
 Ncoils_SheppLogan = 4
 # Number of slices for the phantom volume.
 Nz_SheppLogan = 1
+# Fraction of the image occupied by the phantom object (<=1). Lower adds more margins.
+SheppLoganFillFraction = 0.82

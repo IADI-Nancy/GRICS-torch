@@ -2,7 +2,7 @@
 
 This repository currently contains a 2D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support reuse.
 
-Please contact https://github.com/KarynaIsaieva (Karyna Isaieva) for any bug reports.
+Please contact Karyna Isaieva (karyna.isaieva@univ-lorraine.fr) for any bug reports.
 
 ## Repository layout
 
@@ -16,14 +16,14 @@ Please contact https://github.com/KarynaIsaieva (Karyna Isaieva) for any bug rep
 
 ## Environment Setup
 
-A Dockerfile is provided in the `build/` folder. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
+A Dockerfile is provided in the `build/` folder. The built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
 
 ## Config System
 
 The pipeline merges config files at runtime via `src/runtime/runtime_config.py`.
 
 Main config groups:
-- `config/general.toml`: paths, debug/runtime flags, k-space normalization
+- `config/general.toml`: paths, debug/runtime flags, k-space normalization and coil sensitivities calculation parameters
 - `config/reconstruction/*.toml`: solver/reconstruction settings
 - `config/sampling_simulation/*.toml`: synthetic k-space ordering
 - `config/motion_simulation/*.toml`: synthetic motion model parameters

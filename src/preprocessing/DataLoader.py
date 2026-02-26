@@ -20,6 +20,7 @@ from src.utils.show_and_save_image import show_and_save_image
 from src.utils.save_alpha_component_map import save_alpha_component_map
 from src.utils.save_clustered_motion_plots import compute_motion_y_limits
 from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
+from src.utils.nonrigid_display import to_cartesian_components
 
 
 class DataLoader:
@@ -29,7 +30,7 @@ class DataLoader:
         sp_device=None,
         t_device=None,
         filename=None,
-        slice_idx=16,
+        slice_idx=0,
         recalculate_n_motion_states_from_navigator=False,
     ):
         self.params = params
@@ -104,7 +105,7 @@ class DataLoader:
             else:
                 raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
         else:
-            if self.params.motion_simulation_type == 'no-motion':
+            if self.params.motion_simulation_type == 'no-motion-data':
                 motionSimulator.simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth.clone()
             else:      
@@ -160,11 +161,12 @@ class DataLoader:
             ):
                 alpha = self.alpha_maps_true
                 if alpha.ndim == 3 and alpha.shape[0] >= 2:
-                    alpha_x = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
-                    alpha_y = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
+                    alpha_axis0 = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
+                    alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
+                    alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
+                    amp_max = float(torch.max(torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)).item())
                     alpha_abs_max_x = float(torch.max(torch.abs(alpha_x)).item())
                     alpha_abs_max_y = float(torch.max(torch.abs(alpha_y)).item())
-                    amp_max = float(torch.max(torch.sqrt(alpha_x * alpha_x + alpha_y * alpha_y)).item())
                     self.motion_plot_context["alpha_visual_scale"] = {
                         "alpha_abs_max_x": max(alpha_abs_max_x, 1e-12),
                         "alpha_abs_max_y": max(alpha_abs_max_y, 1e-12),
@@ -241,8 +243,9 @@ class DataLoader:
         ):
             alpha = self.alpha_maps_true
             if alpha.ndim == 3 and alpha.shape[0] >= 2:
-                alpha_x = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
-                alpha_y = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
+                alpha_axis0 = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
+                alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
+                alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
                 scale = (self.motion_plot_context or {}).get("alpha_visual_scale", None)
                 alpha_abs_max_x = None if scale is None else scale.get("alpha_abs_max_x")
                 alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
@@ -262,8 +265,8 @@ class DataLoader:
                     abs_max=alpha_abs_max_y,
                 )
                 save_nonrigid_quiver_with_contours(
-                    alpha_x,
-                    alpha_y,
+                    alpha_axis0,
+                    alpha_axis1,
                     self.image_ground_truth[0],
                     "simulated_motion_quiver_input",
                     os.path.join(folder, "simulated_motion_quiver_input.png"),
@@ -283,7 +286,29 @@ class DataLoader:
     # Ncoils should be a perfect square (or close) for coil map generation
     def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
         # 1. Create phantom (Nx, Ny, Nz)
-        phantom_np_2d = resize(shepp_logan_phantom(), (N, N))
+        fill_fraction = float(getattr(self.params, "SheppLoganFillFraction", 0.82))
+        fill_fraction = min(max(fill_fraction, 0.1), 1.0)
+        phantom_native = shepp_logan_phantom()
+        h, w = phantom_native.shape
+        # Add margins by padding the native phantom before the final resize.
+        # This preserves the phantom shape definition without pre-shrinking it.
+        canvas_h = max(h, int(round(h / fill_fraction)))
+        canvas_w = max(w, int(round(w / fill_fraction)))
+        pad_top = (canvas_h - h) // 2
+        pad_bottom = canvas_h - h - pad_top
+        pad_left = (canvas_w - w) // 2
+        pad_right = canvas_w - w - pad_left
+        phantom_padded = np.pad(
+            phantom_native,
+            ((pad_top, pad_bottom), (pad_left, pad_right)),
+            mode="constant",
+            constant_values=0.0,
+        )
+        phantom_np_2d = resize(
+            phantom_padded,
+            (N, N),
+            anti_aliasing=True,
+        )
         phantom_2d = torch.tensor(
             phantom_np_2d,
             dtype=torch.float64,

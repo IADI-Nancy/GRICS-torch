@@ -6,5 +6,7 @@
     "JUPYTER_RUNTIME_DIR": "${workspaceFolder}/.jupyter_local/runtime",
     "IPYTHONDIR": "${workspaceFolder}/.jupyter_local",
     "NUMBA_CACHE_DIR": "/tmp/numba_cache"
-  }
+  },
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

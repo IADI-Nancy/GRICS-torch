@@ -15,6 +15,7 @@ from src.utils.save_alpha_component_map import save_alpha_component_map
 from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
 from src.utils.save_residual_subplots import save_residual_subplots
 from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
+from src.utils.nonrigid_display import to_cartesian_components
 
 def test_J_singularity(motionSimulator):
     Nalpha = motionSimulator.Nalpha
@@ -603,20 +604,24 @@ class JointReconstructor:
 
         alpha_x = alpha[0].detach().cpu()
         alpha_y = alpha[1].detach().cpu()
+        flip_for_display = getattr(
+            self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
+        )
+        alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
 
         if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
             components = (
-                ("alpha_x_real", alpha_x.real),
-                ("alpha_y_real", alpha_y.real),
-                ("alpha_x_imag", alpha_x.imag),
-                ("alpha_y_imag", alpha_y.imag),
+                ("alpha_x_real", alpha_x_cart.real),
+                ("alpha_y_real", alpha_y_cart.real),
+                ("alpha_x_imag", alpha_x_cart.imag),
+                ("alpha_y_imag", alpha_y_cart.imag),
             )
             alpha_x_for_quiver = alpha_x.real
             alpha_y_for_quiver = alpha_y.real
         else:
             components = (
-                ("alpha_x", alpha_x),
-                ("alpha_y", alpha_y),
+                ("alpha_x", alpha_x_cart),
+                ("alpha_y", alpha_y_cart),
             )
             alpha_x_for_quiver = alpha_x
             alpha_y_for_quiver = alpha_y
@@ -629,6 +634,7 @@ class JointReconstructor:
                     self.params.debug_folder,
                     f"{comp_name}_restart_{restart_idx}_level{level_idx}.png",
                 ),
+                flip_vertical=flip_for_display,
             )
 
         save_nonrigid_quiver_with_contours(
@@ -640,6 +646,7 @@ class JointReconstructor:
                 self.params.debug_folder,
                 f"motion_quiver_restart_{restart_idx}_level{level_idx}.png",
             ),
+            flip_vertical=flip_for_display,
         )
 
     def _save_final_nonrigid_alpha_maps(self, motion_model, reconstructed_image):
@@ -652,6 +659,10 @@ class JointReconstructor:
 
         alpha_x = motion_model[0].detach().cpu()
         alpha_y = motion_model[1].detach().cpu()
+        alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
+        flip_for_display = getattr(
+            self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
+        )
         scale = self.motion_plot_context.get("alpha_visual_scale", None)
         alpha_abs_max_x = None if scale is None else scale.get("alpha_abs_max_x")
         alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
@@ -659,15 +670,15 @@ class JointReconstructor:
 
         if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
             components = (
-                ("final_alpha_x_real", alpha_x.real),
-                ("final_alpha_y_real", alpha_y.real),
-                ("final_alpha_x_imag", alpha_x.imag),
-                ("final_alpha_y_imag", alpha_y.imag),
+                ("final_alpha_x_real", alpha_x_cart.real),
+                ("final_alpha_y_real", alpha_y_cart.real),
+                ("final_alpha_x_imag", alpha_x_cart.imag),
+                ("final_alpha_y_imag", alpha_y_cart.imag),
             )
         else:
             components = (
-                ("final_alpha_x", alpha_x),
-                ("final_alpha_y", alpha_y),
+                ("final_alpha_x", alpha_x_cart),
+                ("final_alpha_y", alpha_y_cart),
             )
 
         for name, comp in components:
@@ -681,6 +692,7 @@ class JointReconstructor:
                 comp,
                 name,
                 os.path.join(self.params.results_folder, f"{name}.png"),
+                flip_vertical=flip_for_display,
                 abs_max=abs_max,
             )
 
@@ -690,9 +702,7 @@ class JointReconstructor:
             reconstructed_image,
             "final_motion_quiver",
             os.path.join(self.params.results_folder, "final_motion_quiver.png"),
-            flip_vertical=getattr(
-                self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
-            ),
+            flip_vertical=flip_for_display,
             amp_vmax=amp_max,
         )
 

@@ -31,7 +31,7 @@ def _infer_has_ground_truth(params):
     motion_sim_type = getattr(params, "motion_simulation_type", None)
     if motion_sim_type is None:
         return getattr(params, "data_type", None) == "shepp-logan"
-    return motion_sim_type not in {"as-it-is", "no-motion"}
+    return motion_sim_type not in {"as-it-is", "no-motion-data"}
 
 
 def display_image_row(image_paths, subtitles, title=None, figsize=None):

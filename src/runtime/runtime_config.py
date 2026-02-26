@@ -38,6 +38,13 @@ _NONRIGID_MOTION_KEYS = {
     "displacementfield_size",
     "nonrigid_resp_cycles_min",
     "nonrigid_resp_cycles_max",
+    "nonrigid_spatial_model",
+    "nonrigid_diaphragm_level",
+    "nonrigid_diaphragm_sharpness",
+    "nonrigid_lateral_sigma",
+    "nonrigid_ap_fraction",
+    "nonrigid_inferior_gain",
+    "nonrigid_top_decay",
 }
 
 _CODE_DEFAULTS = {
@@ -89,7 +96,7 @@ def refresh_derived(params):
     elif params.motion_simulation_type == "non-rigid":
         # For realistic non-rigid simulation, keep user-defined reconstruction bins.
         params.N_motion_states = manual_states
-    elif params.motion_simulation_type in ["no-motion", "as-it-is"]:
+    elif params.motion_simulation_type in ["no-motion-data", "as-it-is"]:
         # No simulated motion: keep manual reconstruction value.
         params.N_motion_states = manual_states
 
@@ -186,7 +193,7 @@ def load_config(
     if motion_simulation_type_final is None and sampling_from_data:
         motion_simulation_type_final = "as-it-is"
     elif motion_simulation_type_final is None:
-        motion_simulation_type_final = "no-motion"
+        motion_simulation_type_final = "no-motion-data"
     cfg["motion_simulation_type"] = motion_simulation_type_final
 
     if "kspace_sampling_type" in cfg:
@@ -195,7 +202,7 @@ def load_config(
                 "NshotsPerNex and Nex are required when kspace_sampling_type is specified."
             )
 
-    if cfg["motion_simulation_type"] in {"as-it-is", "no-motion"}:
+    if cfg["motion_simulation_type"] in {"as-it-is", "no-motion-data"}:
         _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
     elif cfg["motion_simulation_type"] in {"rigid", "discrete-rigid"}:
         _drop_keys(cfg, _NONRIGID_MOTION_KEYS)

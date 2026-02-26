@@ -165,7 +165,7 @@ class RawDataReader:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    def read_motion_and_kspace(self):
+    def read_motion_and_kspace(self, slice_idx=None):
 
         time_saec, resp = RespiratoryDataReader.read_and_process_data(
             self.saec_file, self.sensor_type)
@@ -185,6 +185,18 @@ class RawDataReader:
 
         kspace = self.remove_oversampling(kspace)
 
+        if slice_idx is not None:
+            n_slices = int(kspace.shape[-1])
+            if slice_idx < 0 or slice_idx >= n_slices:
+                raise ValueError(
+                    f"slice_idx={slice_idx} is out of range for {n_slices} slices."
+                )
+            kspace = kspace[..., [slice_idx]]
+            motion_data = motion_data[[slice_idx], :]
+            line_idx_y = line_idx_y[[slice_idx], :]
+            line_idx_z = line_idx_z[[slice_idx], :]
+            line_idx_nex = line_idx_nex[[slice_idx], :]
+
         return {
             "kspace": kspace.detach().cpu().numpy(),
             "motion_data": motion_data.detach().cpu().numpy(),
@@ -194,9 +206,9 @@ class RawDataReader:
         }
 
 
-    def read_data_from_rawdata(self, h5filename=None):
+    def read_data_from_rawdata(self, h5filename=None, slice_idx=None):
 
-        data = self.read_motion_and_kspace()
+        data = self.read_motion_and_kspace(slice_idx=slice_idx)
 
         if h5filename is not None:
             with h5py.File(h5filename, 'w') as f:
