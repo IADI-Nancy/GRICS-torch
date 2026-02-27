@@ -303,15 +303,25 @@ class MotionSimulator:
     
 
     def create_discrete_non_rigid_alpha_fields(self):
-        spatial_model = getattr(self.params, "nonrigid_spatial_model", "respiratory")
+        spatial_model = self.params.nonrigid_spatial_model
         if spatial_model == "gaussian":
-            return self._create_gaussian_non_rigid_alpha_fields()
-        if spatial_model != "respiratory":
+            alpha_x, alpha_y, alpha_maps = self._create_gaussian_non_rigid_alpha_fields()
+        elif spatial_model == "respiratory":
+            alpha_x, alpha_y, alpha_maps = self._create_respiratory_non_rigid_alpha_fields()
+        else:
             raise ValueError(
                 f"Unknown nonrigid_spatial_model: {spatial_model}. "
                 "Supported: 'respiratory', 'gaussian'."
             )
-        return self._create_respiratory_non_rigid_alpha_fields()
+
+        # Keep synthetic motion region consistent with display orientation:
+        # if the image is vertically flipped for display, flip motion maps too.
+        if self.params.flip_for_display:
+            alpha_x = torch.flip(alpha_x, dims=[0])
+            alpha_y = torch.flip(alpha_y, dims=[0])
+            alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
+
+        return alpha_x, alpha_y, alpha_maps
 
     def _create_gaussian_non_rigid_alpha_fields(self):
         # Legacy Gaussian field kept as an optional fallback.
@@ -347,12 +357,12 @@ class MotionSimulator:
         y = torch.linspace(-1.0, 1.0, self.Ny, device=self.t_device, dtype=torch.float64)
         SI, LR = torch.meshgrid(x, y, indexing="ij")
 
-        diaphragm_level = float(getattr(self.params, "nonrigid_diaphragm_level", 0.2))
-        diaphragm_sharpness = float(getattr(self.params, "nonrigid_diaphragm_sharpness", 10.0))
-        lateral_sigma = float(getattr(self.params, "nonrigid_lateral_sigma", 0.45))
-        ap_fraction = float(getattr(self.params, "nonrigid_ap_fraction", 0.30))
-        inferior_gain = float(getattr(self.params, "nonrigid_inferior_gain", 0.35))
-        top_decay = float(getattr(self.params, "nonrigid_top_decay", 0.5))
+        diaphragm_level = float(self.params.nonrigid_diaphragm_level)
+        diaphragm_sharpness = float(self.params.nonrigid_diaphragm_sharpness)
+        lateral_sigma = float(self.params.nonrigid_lateral_sigma)
+        ap_fraction = float(self.params.nonrigid_ap_fraction)
+        inferior_gain = float(self.params.nonrigid_inferior_gain)
+        top_decay = float(self.params.nonrigid_top_decay)
 
         # Smooth mask that activates motion predominantly in the upper anatomy.
         region_mask = torch.sigmoid((-SI - diaphragm_level) * diaphragm_sharpness)
@@ -407,9 +417,7 @@ class MotionSimulator:
         if self.params.debug_flag:
             print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
             os.makedirs(self.params.debug_folder, exist_ok=True)
-            flip_for_display = getattr(
-                self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
-            )
+            flip_for_display = self.params.flip_for_display
             alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
             save_alpha_component_map(
                 alpha_x_cart,
@@ -448,8 +456,8 @@ class MotionSimulator:
         n_lines_total = self.Ny * self.params.Nex
         line_idx = torch.arange(n_lines_total, device=self.t_device, dtype=torch.float64)
 
-        cycles_min = float(getattr(self.params, "nonrigid_resp_cycles_min", 2.0))
-        cycles_max = float(getattr(self.params, "nonrigid_resp_cycles_max", 5.0))
+        cycles_min = float(self.params.nonrigid_resp_cycles_min)
+        cycles_max = float(self.params.nonrigid_resp_cycles_max)
         if cycles_min <= 0 or cycles_max <= 0:
             raise ValueError("nonrigid_resp_cycles_min/max must be > 0.")
         if cycles_min > cycles_max:
@@ -475,7 +483,7 @@ class MotionSimulator:
         self.TotalKspaceSamples = self.Ny * self.Nx
 
         alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
-        amp = float(getattr(self.params, "nonrigid_motion_amplitude", 1.0))
+        amp = float(self.params.nonrigid_motion_amplitude)
         alpha_maps = alpha_maps * amp
         self.alpha_maps = alpha_maps
 
@@ -483,15 +491,14 @@ class MotionSimulator:
         self.apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
         # Keep compatibility with downstream plotting/debug interfaces.
+        # TODO to remove this part and to make a proper separation between rigid and non-rigid motion information in the codebase.
         self.tx = self.navigator.clone()
         self.ty = torch.zeros_like(self.navigator)
         self.phi = torch.zeros_like(self.navigator)
 
         if self.params.debug_flag:
             os.makedirs(self.params.debug_folder, exist_ok=True)
-            flip_for_display = getattr(
-                self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
-            )
+            flip_for_display = self.params.flip_for_display
             alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x * amp, alpha_y * amp)
             save_alpha_component_map(
                 alpha_x_cart,

@@ -101,7 +101,7 @@ class JointReconstructor:
         self.Data_full["SamplingIndices"] = SamplingIndices
 
     def _console(self, message):
-        if getattr(self.params, "print_to_console", True):
+        if self.params.print_to_console:
             print(message)
 
     def resize_img_2D(self, img, new_size):
@@ -604,9 +604,7 @@ class JointReconstructor:
 
         alpha_x = alpha[0].detach().cpu()
         alpha_y = alpha[1].detach().cpu()
-        flip_for_display = getattr(
-            self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
-        )
+        flip_for_display = self.params.flip_for_display
         alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
 
         if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
@@ -660,9 +658,7 @@ class JointReconstructor:
         alpha_x = motion_model[0].detach().cpu()
         alpha_y = motion_model[1].detach().cpu()
         alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
-        flip_for_display = getattr(
-            self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
-        )
+        flip_for_display = self.params.flip_for_display
         scale = self.motion_plot_context.get("alpha_visual_scale", None)
         alpha_abs_max_x = None if scale is None else scale.get("alpha_abs_max_x")
         alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
@@ -731,12 +727,12 @@ class JointReconstructor:
             nbins=self.params.N_motion_states,
             output_folder=self.params.results_folder,
             resolution_levels=self.motion_plot_context.get(
-                "resolution_levels", getattr(self.params, "ResolutionLevels", None)
+                "resolution_levels", self.params.ResolutionLevels
             ),
             tx=tx,
             ty=ty,
             phi=phi,
-            data_type=self.motion_plot_context.get("data_type", getattr(self.params, "data_type", None)),
+            data_type=self.motion_plot_context.get("data_type", self.params.data_type),
             y_limits=self.motion_plot_context.get("y_limits"),
         )
 
@@ -783,7 +779,7 @@ class JointReconstructor:
                     best_motion,
                 ) = self._initialize_level_tracking()
                 s_res = Data_res["KspaceData"].flatten()
-                show_bar = getattr(self.params, "jupyter_notebook_flag", False)
+                show_bar = self.params.jupyter_notebook_flag
                 bar_ctx = tqdm(
                     total=GN_iter,
                     desc=f"Resolution level {idx_res + 1}/{len(ResLevels)}",
@@ -892,11 +888,7 @@ class JointReconstructor:
                         Data_res["ReconstructedImage"][0],
                         'image_restart_' + str(restart + 1) + '_resolution_level' + str(idx_res+1),
                         self.params.debug_folder,
-                        flip_for_display=getattr(
-                            self.params,
-                            "flip_for_display",
-                            self.params.data_type in {"real-world", "raw-data"},
-                        ),
+                        flip_for_display=self.params.flip_for_display,
                     )
                     self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
                 restart_log["recon_residuals_by_level"][idx_res] = residual_recon_norms
@@ -945,11 +937,7 @@ class JointReconstructor:
             global_best_image_unscaled[0],
             'reconstructed_image',
             self.params.results_folder,
-            flip_for_display=getattr(
-                self.params,
-                "flip_for_display",
-                self.params.data_type in {"real-world", "raw-data"},
-            ),
+            flip_for_display=self.params.flip_for_display,
         )
         if self.params.motion_type == "rigid":
             self._save_final_rigid_motion_plots(global_best_motion)

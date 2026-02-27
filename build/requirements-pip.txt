@@ -5,3 +5,4 @@ ipywidgets==8.1.7
 jupyterlab_widgets==3.0.15
 widgetsnbextension==4.0.14
 nvidia-cudnn-cu12
+pydicom==3.0.1

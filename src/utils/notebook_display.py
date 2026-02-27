@@ -28,9 +28,9 @@ def _first_existing_glob(folder, *patterns):
 
 
 def _infer_has_ground_truth(params):
-    motion_sim_type = getattr(params, "motion_simulation_type", None)
+    motion_sim_type = params.motion_simulation_type
     if motion_sim_type is None:
-        return getattr(params, "data_type", None) == "shepp-logan"
+        return params.data_type == "shepp-logan"
     return motion_sim_type not in {"as-it-is", "no-motion-data"}
 
 

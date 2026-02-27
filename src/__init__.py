@@ -26,7 +26,7 @@ def _setup_env_guards():
 
 
 def _setup_warning_filters():
-    visible_dep_warn = getattr(getattr(np, "exceptions", object()), "VisibleDeprecationWarning", Warning)
+    visible_dep_warn = np.exceptions.VisibleDeprecationWarning
     warnings.filterwarnings(
         "ignore",
         message=r"This function is deprecated and will be removed in a future release\. "

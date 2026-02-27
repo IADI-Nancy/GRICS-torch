@@ -80,7 +80,7 @@ def refresh_derived(params):
     if not hasattr(params, "motion_simulation_type"):
         params.motion_simulation_type = "as-it-is"
 
-    manual_states = int(getattr(params, "N_motion_states", 4))
+    manual_states = int(params.N_motion_states)
     if manual_states < 1:
         raise ValueError("N_motion_states must be >= 1.")
     params.N_motion_states = manual_states
@@ -120,6 +120,7 @@ def load_config(
     motion_type=None,
     reconstruction_config,
     shepp_logan_config=None,
+    from_image_config=None,
     sampling_config=None,
     motion_simulation_config=None,
     motion_simulation_type=None,
@@ -149,6 +150,12 @@ def load_config(
         if not shepp_logan_config:
             raise ValueError("shepp_logan_config is required when data_type='shepp-logan'.")
         cfg.update(_load_toml_flat(shepp_logan_config))
+    elif data_type in {"from_image", "from_dicom"}:
+        if from_image_config is None:
+            raise ValueError(
+                "from_image_config is required when data_type is 'from_image' or 'from_dicom'."
+            )
+        cfg.update(_load_toml_flat(from_image_config))
     elif data_type in {"real-world", "raw-data"}:
         pass
     else:
@@ -183,10 +190,16 @@ def load_config(
         _drop_keys(cfg, {"kspace_sampling_type", "NshotsPerNex", "Nex", "Nshots"})
         sampling_from_data = True
 
-    if data_type != "real-world" and sampling_from_data:
+    if data_type not in {"real-world", "raw-data"} and sampling_from_data:
         raise ValueError(
-            "Sampling configuration is required when data_type is not 'real-world'. "
+            "Sampling configuration is required when data_type is not 'real-world'/'raw-data'. "
             "Provide sampling_config or kspace_sampling_type (+ Nex/NshotsPerNex)."
+        )
+
+    if data_type in {"from_image", "from_dicom"} and motion_simulation_config is None and motion_simulation_type is None:
+        raise ValueError(
+            "motion_simulation_config (or motion_simulation_type override) is required "
+            "for data_type='from_image'/'from_dicom'."
         )
 
     motion_simulation_type_final = cfg.get("motion_simulation_type")

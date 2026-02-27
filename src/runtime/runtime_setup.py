@@ -77,7 +77,7 @@ def install_runtime_safety_guards():
 
 def initialize_runtime(params, print_gpu_info=False):
     install_runtime_safety_guards()
-    if getattr(params, "clean_output_folders_before_run", True):
+    if params.clean_output_folders_before_run:
         clean_run_output_folders(params)
 
     try:

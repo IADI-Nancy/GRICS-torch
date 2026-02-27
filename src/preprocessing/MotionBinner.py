@@ -69,12 +69,12 @@ class MotionBinner:
             ky_idx=ky_idx,
             nex_idx=nex_idx,
             nbins=Nbins,
-            output_folder=getattr(params, "input_data_folder", params.debug_folder),
-            resolution_levels=getattr(params, "ResolutionLevels", None),
+            output_folder=params.input_data_folder,
+            resolution_levels=params.ResolutionLevels,
             tx=tx,
             ty=ty,
             phi=phi,
-            data_type=getattr(params, "data_type", None),
+            data_type=params.data_type,
             y_limits=y_limits,
         )
 

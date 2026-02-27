@@ -76,7 +76,7 @@ class SamplingSimulator:
             SamplingSimulator.visualize_ky_order(
                 ky_per_shot[nex],
                 Ny=self.Ny,
-                folder=getattr(self.params, "input_data_folder", self.params.debug_folder),
+                folder=self.params.input_data_folder,
                 fname=f"ky_order_nex{nex+1}.png"
             )
 

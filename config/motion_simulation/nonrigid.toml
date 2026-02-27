@@ -2,10 +2,10 @@
 # Motion simulation model used for synthetic corruption.
 motion_simulation_type = "non-rigid"
 # Global scale for synthetic non-rigid displacement fields.
-nonrigid_motion_amplitude = 5.0
+nonrigid_motion_amplitude = 2.0
 # Random respiratory cycles over full acquisition duration.
-nonrigid_resp_cycles_min = 5.0
-nonrigid_resp_cycles_max = 7.0
+nonrigid_resp_cycles_min = 6
+nonrigid_resp_cycles_max = 7
 
 # Spatial non-rigid model: "respiratory" (default) or "gaussian" (legacy).
 nonrigid_spatial_model = "respiratory"

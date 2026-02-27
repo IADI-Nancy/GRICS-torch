@@ -2,6 +2,7 @@ import numpy as np
 import os
 import torch
 from skimage.data import shepp_logan_phantom
+from skimage import io as skio
 from skimage.transform import resize
 import math
 import h5py
@@ -50,7 +51,7 @@ class DataLoader:
             # TODO: detect rigid motion events from navigator/belt signal and update
             # params.N_motion_states automatically before motion binning/reconstruction.
             raise NotImplementedError(
-                "recalculate_n_motion_states_from_navigator is not implemented yet for "
+                "recalculate_n_motion_states_from_navigator is not implemented yet for " # TODO to remove recalculate_n_motion_states_from_navigator everywhere
                 "real-world/raw-data rigid motion."
             )
 
@@ -74,6 +75,10 @@ class DataLoader:
                     "'ismrmrd_file' and 'saec_file'."
                 )
             self.load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
+        elif self.params.data_type == 'from_image':
+            self.load_from_image(self.filename)
+        elif self.params.data_type == 'from_dicom':
+            self.load_from_dicom(self.filename)
         else:
             raise ValueError("Unknown data_type")
 
@@ -149,8 +154,8 @@ class DataLoader:
                 "labels": self.motion_labels,
                 "ky_idx": self.ky_idx_chronological,
                 "nex_idx": self.nex_idx_chronological,
-                "resolution_levels": getattr(self.params, "ResolutionLevels", None),
-                "data_type": getattr(self.params, "data_type", None),
+                "resolution_levels": self.params.ResolutionLevels,
+                "data_type": self.params.data_type,
                 "y_limits": y_limits,
                 "alpha_visual_scale": None,
             }
@@ -206,14 +211,12 @@ class DataLoader:
         )
 
     def _save_input_data_artifacts(self):
-        folder = getattr(self.params, "input_data_folder", None)
+        folder = self.params.input_data_folder
         if not folder:
             return
         os.makedirs(folder, exist_ok=True)
 
-        flip_for_display = getattr(
-            self.params, "flip_for_display", self.params.data_type in {"real-world", "raw-data"}
-        )
+        flip_for_display = self.params.flip_for_display
 
         if (
             self._has_simulated_motion()
@@ -282,11 +285,128 @@ class DataLoader:
             "discrete-non-rigid",
         }
 
+    @staticmethod
+    def _normalize_real_image(arr):
+        arr = np.asarray(arr)
+        if arr.ndim > 2:
+            # RGB(A) -> grayscale luminance
+            arr = arr[..., :3]
+            arr = 0.2989 * arr[..., 0] + 0.5870 * arr[..., 1] + 0.1140 * arr[..., 2]
+        arr = np.squeeze(arr).astype(np.float64, copy=False)
+        if np.iscomplexobj(arr):
+            arr = np.abs(arr)
+        if arr.ndim != 2:
+            raise ValueError(f"Expected a 2D image after conversion, got shape {arr.shape}.")
+        arr -= np.min(arr)
+        denom = np.max(arr)
+        if denom > 0:
+            arr /= denom
+        return arr
+
+    def _create_synthetic_coil_maps(self, Nx, Ny, Ncoils, Nz=1, random_phase=True):
+        X, Y = torch.meshgrid(
+            torch.arange(1, Nx + 1, device=self.t_device, dtype=torch.float64),
+            torch.arange(1, Ny + 1, device=self.t_device, dtype=torch.float64),
+            indexing="ij",
+        )
+
+        sigma = max(Nx, Ny) / 4.0
+        grid_size = math.ceil(math.sqrt(Ncoils))
+        xs = torch.linspace(Nx / 4.0, 3.0 * Nx / 4.0, grid_size, device=self.t_device)
+        ys = torch.linspace(Ny / 4.0, 3.0 * Ny / 4.0, grid_size, device=self.t_device)
+        centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]
+
+        smaps_2d = torch.empty((Ncoils, Nx, Ny), dtype=torch.cdouble, device=self.t_device)
+        for c, (x0, y0) in enumerate(centers):
+            profile = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2.0 * sigma ** 2))
+            phase = (
+                torch.exp(1j * 2.0 * math.pi * torch.rand(1, device=self.t_device))
+                if random_phase else 1.0
+            )
+            smaps_2d[c] = profile * phase
+
+        smaps = smaps_2d.unsqueeze(-1).expand(Ncoils, Nx, Ny, Nz)
+        self.smaps_generated = smaps.clone()
+        return smaps
+
+    def _build_synthetic_kspace_from_reference_image(self, image_2d):
+        image_2d = image_2d.to(self.t_device, dtype=torch.float64)
+        Nx, Ny = image_2d.shape
+        Nz = 1
+        Ncoils = int(self.params.Ncoils_input)
+
+        smaps = self._create_synthetic_coil_maps(Nx, Ny, Ncoils, Nz=Nz, random_phase=True)
+        ref = image_2d.unsqueeze(-1).expand(Nx, Ny, Nz).unsqueeze(0)  # (1, Nx, Ny, Nz)
+        coil_imgs = ref * smaps  # (Ncoils, Nx, Ny, Nz)
+        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1).contiguous()
+
+        self.kspace = fftnc(coil_imgs, dims=(-3, -2, -1))
+        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+
+        samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
+        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
+
+    def _apply_resize_factor(self, img_np):
+        factor = float(self.params.image_resize_factor)
+        if factor <= 0:
+            raise ValueError("image_resize_factor must be > 0.")
+        if factor == 1.0:
+            return img_np
+        h, w = img_np.shape
+        new_h = max(1, int(round(h * factor)))
+        new_w = max(1, int(round(w * factor)))
+        return resize(
+            img_np,
+            (new_h, new_w),
+            anti_aliasing=True,
+            preserve_range=True,
+        )
+
+    def load_from_image(self, path_to_image):
+        ext = os.path.splitext(path_to_image)[1].lower()
+        if ext == ".npy":
+            img_np = np.load(path_to_image)
+        elif ext == ".npz":
+            npz = np.load(path_to_image)
+            keys = list(npz.keys())
+            if not keys:
+                raise ValueError(f"No arrays found in NPZ file: {path_to_image}")
+            img_np = npz[keys[0]]
+        else:
+            img_np = skio.imread(path_to_image)
+
+        img_np = self._normalize_real_image(img_np)
+        img_np = self._apply_resize_factor(img_np)
+        img_t = torch.from_numpy(img_np).to(self.t_device, dtype=torch.float64)
+        self._build_synthetic_kspace_from_reference_image(img_t)
+
+    def load_from_dicom(self, path_to_dicom):
+        try:
+            import pydicom
+        except ImportError as e:
+            raise ImportError(
+                "pydicom is required for data_type='from_dicom'. "
+                "Install it with: pip install pydicom"
+            ) from e
+
+        ds = pydicom.dcmread(path_to_dicom)
+        px = ds.pixel_array.astype(np.float64, copy=False)
+        if px.ndim > 2:
+            # Use first frame if multi-frame DICOM is provided.
+            px = px[0]
+        slope = float(ds.RescaleSlope)
+        intercept = float(ds.RescaleIntercept)
+        px = px * slope + intercept
+        img_np = self._normalize_real_image(px)
+        img_np = self._apply_resize_factor(img_np)
+        img_t = torch.from_numpy(img_np).to(self.t_device, dtype=torch.float64)
+        self._build_synthetic_kspace_from_reference_image(img_t)
+
 
     # Ncoils should be a perfect square (or close) for coil map generation
     def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
         # 1. Create phantom (Nx, Ny, Nz)
-        fill_fraction = float(getattr(self.params, "SheppLoganFillFraction", 0.82))
+        fill_fraction = float(self.params.SheppLoganFillFraction)
         fill_fraction = min(max(fill_fraction, 0.1), 1.0)
         phantom_native = shepp_logan_phantom()
         h, w = phantom_native.shape
@@ -402,8 +522,8 @@ class DataLoader:
             "labels": self.motion_labels,
             "ky_idx": self.ky_idx_chronological,
             "nex_idx": self.nex_idx_chronological,
-            "resolution_levels": getattr(self.params, "ResolutionLevels", None),
-            "data_type": getattr(self.params, "data_type", None),
+            "resolution_levels": self.params.ResolutionLevels,
+            "data_type": self.params.data_type,
             "y_limits": y_limits,
         }
         self.binned_indices = self.ky_per_motion
@@ -412,7 +532,7 @@ class DataLoader:
         SamplingSimulator.visualize_ky_order(
             [self.ky_idx.detach().cpu()],
             Ny=self.Ny,
-            folder=getattr(self.params, "input_data_folder", self.params.debug_folder),
+            folder=self.params.input_data_folder,
             fname=f"ky_order_rawdata_slice{slice_idx}.png"
         )
         
@@ -454,8 +574,8 @@ class DataLoader:
             "labels": self.motion_labels,
             "ky_idx": self.ky_idx_chronological,
             "nex_idx": self.nex_idx_chronological,
-            "resolution_levels": getattr(self.params, "ResolutionLevels", None),
-            "data_type": getattr(self.params, "data_type", None),
+            "resolution_levels": self.params.ResolutionLevels,
+            "data_type": self.params.data_type,
             "y_limits": y_limits,
         }
         self.binned_indices = self.ky_per_motion
@@ -464,14 +584,14 @@ class DataLoader:
         SamplingSimulator.visualize_ky_order(
             [self.ky_idx.detach().cpu()],
             Ny=self.Ny,
-            folder=getattr(self.params, "input_data_folder", self.params.debug_folder),
+            folder=self.params.input_data_folder,
             fname=f"ky_order_realworld_slice{slice_idx}.png"
         )
 
     def calc_espirit_maps(self):
         acs=self.params.acs
         kernel_width=self.params.kernel_width
-        espirit_max_iter = getattr(self.params, "espirit_max_iter", 100)
+        espirit_max_iter = self.params.espirit_max_iter
         sp_device=self.sp_device
         kspace = self.kspace
         device = kspace.device             # torch device of input
@@ -587,11 +707,7 @@ class DataLoader:
                 img_back[0],
                 "gn_input_consistency_recovered_image",
                 self.params.debug_folder,
-                flip_for_display=getattr(
-                    self.params,
-                    "flip_for_display",
-                    self.params.data_type in {"real-world", "raw-data"},
-                ),
+                flip_for_display=self.params.flip_for_display,
             )
 
 
