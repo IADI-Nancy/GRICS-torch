@@ -53,6 +53,7 @@ _CODE_DEFAULTS = {
     "espirit_max_iter": 100,
     "nonrigid_resp_cycles_min": 2.0,
     "nonrigid_resp_cycles_max": 5.0,
+    "jupyter_notebook_flag": False,
 }
 
 
@@ -68,8 +69,12 @@ def refresh_derived(params):
         params.flip_for_display = params.data_type in {"real-world", "raw-data"}
     if not hasattr(params, "clean_output_folders_before_run"):
         params.clean_output_folders_before_run = True
+    if not hasattr(params, "jupyter_notebook_flag"):
+        params.jupyter_notebook_flag = False
     if not hasattr(params, "print_to_console"):
-        params.print_to_console = True
+        params.print_to_console = not bool(params.jupyter_notebook_flag)
+    if not hasattr(params, "verbose"):
+        params.verbose = not bool(params.jupyter_notebook_flag)
 
     has_sampling_sim = hasattr(params, "NshotsPerNex") and hasattr(params, "Nex")
     if has_sampling_sim:
@@ -226,6 +231,13 @@ def load_config(
 
     for key, value in (overrides or {}).items():
         cfg[key] = value
+
+    # Derive console verbosity from notebook mode unless explicitly overridden.
+    notebook_flag = bool(cfg.get("jupyter_notebook_flag", False))
+    if not overrides or "print_to_console" not in overrides:
+        cfg["print_to_console"] = not notebook_flag
+    if not overrides or "verbose" not in overrides:
+        cfg["verbose"] = not notebook_flag
 
     if "flip_for_display" not in cfg:
         cfg["flip_for_display"] = data_type in {"real-world", "raw-data"}

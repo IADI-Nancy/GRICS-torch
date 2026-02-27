@@ -74,7 +74,9 @@ def display_image_row(image_paths, subtitles, title=None, figsize=None):
     plt.show()
 
 
-def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_notebook_flag=False):
+def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_notebook_flag=None):
+    if jupyter_notebook_flag is None:
+        jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
     if not jupyter_notebook_flag:
         return
     if has_ground_truth is None:
@@ -139,7 +141,9 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
         )
 
 
-def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_notebook_flag=False):
+def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_notebook_flag=None):
+    if jupyter_notebook_flag is None:
+        jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
     if not jupyter_notebook_flag:
         return
     if has_ground_truth is None:

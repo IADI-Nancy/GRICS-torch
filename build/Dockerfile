@@ -15,13 +15,13 @@ COPY conda_environment.yml /tmp/conda_environment.yml
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
     && apt update \
     && apt install -y --no-install-recommends \
-        wget=1.21.2-2ubuntu1.1 \
-        unzip=6.0-26ubuntu3.2 \
-        git=1:2.34.1-1ubuntu1.15 \
-        openssh-client=1:8.9p1-3ubuntu0.13 \
-        sudo=1.9.9-1ubuntu2.5 \
-        ca-certificates=20240203~22.04.1 \
-        bzip2=1.0.8-5build1 \
+        wget \
+        unzip \
+        git \
+        openssh-client \
+        sudo \
+        ca-certificates \
+        bzip2 \
         build-essential=12.9ubuntu3 \
         cmake=3.22.1-1ubuntu1.22.04.2 \
         liblapacke-dev=3.10.0-2ubuntu1 \
@@ -69,49 +69,16 @@ RUN pip install --no-cache-dir \
     pandas==2.3.3 \
     scikit-image==0.26.0
 
-
-
 ENV CUDA_PATH=/usr/local/cuda-12.1
 ENV NVCC=$CUDA_PATH/bin/nvcc
 ENV PATH=$CUDA_PATH/bin:$PATH
 ENV LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
 # -------------------------------------------------------------------
-# Install BART
-# -------------------------------------------------------------------
-# Download and extract
-RUN mkdir -p /opt/bart \
-    && wget https://github.com/mrirecon/bart/archive/refs/tags/v0.9.00.tar.gz \
-    && tar xzvf v0.9.00.tar.gz -C /opt/bart --strip-components=1 \
-    && rm v0.9.00.tar.gz \
-    && cd /opt/bart \
-    && CUDA=1 \
-        CUDNN=1 \
-        CUDA_PATH=$CUDA_PATH \
-        NVCC=$NVCC \
-        CC=gcc-11 \
-        CXX=g++-11 \
-        CPPFLAGS="-I/opt/bart/src -I$CUDA_PATH/include" \ 
-        CFLAGS="-I/opt/bart/src -I$CUDA_PATH/include" \
-        LDFLAGS="-L$CUDA_PATH/lib64" \
-        make -j$(nproc) 
-
-# Add BART to PATH
-ENV BART_TOOLBOX_PATH=/opt/bart
-ENV PATH=/opt/bart:$PATH
-ENV PYTHONPATH="/opt/bart/python" 
-# Force single-threading for BART (speeds up slice-wise operations)
-ENV OMP_NUM_THREADS=1
-
-# -------------------------------------------------------------------
 # Install h5py wrapper for SAEC files
 # -------------------------------------------------------------------
 RUN git clone https://github.com/IADI-Nancy/wrapperHDF5.git /opt/wrapperHDF5
-ENV PYTHONPATH=/opt/bart/python:/opt/wrapperHDF5
-# -------------------------------------------------------------------
-
-# -------------------------------------------------------------------
-# Startup (needed for usage in IADI lab network)
+ENV PYTHONPATH=/opt/wrapperHDF5
 # -------------------------------------------------------------------
 
 RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL\n\

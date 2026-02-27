@@ -1,8 +1,8 @@
-# GRICS-torch: GRICS MRI Motion-Corrected Reconstruction in PyTorch
+# GRICS-torch: GRICS MRI motion-corrected reconstruction in PyTorch
 
-This repository currently contains a 2D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support reuse.
+This repository currently contains a 2D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
 
-Please contact Karyna Isaieva (karyna.isaieva@univ-lorraine.fr) for any bug reports.
+Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
 ## Repository layout
 
@@ -44,20 +44,44 @@ Required config files:
 - a sampling simulation config file
 - a motion simulation config file (otherwise there is nothing to correct)
 
+### `from_image`
+
+Loaded from a 2D image file and converted to synthetic multi-coil k-space using generated coil maps.
+Supported inputs include common image formats (e.g. PNG/JPEG/TIFF) and NumPy arrays (`.npy`, `.npz`).
+
+Required config files:
+- `config/from_image.toml`
+- a sampling simulation config file
+- a motion simulation config file
+
+### `from_dicom`
+
+Loaded from a DICOM image (`pydicom`) and converted to synthetic multi-coil k-space using generated coil maps.
+
+Required config files:
+- `config/from_image.toml`
+- a sampling simulation config file
+- a motion simulation config file
+
 ### `real-world`
 
 Loaded via `DataLoader.load_realworld_data(...)` from HDF5 with datasets:
-- `kspace`
-- `motion_data` - already reordered 
-- sampling order (`idx_ky`, `idx_kz` and `idx_nex`)
+- `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
+- `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
+- `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
+- `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`) (read from file; not used in current 2D reconstruction path)
+- `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 
-No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
+The slice index should be specified as an input argument of the DataLoader (0 is the default slice index). No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
 
 ### `raw-data`
 
 Loaded from raw scanner and physiological files using `RawDataReader`:
 - the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
 - physiological data file in SAEC [2, 3] format (`saec_file`)
+
+The reader will convert these files to the format corresponding to the 'real-world' mode.
+
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -140,7 +164,7 @@ Key points:
 - simulation state count and reconstruction state count can differ.
 - corruption may be line-wise (`Ny * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
 
-State-count rules are set in `runtime_config.refresh_derived(...)`:
+Default state-count rules are set in `runtime_config.refresh_derived(...)`:
 - `discrete-rigid` and `discrete-non-rigid`: `N_motion_states = Nshots`
 - `rigid`: `N_motion_states = num_motion_events + 1`
 - `non-rigid`, `as-it-is` and `no-motion-data`: `N_motion_states` stays the reconstruction config value
