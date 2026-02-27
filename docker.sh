@@ -1,5 +1,6 @@
-IMAGE_NAME=ghcr.io/iadi-nancy/grics-torch
-IMAGE_VERSION=1.0.0
+IMAGE_NAME=${IMAGE_NAME:-ghcr.io/iadi-nancy/grics-torch}
+IMAGE_VERSION=${IMAGE_VERSION:-1.0.0}
+DOCKERFILE=${DOCKERFILE:-build/Dockerfile}
 
 IMAGE="${IMAGE_NAME}:${IMAGE_VERSION}"
 CONTAINER_SUFFIX=grics-torch
@@ -7,6 +8,10 @@ CONTAINER_SUFFIX=grics-torch
 WKDIR=$(pwd)
 
 EXTRAS=(  )
+if [ -n "${EXTRA_MOUNTS:-}" ]; then
+	# shellcheck disable=SC2206
+	EXTRAS+=( ${EXTRA_MOUNTS} )
+fi
 # put this in extras
 # if you want to add something into .bashrc without loosing it
 # -v .bashrcoverride:/home/pyuser/.bashrcoverride
@@ -98,11 +103,11 @@ rm)
 	;;
 
 build)
-	docker build -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --rm=true build/
+	docker build -f $DOCKERFILE -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --rm=true build/
 	;;
 
 build-nocache)
-	docker build -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --no-cache --rm=true build/
+	docker build -f $DOCKERFILE -t $IMAGE --build-arg PYTORCH_VER=$IMAGE_VERSION --network=host --no-cache --rm=true build/
 	;;
 
 push)
