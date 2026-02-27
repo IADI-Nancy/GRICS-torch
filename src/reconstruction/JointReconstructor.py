@@ -1,9 +1,7 @@
 import torch
 import torch.nn.functional as F
-import os
 import time
 from contextlib import nullcontext
-
 from tqdm.auto import tqdm
 
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
@@ -11,68 +9,25 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
 from src.utils.show_and_save_image import show_and_save_image
-from src.utils.save_alpha_component_map import save_alpha_component_map
-from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
-from src.utils.save_residual_subplots import save_residual_subplots
-from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
-from src.utils.nonrigid_display import to_cartesian_components
-
-def test_J_singularity(motionSimulator):
-    Nalpha = motionSimulator.Nalpha
-    N_motion_states = len(motionSimulator.SamplingIndices[0])
-
-    dim = Nalpha * N_motion_states
-
-    # Build JHJ matrix explicitly (small system only!)
-    JHJ = torch.zeros((dim, dim), device=motionSimulator.device)
-
-    for i in range(dim):
-        e = torch.zeros(dim, device=motionSimulator.device)
-        e[i] = 1.0
-
-        Je = motionSimulator.forward(e)
-        JHJe = motionSimulator.adjoint(Je)
-
-        JHJ[:, i] = JHJe
-
-    # SVD
-    U, S, V = torch.linalg.svd(JHJ)
-
-    print("Singular values of JHJ:")
-    print(S)
-
-    print("Smallest singular value:", S[-1])
-    print("Condition number:", S[0] / S[-1])
-
-    print("Null-space direction (last right singular vector):")
-    print(V[-1])
-
-    return S, V
-
-def _format_cg_info(cg_info):
-    if cg_info is None:
-        return "flag = -1, relres = nan, iter = 0"
-    return (
-        f"flag = {cg_info.get('flag', -1)}, "
-        f"relres = {cg_info.get('relres', float('nan')):.6e}, "
-        f"iter = {cg_info.get('iterations', 0)}"
-    )
+from src.utils.save_final_motion_plots import save_final_nonrigid_alpha_maps, save_final_rigid_motion_plots
+from src.utils.joint_reconstructor_utils import (
+    _append_restart_log,
+    _format_cg_info,
+    _init_restart_logging,
+    _initialize_global_tracking,
+    _initialize_level_tracking,
+    _resolve_gn_iterations_per_level,
+    _save_nonrigid_motion_debug,
+    _save_restart_residual_plots,
+    _update_global_best,
+)
 
 # --------------------------------------------------------------------------
 # Class that performs joint image–motion reconstruction
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(
-        self,
-        KspaceData,
-        smaps,
-        SamplingIndices,
-        motion_signal,
-        params,
-        kspace_scale=1.0,
-        motion_plot_context=None,
-    ):
+    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None):
         Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
 
         # Parameters constant for all resolutions        
@@ -243,24 +198,13 @@ class JointReconstructor:
 
     
     def build_encoding_operator(self, Data_res):
-        E = EncodingOperator(
-            Data_res["SensitivityMaps"],
-            Data_res["Nsamples"],
-            Data_res["SamplingIndices"],
-            self.params.Nex,
-            Data_res["MotionOperator"]
-        )
+        E = EncodingOperator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
+                             self.params.Nex, Data_res["MotionOperator"])
         return E
     
     def build_motion_perturbation_simulator(self, Data_res):
-        J = MotionPerturbationSimulator(
-            Data_res["SensitivityMaps"],
-            Data_res["Nsamples"],
-            Data_res["SamplingIndices"],
-            self.params.Nex,
-            Data_res["ReconstructedImage"],
-            Data_res["MotionOperator"]
-        )
+        J = MotionPerturbationSimulator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
+                                        self.params.Nex, Data_res["ReconstructedImage"], Data_res["MotionOperator"])
         return J
 
     def _assign_cached_reg_scale(self, Data_res, cache_key, solver, reference_vec):
@@ -283,25 +227,14 @@ class JointReconstructor:
 
         b = E.adjoint(Data_res["KspaceData"])
         solver = ConjugateGradientSolver(
-            E,
-            reg_lambda=self.params.lambda_r,
-            verbose=self.params.verbose,
-            early_stopping=self.params.cg_early_stopping,
-            true_residual_interval=self.params.cg_true_residual_interval,
-            max_stag_steps=self.params.cg_max_stag_steps,
-            max_more_steps=self.params.cg_max_more_steps,
-            use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+            E, reg_lambda=self.params.lambda_r, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
+            true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
+            max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
             reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
         )
         self._assign_cached_reg_scale(Data_res, "image", solver, b.flatten())
 
-        img_vec = solver.cg(
-            b.flatten(),
-            x0=x0.flatten(),
-            max_iter=self.params.max_iter_recon,
-            tol=self.params.tol_recon,
-            M=None,
-        )
+        img_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_recon, tol=self.params.tol_recon, M=None)
         self._last_image_cg_info = solver.last_info
 
         img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
@@ -438,17 +371,11 @@ class JointReconstructor:
 
         if self.params.motion_type == "non-rigid":
             solver = ConjugateGradientSolver(
-                J,
-                reg_lambda=self.params.lambda_m,
-                regularizer="Tikhonov_gradient",
-                regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
-                verbose=self.params.verbose,
-                early_stopping=self.params.cg_early_stopping,
-                true_residual_interval=self.params.cg_true_residual_interval,
-                max_stag_steps=self.params.cg_max_stag_steps,
-                max_more_steps=self.params.cg_max_more_steps,
-                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
-                reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
+                J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov_gradient",
+                regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]), verbose=self.params.verbose,
+                early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
+                max_stag_steps=self.params.cg_max_stag_steps, max_more_steps=self.params.cg_max_more_steps,
+                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
             )
             # Unscaled regularization:
             # A(dm) = J^H J dm + mu * GhG(dm)
@@ -457,127 +384,28 @@ class JointReconstructor:
             b = b_data - solver.effective_lambda() * solver.regularization(Data_res["MotionModel"].flatten())
             M = None
             if motion_precond_mode == "jacobi_probe":
-                M = solver.jacobi_probe_preconditioner(
-                    b.numel(),
-                    num_probes=motion_precond_num_probes,
-                    damping=motion_precond_damping,
-                    dtype=b.dtype,
-                )
+                M = solver.jacobi_probe_preconditioner(b.numel(), num_probes=motion_precond_num_probes,
+                                                       damping=motion_precond_damping, dtype=b.dtype)
             elif motion_precond_mode == "cpp_gs":
                 M = self._build_cpp_gs_motion_preconditioner(Data_res, solver)
-            mot_pert_vec = solver.cg(
-                b.flatten(),
-                x0=x0.flatten(),
-                max_iter=self.params.max_iter_motion,
-                tol=self.params.tol_motion,
-                M=M,
-            )
+            mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_motion,
+                                     tol=self.params.tol_motion, M=M)
         else:
             solver = ConjugateGradientSolver(
-                J,
-                reg_lambda=self.params.lambda_m,
-                verbose=self.params.verbose,
-                early_stopping=self.params.cg_early_stopping,
-                true_residual_interval=self.params.cg_true_residual_interval,
-                max_stag_steps=self.params.cg_max_stag_steps,
-                max_more_steps=self.params.cg_max_more_steps,
-                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+                J, reg_lambda=self.params.lambda_m, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
+                true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
+                max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
                 reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
             )
             self._assign_cached_reg_scale(Data_res, "motion_rigid", solver, b_data.flatten())
-            mot_pert_vec = solver.cg(
-                b_data.flatten(),
-                x0=x0.flatten(),
-                max_iter=self.params.max_iter_motion,
-                tol=self.params.tol_motion,
-                M=None,
-            )
+            mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_motion,
+                                     tol=self.params.tol_motion, M=None)
         self._last_motion_cg_info = solver.last_info
 
         if self.params.motion_type == "rigid":
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_motion_states)
         else:
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"])
-        return motion_perturb
-    
-    def solve_motion_scaled(self, Data_res, residual):
-        if self.params.motion_type != "rigid":
-            return self.solve_motion(Data_res, residual)
-
-        Nparams = self.Nalpha * self.params.N_motion_states
-        with torch.no_grad():
-            diag_JHJ = torch.zeros(Nparams, dtype=torch.complex128, device=self.device)
-
-            for i in range(Nparams):
-                e = torch.zeros(Nparams, device=self.device)
-                e[i] = 1.0
-                Je = Data_res["J"].forward(e)
-                JHJe = Data_res["J"].adjoint(Je)
-                diag_JHJ[i] = JHJe[i]
-
-            # Avoid division by zero
-            eps = 1e-8
-            scale = torch.sqrt(diag_JHJ + eps)
-
-        # Nparams = self.Nalpha * self.params.N_motion_states
-        device = residual.device
-
-        J = Data_res["J"]
-
-        # ---- Define scaled operator J̃ = J S^{-1} ----
-        class ScaledJacobian:
-            def __init__(self, J, scale):
-                self.J = J
-                self.scale = scale
-                self.device = J.device
-
-            def forward(self, v):
-                # J (S^{-1} v)
-                return self.J.forward(v / self.scale)
-
-            def adjoint(self, w):
-                # S^{-1} J^H w
-                return self.J.adjoint(w) / self.scale
-
-            def normal(self, v):
-                return self.adjoint(self.forward(v))
-
-        J_scaled = ScaledJacobian(J, scale)
-
-        # ---- Build RHS in scaled space ----
-        b_scaled = J_scaled.adjoint(residual)
-
-        # ---- Initial guess ----
-        x0 = torch.zeros(Nparams, dtype=b_scaled.dtype, device=device)
-
-        # ---- Solve in scaled variables ----
-        solver = ConjugateGradientSolver(
-            J_scaled,
-            reg_lambda=self.params.lambda_m,
-            verbose=self.params.verbose,
-            early_stopping=self.params.cg_early_stopping,
-            true_residual_interval=self.params.cg_true_residual_interval,
-            max_stag_steps=self.params.cg_max_stag_steps,
-            max_more_steps=self.params.cg_max_more_steps,
-            use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
-            reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
-        )
-        self._assign_cached_reg_scale(Data_res, "motion_scaled", solver, b_scaled.flatten())
-
-        delta_tilde = solver.cg(
-            b_scaled.flatten(),
-            x0=x0,
-            max_iter=self.params.max_iter_motion,
-            tol=self.params.tol_motion,
-            M=None,
-        )
-        self._last_motion_cg_info = solver.last_info
-
-        # ---- Unscale back to physical parameters ----
-        delta = delta_tilde / scale
-
-        motion_perturb = delta.reshape(self.Nalpha, self.params.N_motion_states)
-
         return motion_perturb
     
     def random_motion_init(self):
@@ -599,91 +427,6 @@ class JointReconstructor:
 
         return alpha
 
-    def _initialize_global_tracking(self):
-        global_best_metric = float("inf")
-        global_best_image = None
-        global_best_motion = None
-        global_converged = False
-        return global_best_metric, global_best_image, global_best_motion, global_converged
-
-    def _resolve_gn_iterations_per_level(self, res_levels):
-        gn_cfg = self.params.GN_iterations_per_level
-        if isinstance(gn_cfg, int):
-            return [gn_cfg] * len(res_levels)
-        if isinstance(gn_cfg, (list, tuple)):
-            if len(gn_cfg) == 0:
-                raise ValueError("GN_iterations_per_level list/tuple cannot be empty.")
-            gn_list = [int(v) for v in gn_cfg]
-            if len(gn_list) != len(res_levels):
-                raise ValueError(
-                    "Inconsistent config: "
-                    f"GN_iterations_per_level has {len(gn_list)} values, "
-                    f"but ResolutionLevels has {len(res_levels)} values."
-                )
-            return gn_list
-        raise ValueError("GN_iterations_per_level must be int, list, or tuple.")
-
-    def _init_restart_logging(self, restart_idx, n_levels, gn_iters_per_level):
-        os.makedirs(self.params.logs_folder, exist_ok=True)
-        log_path = os.path.join(self.params.logs_folder, f"restart_{restart_idx}.log")
-        param_items = {}
-        simulation_param_keys = {
-            "motion_simulation_type",
-            "num_motion_events",
-            "max_tx",
-            "max_ty",
-            "max_phi",
-            "max_center_x",
-            "max_center_y",
-            "seed",
-            "motion_tau",
-            "nonrigid_motion_amplitude",
-            "displacementfield_size",
-        }
-        for key in dir(self.params):
-            if key.startswith("_"):
-                continue
-            if key in simulation_param_keys:
-                continue
-            value = getattr(self.params, key)
-            if callable(value):
-                continue
-            param_items[key] = value
-
-        with open(log_path, "w") as f:
-            f.write(f"Restart {restart_idx}\n")
-            f.write(f"Motion type: {self.params.motion_type}\n")
-            f.write(f"GN iterations per level: {gn_iters_per_level}\n\n")
-            f.write("Parameters (excluding simulation parameters):\n")
-            for key in sorted(param_items.keys()):
-                f.write(f"  {key} = {param_items[key]}\n")
-            f.write("\n")
-        return {
-            "path": log_path,
-            "recon_residuals_by_level": [[] for _ in range(n_levels)],
-            "motion_residuals_by_level": [[] for _ in range(n_levels)],
-        }
-
-    def _append_restart_log(self, restart_log, line=""):
-        with open(restart_log["path"], "a") as f:
-            f.write(line + "\n")
-
-    def _save_restart_residual_plots(self, restart_log, restart_idx):
-        recon_path = os.path.join(self.params.logs_folder, f"residual_recon_restart_{restart_idx}.png")
-        motion_path = os.path.join(self.params.logs_folder, f"residual_motion_restart_{restart_idx}.png")
-        save_residual_subplots(
-            restart_log["recon_residuals_by_level"],
-            title=f"Reconstruction residuals - restart {restart_idx}",
-            y_label="Relative residual",
-            out_path=recon_path,
-        )
-        save_residual_subplots(
-            restart_log["motion_residuals_by_level"],
-            title=f"Motion normalized residuals - restart {restart_idx}",
-            y_label="||dm||2 / (||alpha||2 + eps)",
-            out_path=motion_path,
-        )
-
     def _prepare_resolution_level(self, idx_res, r, restart):
         self._console(f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
@@ -703,182 +446,20 @@ class JointReconstructor:
                 Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"]), device=self.device)
         return Data_res
 
-    def _initialize_level_tracking(self):
-        residual_recon_norms = []
-        residual_motion_norms = []
-        best_relres = float("inf")
-        best_image = None
-        best_motion = None
-        return residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion
-
-    def _update_global_best(self, best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion):
-        # ----------------------------------------------------------
-        # Compare restart result with global best
-        # ----------------------------------------------------------
-        if best_relres < global_best_metric:
-            global_best_metric = best_relres
-            global_best_image = best_image.clone()
-            global_best_motion = best_motion.clone()
-        return global_best_metric, global_best_image, global_best_motion
-
-    def _save_nonrigid_motion_debug(self, Data_res, restart_idx, level_idx):
-        if self.params.motion_type != "non-rigid":
-            return
-
-        alpha = Data_res["MotionModel"]
-        if alpha.ndim != 3 or alpha.shape[0] < 2:
-            return
-
-        os.makedirs(self.params.debug_folder, exist_ok=True)
-
-        alpha_x = alpha[0].detach().cpu()
-        alpha_y = alpha[1].detach().cpu()
-        flip_for_display = self.params.flip_for_display
-        alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
-
-        if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
-            components = (
-                ("alpha_x_real", alpha_x_cart.real),
-                ("alpha_y_real", alpha_y_cart.real),
-                ("alpha_x_imag", alpha_x_cart.imag),
-                ("alpha_y_imag", alpha_y_cart.imag),
-            )
-            alpha_x_for_quiver = alpha_x.real
-            alpha_y_for_quiver = alpha_y.real
-        else:
-            components = (
-                ("alpha_x", alpha_x_cart),
-                ("alpha_y", alpha_y_cart),
-            )
-            alpha_x_for_quiver = alpha_x
-            alpha_y_for_quiver = alpha_y
-
-        for comp_name, comp in components:
-            save_alpha_component_map(
-                comp,
-                f"{comp_name} restart {restart_idx} level {level_idx}",
-                os.path.join(
-                    self.params.debug_folder,
-                    f"{comp_name}_restart_{restart_idx}_level{level_idx}.png",
-                ),
-                flip_vertical=flip_for_display,
-            )
-
-        save_nonrigid_quiver_with_contours(
-            alpha_x_for_quiver,
-            alpha_y_for_quiver,
-            Data_res["ReconstructedImage"][0],
-            f"motion field restart {restart_idx} level {level_idx}",
-            os.path.join(
-                self.params.debug_folder,
-                f"motion_quiver_restart_{restart_idx}_level{level_idx}.png",
-            ),
-            flip_vertical=flip_for_display,
-        )
-
-    def _save_final_nonrigid_alpha_maps(self, motion_model, reconstructed_image):
-        if self.params.motion_type != "non-rigid":
-            return
-        if motion_model is None or motion_model.ndim != 3 or motion_model.shape[0] < 2:
-            return
-
-        os.makedirs(self.params.results_folder, exist_ok=True)
-
-        alpha_x = motion_model[0].detach().cpu()
-        alpha_y = motion_model[1].detach().cpu()
-        alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
-        flip_for_display = self.params.flip_for_display
-        scale = self.motion_plot_context.get("alpha_visual_scale", None)
-        alpha_abs_max_x = None if scale is None else scale.get("alpha_abs_max_x")
-        alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
-        amp_max = None if scale is None else scale.get("amp_max")
-
-        if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
-            components = (
-                ("final_alpha_x_real", alpha_x_cart.real),
-                ("final_alpha_y_real", alpha_y_cart.real),
-                ("final_alpha_x_imag", alpha_x_cart.imag),
-                ("final_alpha_y_imag", alpha_y_cart.imag),
-            )
-        else:
-            components = (
-                ("final_alpha_x", alpha_x_cart),
-                ("final_alpha_y", alpha_y_cart),
-            )
-
-        for name, comp in components:
-            if "alpha_x" in name:
-                abs_max = alpha_abs_max_x
-            elif "alpha_y" in name:
-                abs_max = alpha_abs_max_y
-            else:
-                abs_max = None
-            save_alpha_component_map(
-                comp,
-                name,
-                os.path.join(self.params.results_folder, f"{name}.png"),
-                flip_vertical=flip_for_display,
-                abs_max=abs_max,
-            )
-
-        save_nonrigid_quiver_with_contours(
-            alpha_x if not torch.is_complex(alpha_x) else alpha_x.real,
-            alpha_y if not torch.is_complex(alpha_y) else alpha_y.real,
-            reconstructed_image,
-            "final_motion_quiver",
-            os.path.join(self.params.results_folder, "final_motion_quiver.png"),
-            flip_vertical=flip_for_display,
-            amp_vmax=amp_max,
-        )
-
-    def _save_final_rigid_motion_plots(self, motion_model):
-        if self.params.motion_type != "rigid":
-            return
-        if motion_model is None or motion_model.ndim != 2 or motion_model.shape[0] < 3:
-            return
-        motion_curve = self.motion_plot_context.get("motion_curve")
-        labels_in = self.motion_plot_context.get("labels")
-        ky_idx = self.motion_plot_context.get("ky_idx")
-        nex_idx = self.motion_plot_context.get("nex_idx")
-        if motion_curve is None or labels_in is None or ky_idx is None or nex_idx is None:
-            return
-
-        labels = labels_in.to(dtype=torch.long, device=motion_model.device)
-        tx = motion_model[0, labels]
-        ty = motion_model[1, labels]
-        phi = motion_model[2, labels]
-
-        save_clustered_motion_plots(
-            motion_curve=motion_curve,
-            labels=labels_in,
-            ky_idx=ky_idx,
-            nex_idx=nex_idx,
-            nbins=self.params.N_motion_states,
-            output_folder=self.params.results_folder,
-            resolution_levels=self.motion_plot_context.get(
-                "resolution_levels", self.params.ResolutionLevels
-            ),
-            tx=tx,
-            ty=ty,
-            phi=phi,
-            data_type=self.motion_plot_context.get("data_type", self.params.data_type),
-            y_limits=self.motion_plot_context.get("y_limits"),
-        )
-
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
     # ----------------------------------------------------------------------
     def run(self):
         ResLevels = self.params.ResolutionLevels
-        gn_iters_per_level = self._resolve_gn_iterations_per_level(ResLevels)
+        gn_iters_per_level = _resolve_gn_iterations_per_level(self.params, ResLevels)
 
-        global_best_metric, global_best_image, global_best_motion, global_converged = self._initialize_global_tracking()
+        global_best_metric, global_best_image, global_best_motion, global_converged = _initialize_global_tracking()
         last_image = None
         last_motion = None
 
         for restart in range(self.params.max_restarts):
             restart_idx = restart + 1
-            restart_log = self._init_restart_logging(restart_idx, len(ResLevels), gn_iters_per_level)
+            restart_log = _init_restart_logging(self.params, restart_idx, len(ResLevels), gn_iters_per_level)
             restart_t0 = time.perf_counter()
             restart_converged = False
 
@@ -890,15 +471,15 @@ class JointReconstructor:
                     self.upsample_data(Data_prev, Data_res)
                 level_init_time = time.perf_counter() - level_t0
 
-                self._append_restart_log(
+                _append_restart_log(
                     restart_log,
                     f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x1, {Data_res['Ny']} views, {self.params.N_motion_states} virtual times)",
                 )
-                self._append_restart_log(
+                _append_restart_log(
                     restart_log,
                     f"    Resolution level initializations : {level_init_time:.6f} s",
                 )
-                self._append_restart_log(restart_log, "")
+                _append_restart_log(restart_log, "")
 
                 (
                     residual_recon_norms,
@@ -906,7 +487,7 @@ class JointReconstructor:
                     best_relres,
                     best_image,
                     best_motion,
-                ) = self._initialize_level_tracking()
+                ) = _initialize_level_tracking()
                 s_res = Data_res["KspaceData"].flatten()
                 show_bar = self.params.jupyter_notebook_flag
                 bar_ctx = tqdm(
@@ -935,7 +516,7 @@ class JointReconstructor:
                         img = self.solve_image(Data_res)
                         img_elapsed = time.perf_counter() - t_img
                         Data_res["ReconstructedImage"] = img
-                        self._append_restart_log(
+                        _append_restart_log(
                             restart_log,
                             f"    Reconstruction step : {_format_cg_info(self._last_image_cg_info)}, elapsed time = {img_elapsed:.6f} s",
                         )
@@ -957,7 +538,7 @@ class JointReconstructor:
 
                         if it > 0 and rel_res > best_relres:
                             self._console("    Relative residual increased — restoring best solution at this level.")
-                            self._append_restart_log(
+                            _append_restart_log(
                                 restart_log,
                                 "    Relative residual increased - restoring best solution at this level.",
                             )
@@ -978,10 +559,7 @@ class JointReconstructor:
                         # 4) Solve for motion update
                         self._console("    Solving for motion update...")
                         t_mot = time.perf_counter()
-                        if self.params.use_scaled_motion_update:
-                            dm = self.solve_motion_scaled(Data_res, residual)
-                        else:
-                            dm = self.solve_motion(Data_res, residual)
+                        dm = self.solve_motion(Data_res, residual)
                         mot_elapsed = time.perf_counter() - t_mot
 
                         Data_res["MotionModel"] += dm.real
@@ -989,12 +567,12 @@ class JointReconstructor:
                         alpha_norm = torch.linalg.norm(Data_res["MotionModel"].flatten()).item()
                         dm_rel_norm = dm_norm / (alpha_norm + 1e-12)
                         residual_motion_norms.append(dm_rel_norm)
-                        self._append_restart_log(
+                        _append_restart_log(
                             restart_log,
                             f"    Model optimization step: {_format_cg_info(self._last_motion_cg_info)}, elapsed time = {mot_elapsed:.6f} s",
                         )
                         fp_elapsed = time.perf_counter() - fp_t0
-                        self._append_restart_log(
+                        _append_restart_log(
                             restart_log,
                             (
                                 f"    Fixed point iter {it}: "
@@ -1003,7 +581,7 @@ class JointReconstructor:
                                 f"motion_norm = {dm_norm:.6e} : {fp_elapsed:.6f} s"
                             ),
                         )
-                        self._append_restart_log(restart_log, "")
+                        _append_restart_log(restart_log, "")
                         if pbar is not None:
                             pbar.update(1)
 
@@ -1019,15 +597,16 @@ class JointReconstructor:
                         self.params.debug_folder,
                         flip_for_display=self.params.flip_for_display,
                     )
-                    self._save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1)
+                    _save_nonrigid_motion_debug(Data_res, restart + 1, idx_res + 1, self.params.motion_type,
+                                               self.params.debug_folder, self.params.flip_for_display)
                 restart_log["recon_residuals_by_level"][idx_res] = residual_recon_norms
                 restart_log["motion_residuals_by_level"][idx_res] = residual_motion_norms
                 level_elapsed = time.perf_counter() - level_t0
-                self._append_restart_log(
+                _append_restart_log(
                     restart_log,
                     f"    Total time of resolution level {idx_res}: {level_elapsed:.6f} s",
                 )
-                self._append_restart_log(restart_log, "")
+                _append_restart_log(restart_log, "")
 
                 if restart_converged:
                     break
@@ -1036,15 +615,15 @@ class JointReconstructor:
                     last_image = Data_res["ReconstructedImage"].clone()
                     last_motion = Data_res["MotionModel"].clone()
             if best_image is not None and best_motion is not None:
-                global_best_metric, global_best_image, global_best_motion = self._update_global_best(
+                global_best_metric, global_best_image, global_best_motion = _update_global_best(
                     best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion
                 )
 
-            self._append_restart_log(
+            _append_restart_log(
                 restart_log,
                 f"Total time of restart {restart_idx}: {time.perf_counter() - restart_t0:.6f} s",
             )
-            self._save_restart_residual_plots(restart_log, restart_idx)
+            _save_restart_residual_plots(self.params.logs_folder, restart_log, restart_idx)
 
             if restart_converged:
                 global_converged = True
@@ -1069,7 +648,10 @@ class JointReconstructor:
             flip_for_display=self.params.flip_for_display,
         )
         if self.params.motion_type == "rigid":
-            self._save_final_rigid_motion_plots(global_best_motion)
-        self._save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0])
+            save_final_rigid_motion_plots(global_best_motion, self.motion_plot_context, self.params.results_folder,
+                                          self.params.N_motion_states, self.params.ResolutionLevels, self.params.data_type)
+        if self.params.motion_type == "non-rigid":
+            save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0], self.params.results_folder,
+                                           flip_for_display=self.params.flip_for_display, motion_plot_context=self.motion_plot_context)
 
         return global_best_image_unscaled, global_best_motion
