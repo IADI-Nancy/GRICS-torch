@@ -51,9 +51,11 @@ _CODE_DEFAULTS = {
     "seed": 1,
     "use_scaled_motion_update": False,
     "espirit_max_iter": 100,
+    "cg_true_residual_interval": 10,
     "nonrigid_resp_cycles_min": 2.0,
     "nonrigid_resp_cycles_max": 5.0,
     "jupyter_notebook_flag": False,
+    "runtime_device": "gpu",
 }
 
 
@@ -71,6 +73,11 @@ def refresh_derived(params):
         params.clean_output_folders_before_run = True
     if not hasattr(params, "jupyter_notebook_flag"):
         params.jupyter_notebook_flag = False
+    if not hasattr(params, "runtime_device"):
+        params.runtime_device = "gpu"
+    params.runtime_device = str(params.runtime_device).lower()
+    if params.runtime_device not in {"cpu", "gpu"}:
+        raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
     if not hasattr(params, "print_to_console"):
         params.print_to_console = not bool(params.jupyter_notebook_flag)
     if not hasattr(params, "verbose"):

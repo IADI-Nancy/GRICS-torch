@@ -15,6 +15,8 @@ GN_iterations_per_level = [10, 4, 4]
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
+# Iteration interval for recomputing the true residual in CG.
+cg_true_residual_interval = 10
 # Allowed consecutive stagnating CG steps.
 cg_max_stag_steps = 6
 # Extra CG steps after the first stopping criterion is met.
@@ -23,6 +25,10 @@ cg_max_more_steps = 0
 cg_use_reg_scale_proxy = true
 # Number of probes for regularization scaling estimate.
 cg_reg_scale_num_probes = 8
+# Motion-model CG preconditioner ("none", "jacobi_probe", or "cpp_gs").
+motion_cg_preconditioner = "cpp_gs"
+# Relative floor for the estimated diagonal in motion-model preconditioner.
+motion_cg_preconditioner_damping = 1.0e-3
 
 # Image reconstruction regularization weight.
 lambda_r = 5.0e-2

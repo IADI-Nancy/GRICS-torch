@@ -18,6 +18,8 @@ GN_iterations_per_level = [8, 3, 3]
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
+# Iteration interval for recomputing the true residual in CG.
+cg_true_residual_interval = 10
 # Allowed consecutive stagnating CG steps.
 cg_max_stag_steps = 3
 # Extra CG steps after the first stopping criterion is met.

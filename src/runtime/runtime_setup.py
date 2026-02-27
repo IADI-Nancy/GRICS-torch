@@ -3,6 +3,7 @@ import gc
 import shutil
 import signal
 import sys
+import warnings
 from pathlib import Path
 
 import torch
@@ -80,16 +81,35 @@ def initialize_runtime(params, print_gpu_info=False):
     if params.clean_output_folders_before_run:
         clean_run_output_folders(params)
 
-    try:
-        import cupy as cp
-        cupy_ok = cp.cuda.runtime.getDeviceCount() > 0
-    except Exception:
-        cupy_ok = False
+    runtime_device = str(getattr(params, "runtime_device", "gpu")).lower()
+    if runtime_device not in {"cpu", "gpu"}:
+        raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
 
-    sp_device = sp.Device(0) if cupy_ok else sp.Device(-1)
-    t_device = torch.device("cuda:0" if cupy_ok and torch.cuda.is_available() else "cpu")
+    cupy_ok = False
+    torch_cuda_ok = torch.cuda.is_available()
 
-    if torch.cuda.is_available():
+    if runtime_device == "gpu":
+        try:
+            import cupy as cp
+
+            cupy_ok = cp.cuda.runtime.getDeviceCount() > 0
+        except Exception:
+            cupy_ok = False
+
+        if not (cupy_ok and torch_cuda_ok):
+            warnings.warn(
+                "runtime_device='gpu' requested but GPU is unavailable "
+                "(missing CUDA/CuPy/PyTorch CUDA support). Falling back to CPU.",
+                RuntimeWarning,
+            )
+            runtime_device = "cpu"
+
+    use_gpu = runtime_device == "gpu"
+    sp_device = sp.Device(0) if use_gpu else sp.Device(-1)
+    t_device = torch.device("cuda:0" if use_gpu else "cpu")
+    params.runtime_device = runtime_device
+
+    if use_gpu and torch.cuda.is_available():
         torch.cuda.empty_cache()
         if print_gpu_info:
             total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
@@ -98,7 +118,7 @@ def initialize_runtime(params, print_gpu_info=False):
     if params.debug_flag:
         torch.manual_seed(params.seed)
         torch.use_deterministic_algorithms(True, warn_only=True)
-        if torch.cuda.is_available():
+        if use_gpu and torch.cuda.is_available():
             torch.cuda.manual_seed(params.seed)
             torch.cuda.manual_seed_all(params.seed)
             torch.backends.cudnn.deterministic = True

@@ -11,6 +11,8 @@ input_data_folder = "input_data/"
 [runtime]
 # Enable debug visualizations and deterministic behavior where possible.
 debug_flag = true
+# Preferred compute device: "gpu" or "cpu".
+runtime_device = "cpu"
 # Random seed for reproducibility.
 seed = 1
 # Print logs.

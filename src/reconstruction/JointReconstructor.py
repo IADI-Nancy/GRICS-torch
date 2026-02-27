@@ -287,6 +287,7 @@ class JointReconstructor:
             reg_lambda=self.params.lambda_r,
             verbose=self.params.verbose,
             early_stopping=self.params.cg_early_stopping,
+            true_residual_interval=self.params.cg_true_residual_interval,
             max_stag_steps=self.params.cg_max_stag_steps,
             max_more_steps=self.params.cg_max_more_steps,
             use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
@@ -314,11 +315,126 @@ class JointReconstructor:
             return self.Nalpha * self.params.N_motion_states
         return self.Nalpha * Data_res["Nx"] * Data_res["Ny"]
 
+    def _build_cpp_gs_motion_preconditioner(self, Data_res, solver):
+        """
+        C++-style pseudo Gauss-Seidel preconditioner for non-rigid motion solve.
+        This mirrors the triangular-band structure used in the legacy GRICS code.
+        """
+        J = Data_res["J"]
+        nx, ny = Data_res["Nx"], Data_res["Ny"]
+        n = nx * ny
+        nvar = self.Nalpha * n
+        if self.Nalpha != 2:
+            return None
+
+        dtype = torch.complex128
+        device = self.device
+
+        # --- Build block terms from warped-image gradients (C++ createPreconditioner core idea) ---
+        a00 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
+        a11 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
+        a10 = torch.zeros((nx, ny), dtype=dtype, device=device)
+
+        with torch.no_grad():
+            motion_signal = torch.as_tensor(
+                J.motionOperator.motion_signal,
+                device=device,
+                dtype=dtype,
+            )
+            n_states = len(J.SamplingIndices[0])
+            ncoils = int(J.SensitivityMaps.shape[0])
+
+            for motion_state in range(n_states):
+                s2 = (motion_signal[motion_state].conj() * motion_signal[motion_state]).real
+                motion_op = J.motionOperator.get_sparse_operator(motion_state)
+
+                for nex in range(J.Nex):
+                    sampling = J.SamplingIndices[nex][motion_state]
+                    if sampling.numel() == 0:
+                        continue
+
+                    warped = (motion_op @ J.image[nex].flatten()).reshape(nx, ny)
+                    gx, gy = J.gradient_2d(warped)
+
+                    # Match C++ accumulation structure (per state and per voxel).
+                    w = (s2 * ncoils).to(torch.float64)
+                    a00 += w * (gx.conj() * gx).real.to(torch.float64)
+                    a11 += w * (gy.conj() * gy).real.to(torch.float64)
+                    a10 += (s2 * ncoils).to(dtype) * (gy.conj() * gx).to(dtype)
+
+        a00_1d = a00.reshape(-1).to(dtype)
+        a11_1d = a11.reshape(-1).to(dtype)
+        a10_1d = a10.reshape(-1).to(dtype)
+
+        # --- Regularization contribution (Nabla^2-like terms) ---
+        lam = float(solver.effective_lambda())
+        dx = 1.0
+        dy = 1.0
+        reg_diag = 2.0 * dx * dx * lam + 2.0 * dy * dy * lam
+        reg_off_x = -dx * dx * lam
+        reg_off_y = -dy * dy * lam
+
+        # Variable layout is [alpha_x(:), alpha_y(:)].
+        main = torch.zeros(nvar, dtype=dtype, device=device)
+        main[:n] = a00_1d + reg_diag
+        main[n:] = a11_1d + reg_diag
+
+        # Lower diagonals: offsets {n, 1, ny}
+        d_cross = torch.zeros(nvar, dtype=dtype, device=device)  # offset n
+        d_cross[n:] = a10_1d
+        d_1 = torch.full((nvar,), complex(reg_off_y, 0.0), dtype=dtype, device=device)   # offset 1
+        d_ny = torch.full((nvar,), complex(reg_off_x, 0.0), dtype=dtype, device=device)   # offset ny
+
+        main_safe = torch.where(main.abs() > 1e-12, main, torch.full_like(main, 1e-12))
+
+        # C++ C2 construction for w=1 => main becomes 1, off-diags scaled by main diag.
+        u_main = torch.ones_like(main_safe)
+        u_cross = torch.conj(d_cross) / main_safe
+        u_1 = torch.conj(d_1) / main_safe
+        u_ny = torch.conj(d_ny) / main_safe
+
+        def _solve_lower(rhs):
+            x = torch.zeros_like(rhs)
+            for i in range(nvar):
+                acc = rhs[i]
+                if i - n >= 0:
+                    acc = acc - d_cross[i] * x[i - n]
+                if i - 1 >= 0:
+                    acc = acc - d_1[i] * x[i - 1]
+                if i - ny >= 0:
+                    acc = acc - d_ny[i] * x[i - ny]
+                x[i] = acc / main_safe[i]
+            return x
+
+        def _solve_upper(rhs):
+            x = torch.zeros_like(rhs)
+            for i in range(nvar - 1, -1, -1):
+                acc = rhs[i]
+                if i + n < nvar:
+                    acc = acc - u_cross[i] * x[i + n]
+                if i + 1 < nvar:
+                    acc = acc - u_1[i] * x[i + 1]
+                if i + ny < nvar:
+                    acc = acc - u_ny[i] * x[i + ny]
+                x[i] = acc / u_main[i]
+            return x
+
+        def _M(r):
+            y = _solve_lower(r.to(dtype))
+            z = _solve_upper(y)
+            return z.to(r.dtype)
+
+        return _M
+
     def solve_motion(self, Data_res, residual):
         Nparams = self._n_motion_params(Data_res)
         J = Data_res["J"]
         b_data = J.adjoint(residual)
         x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=residual.device)
+        motion_precond_mode = getattr(self.params, "motion_cg_preconditioner", "none")
+        motion_precond_mode = str(motion_precond_mode).lower()
+        motion_precond_num_probes = int(getattr(self.params, "motion_cg_preconditioner_num_probes", 8))
+        motion_precond_damping = float(getattr(self.params, "motion_cg_preconditioner_damping", 1e-3))
 
         if self.params.motion_type == "non-rigid":
             solver = ConjugateGradientSolver(
@@ -328,6 +444,7 @@ class JointReconstructor:
                 regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]),
                 verbose=self.params.verbose,
                 early_stopping=self.params.cg_early_stopping,
+                true_residual_interval=self.params.cg_true_residual_interval,
                 max_stag_steps=self.params.cg_max_stag_steps,
                 max_more_steps=self.params.cg_max_more_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
@@ -338,12 +455,22 @@ class JointReconstructor:
             # b     = J^H r    - mu * GhG(alpha_current)
             self._assign_cached_reg_scale(Data_res, "motion_nonrigid", solver, b_data.flatten())
             b = b_data - solver.effective_lambda() * solver.regularization(Data_res["MotionModel"].flatten())
+            M = None
+            if motion_precond_mode == "jacobi_probe":
+                M = solver.jacobi_probe_preconditioner(
+                    b.numel(),
+                    num_probes=motion_precond_num_probes,
+                    damping=motion_precond_damping,
+                    dtype=b.dtype,
+                )
+            elif motion_precond_mode == "cpp_gs":
+                M = self._build_cpp_gs_motion_preconditioner(Data_res, solver)
             mot_pert_vec = solver.cg(
                 b.flatten(),
                 x0=x0.flatten(),
                 max_iter=self.params.max_iter_motion,
                 tol=self.params.tol_motion,
-                M=None,
+                M=M,
             )
         else:
             solver = ConjugateGradientSolver(
@@ -351,6 +478,7 @@ class JointReconstructor:
                 reg_lambda=self.params.lambda_m,
                 verbose=self.params.verbose,
                 early_stopping=self.params.cg_early_stopping,
+                true_residual_interval=self.params.cg_true_residual_interval,
                 max_stag_steps=self.params.cg_max_stag_steps,
                 max_more_steps=self.params.cg_max_more_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
@@ -428,6 +556,7 @@ class JointReconstructor:
             reg_lambda=self.params.lambda_m,
             verbose=self.params.verbose,
             early_stopping=self.params.cg_early_stopping,
+            true_residual_interval=self.params.cg_true_residual_interval,
             max_stag_steps=self.params.cg_max_stag_steps,
             max_more_steps=self.params.cg_max_more_steps,
             use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,

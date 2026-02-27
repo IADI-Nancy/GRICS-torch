@@ -174,6 +174,45 @@ class ConjugateGradientSolver:
         d = torch.clamp(d, min=1e-6)
         return lambda r: r / d
 
+    def jacobi_probe_preconditioner(self, N, num_probes=8, damping=1e-3, dtype=None):
+        """
+        Probe-based Jacobi preconditioner:
+            diag(A) ~= E[ conj(z) .* (A z) ]
+        with random unit-modulus complex probes z.
+        """
+        n_probes = max(1, int(num_probes))
+        eps = 1e-12
+
+        if dtype is None:
+            dtype = torch.complex128
+
+        if not torch.is_complex(torch.empty((), dtype=dtype)):
+            dtype = torch.complex128
+
+        diag = torch.zeros(N, dtype=torch.float64, device=self.device)
+
+        with torch.no_grad():
+            for _ in range(n_probes):
+                # z in {1, -1, i, -i}; unbiased for Hermitian diagonals.
+                phases = torch.randint(0, 4, (N,), device=self.device)
+                z = torch.empty(N, dtype=dtype, device=self.device)
+                z[phases == 0] = 1.0 + 0.0j
+                z[phases == 1] = -1.0 + 0.0j
+                z[phases == 2] = 0.0 + 1.0j
+                z[phases == 3] = 0.0 - 1.0j
+
+                Az = self.A(z)
+                diag += (torch.conj(z) * Az).real.to(torch.float64)
+
+            diag /= float(n_probes)
+            diag = torch.clamp(diag, min=0.0)
+
+            median_val = torch.median(diag)
+            floor = torch.clamp(median_val * float(damping), min=eps)
+            inv_diag = 1.0 / torch.clamp(diag, min=floor)
+
+        return lambda r: r * inv_diag.to(r.dtype)
+
     # --------------------------------------------------------------
     # Conjugate Gradient Solver (with optional preconditioner)
     # --------------------------------------------------------------
@@ -226,6 +265,8 @@ class ConjugateGradientSolver:
             iters_done = 0
             res_norm = torch.linalg.norm(r)
             rel_res = (res_norm / b_norm).item()
+            residual_norm_history = [float(res_norm.item())]
+            relres_history = [float(rel_res)]
             converged = bool(res_norm <= tolb)
             stop_reason = "initial_tolerance"
 
@@ -258,6 +299,8 @@ class ConjugateGradientSolver:
                     r = b - self.A(x)
                     res_norm = torch.linalg.norm(r)
                 rel_res = (res_norm / b_norm).item()
+                residual_norm_history.append(float(res_norm.item()))
+                relres_history.append(float(rel_res))
                 if rel_res < best_rel:
                     best_rel = rel_res
                     best_x = x.clone()
@@ -304,6 +347,8 @@ class ConjugateGradientSolver:
                 "iterations": int(iters_done),
                 "relres": float(rel_res),
                 "residual_norm": float(res_norm.item()),
+                "residual_norm_history": residual_norm_history,
+                "relres_history": relres_history,
                 "stop_reason": stop_reason,
             }
 
