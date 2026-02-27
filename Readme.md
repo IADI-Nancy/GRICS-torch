@@ -57,7 +57,7 @@ No synthetic sampling is needed in this mode: acquisition order and motion signa
 
 Loaded from raw scanner and physiological files using `RawDataReader`:
 - the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
-- physiological data file in SAEC [3, 4] format (`saec_file`)
+- physiological data file in SAEC [2, 3] format (`saec_file`)
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -159,6 +159,5 @@ By default, these folders are cleaned before each run (`clean_output_folders_bef
 ## References
 
 [1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine: An Official Journal of the International Society for Magnetic Resonance in Medicine, 60(1), 146-157.
-[2] https://fastmri.med.nyu.edu/ 
-[3] Isaieva, K., Fauvel, M., Weber, N., Vuissoz, P. A., Felblinger, J., Oster, J., & Odille, F. (2022). A hardware and software system for MRI applications requiring external device data. Magnetic Resonance in Medicine, 88(3), 1406-1418.
-[4] https://github.com/IADI-Nancy/wrapperHDF5 
+[2] Isaieva, K., Fauvel, M., Weber, N., Vuissoz, P. A., Felblinger, J., Oster, J., & Odille, F. (2022). A hardware and software system for MRI applications requiring external device data. Magnetic Resonance in Medicine, 88(3), 1406-1418.
+[3] https://github.com/IADI-Nancy/wrapperHDF5 
