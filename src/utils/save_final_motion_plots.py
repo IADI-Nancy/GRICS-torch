@@ -1,9 +1,9 @@
 import os
 import torch
 
-from src.utils.save_alpha_component_map import save_alpha_component_map
-from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
-from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
+from src.utils.plotting import (
+    save_alpha_component_map, save_nonrigid_quiver_with_contours, save_clustered_motion_plots,
+)
 from src.utils.nonrigid_display import to_cartesian_components
 
 

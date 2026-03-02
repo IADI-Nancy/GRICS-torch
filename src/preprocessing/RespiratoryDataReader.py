@@ -4,11 +4,11 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 from scipy.interpolate import interp1d
 from h5Saec import *
-from src.utils.save_line_plot import save_line_plot
+from src.utils.plotting import save_line_plot
 
 '''
 Code is not very clean for the moment!!!
-The main method is read_and_process_data(saec_filename, sensor_type, path_to_graph=None), which reads the SAEC file, extracts the 
+The main method is _read_and_process_data(saec_filename, sensor_type, path_to_graph=None), which reads the SAEC file, extracts the 
 respiratory signal, applies filtering and drift correction, and returns the processed respiratory signal. The method also includes
 an optional graph saving functionality to visualize the filtered respiratory signal. The class is designed to handle different types
 of physiological sensors, such as BELT and MARMOT, and can be extended to include additional sensor types if needed.
@@ -214,7 +214,7 @@ class RespiratoryDataReader:
             Warning("Physiological sensor type is not correct")
 
     @staticmethod
-    def read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
+    def _read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
         timestamps_saec, respiratory_data_saec = RespiratoryDataReader._get_respiration_from_saec(saec_filename, sensor_type)
         respiratory_data_filtered = RespiratoryDataReader._get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
         return np.squeeze(timestamps_saec), np.squeeze(respiratory_data_filtered)

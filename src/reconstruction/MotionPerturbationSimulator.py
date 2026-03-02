@@ -65,7 +65,7 @@ class MotionPerturbationSimulator:
         # ---- Loop over motion states ----
         for motion_state in range(N_motion_states):
               
-            MotionOp = self.motionOperator.get_sparse_operator(motion_state)
+            MotionOp = self.motionOperator._get_sparse_operator(motion_state)
 
             for nex in range(self.Nex):
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
@@ -80,7 +80,7 @@ class MotionPerturbationSimulator:
 
                 # 3) motion model and displacement field perturbations
                 if self.motionOperator.motion_type == "rigid":
-                    dux, duy = self.motionOperator.apply_J(MotionModelPerturbation[:, motion_state], motion_state)
+                    dux, duy = self.motionOperator._apply_J(MotionModelPerturbation[:, motion_state], motion_state)
                 else:
                     # Non-rigid model is modulated by the state-dependent motion signal.
                     dux = MotionModelPerturbation[0] * motion_signal[motion_state]
@@ -136,7 +136,7 @@ class MotionPerturbationSimulator:
 
         for motion_state in range(N_motion_states):
             
-            MotionOp     = self.motionOperator.get_sparse_operator(motion_state)
+            MotionOp     = self.motionOperator._get_sparse_operator(motion_state)
             
             for nex in range(self.Nex):
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
@@ -173,7 +173,7 @@ class MotionPerturbationSimulator:
 
                 # Apply the adjoint Jacobian
                 if self.motionOperator.motion_type == "rigid":
-                    MotionModelPerturbation[:, motion_state] += self.motionOperator.apply_JH(du_x, du_y, motion_state)
+                    MotionModelPerturbation[:, motion_state] += self.motionOperator._apply_JH(du_x, du_y, motion_state)
                 else:
                     # Adjoint of multiplication by motion_signal is multiplication by its complex conjugate.
                     MotionModelPerturbation[0] += du_x * motion_signal[motion_state]

@@ -29,7 +29,7 @@ class MotionOperator:
         else:
             raise ValueError(f"Unknown motion type: {motion_type}")    
 
-    def get_sparse_operator(self, motion_state):
+    def _get_sparse_operator(self, motion_state):
         return self.sparseMotionOperator[motion_state]
     
     # ---------------------------------------------------------
@@ -83,7 +83,7 @@ class MotionOperator:
             Uy = Yp - Y
 
             # Create sparse operator
-            MotionOp = MotionOperator.create_sparse_motion_operator(Ux, Uy)
+            MotionOp = MotionOperator._create_sparse_motion_operator(Ux, Uy)
             self.sparseMotionOperator.append(MotionOp)
 
     # ------------------------ Geometric derivatives ----------------------------
@@ -109,14 +109,14 @@ class MotionOperator:
 
     # ----------------- FULL JACOBIAN OPERATOR J * δᾱ_j = sum_j(∂x_i/∂ᾱ_j) δᾱ_j = δu_i -----------------
 
-    def apply_J(self, delta_alpha, motion_state):
+    def _apply_J(self, delta_alpha, motion_state):
         """
         delta_alpha : (3,) tensor [dt_x, dt_y, dphi, dc_x, dc_y]
         returns:
             du_x, du_y  (each Nx x Ny)
         """
         if self.motion_type != 'rigid':
-            raise NotImplementedError("apply_J is only implemented for rigid motion.")
+            raise NotImplementedError("_apply_J is only implemented for rigid motion.")
 
         dt_x, dt_y, dphi = delta_alpha
 
@@ -142,14 +142,14 @@ class MotionOperator:
 
     # --------- ADJOINT (TRANSPOSE–CONJUGATE) JACOBIAN   JH * δu_i = sum_i(∂x_i/∂ᾱ_j) δu_i = δᾱ_j -----------------
 
-    def apply_JH(self, du_x, du_y, motion_state):
+    def _apply_JH(self, du_x, du_y, motion_state):
         """
         Applies J^H to (du_x, du_y).
         Returns
             delta_alpha : (3,) tensor
         """
         if self.motion_type != 'rigid':
-            raise NotImplementedError("apply_JH is only implemented for rigid motion.")
+            raise NotImplementedError("_apply_JH is only implemented for rigid motion.")
 
         (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self._translation_derivative()
         dX_dphi, dY_dphi = self._phi_derivative(motion_state)
@@ -179,7 +179,7 @@ class MotionOperator:
         for motion_state in range(n_states):
             ux = alpha_x * signal[motion_state]
             uy = alpha_y * signal[motion_state]
-            motion_op = MotionOperator.create_sparse_motion_operator(ux, uy)
+            motion_op = MotionOperator._create_sparse_motion_operator(ux, uy)
             self.sparseMotionOperator.append(motion_op)
 
 
@@ -190,9 +190,9 @@ class MotionOperator:
     # ---------------------------------------------------------------------------------
 
     @staticmethod
-    def create_sparse_motion_operator(Ux, Uy):
+    def _create_sparse_motion_operator(Ux, Uy):
         """
-        PyTorch version of MATLAB create_sparse_motion_operator.
+        PyTorch version of MATLAB _create_sparse_motion_operator.
         Produces a sparse linear interpolation matrix M for the displacement fields Ux, Uy.
 
         Inputs:

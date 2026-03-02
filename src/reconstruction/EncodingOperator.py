@@ -29,7 +29,7 @@ class EncodingOperator:
         # ---- Loop over motion states ----
         for motion_state in range(N_motion_states):
             
-            MotionOp = self.motionOperator.get_sparse_operator(motion_state)
+            MotionOp = self.motionOperator._get_sparse_operator(motion_state)
 
             for nex in range(self.Nex):
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
@@ -81,7 +81,7 @@ class EncodingOperator:
                     WarpedImage += image_coil * torch.conj(smap)
 
                 # Adjoint motion operator
-                MotionOp = self.motionOperator.get_sparse_operator(motion_state).coalesce().transpose(0, 1)
+                MotionOp = self.motionOperator._get_sparse_operator(motion_state).coalesce().transpose(0, 1)
                 Unwarped = MotionOp @ WarpedImage.reshape(-1)
                 Unwarped = Unwarped.reshape(Nx, Ny)
 

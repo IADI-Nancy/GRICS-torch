@@ -8,7 +8,7 @@ from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
-from src.utils.show_and_save_image import show_and_save_image
+from src.utils.plotting import show_and_save_image
 from src.utils.save_final_motion_plots import save_final_nonrigid_alpha_maps, save_final_rigid_motion_plots
 from src.utils.joint_reconstructor_utils import (
     _assign_cached_reg_scale,
@@ -210,7 +210,7 @@ class JointReconstructor:
             return self.Nalpha * self.params.N_motion_states
         return self.Nalpha * Data_res["Nx"] * Data_res["Ny"]
 
-    def solve_motion(self, Data_res, residual):
+    def _solve_motion(self, Data_res, residual):
         Nparams = self._n_motion_params(Data_res)
         J = Data_res["J"]
         b_data = J.adjoint(residual)
@@ -224,11 +224,11 @@ class JointReconstructor:
                 max_stag_steps=self.params.cg_max_stag_steps, max_more_steps=self.params.cg_max_more_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
             )
-            # Unscaled regularization:
-            # A(dm) = J^H J dm + mu * GhG(dm)
+            # Unscaled _regularization:
+            # _A(dm) = J^H J dm + mu * GhG(dm)
             # b     = J^H r    - mu * GhG(alpha_current)
             _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
-            b = b_data - solver.effective_lambda() * solver.regularization(Data_res["MotionModel"].flatten())
+            b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_motion, tol=self.params.tol_motion)
         else:
             solver = ConjugateGradientSolver(
@@ -365,7 +365,7 @@ class JointReconstructor:
                     # 5) Solve for motion update
                     _console(self.params, "    Solving for motion update...")
                     t_mot = time.perf_counter() # Motion-solve timer.
-                    motion_update = self.solve_motion(Data_res, residual)
+                    motion_update = self._solve_motion(Data_res, residual)
                     mot_elapsed = time.perf_counter() - t_mot
                     Data_res["MotionModel"] += motion_update.real
 

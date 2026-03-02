@@ -1,9 +1,9 @@
 import os
 import torch
 
-from src.utils.save_alpha_component_map import save_alpha_component_map
-from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
-from src.utils.save_residual_subplots import save_residual_subplots
+from src.utils.plotting import (
+    save_alpha_component_map, save_nonrigid_quiver_with_contours, save_residual_subplots,
+)
 from src.utils.nonrigid_display import to_cartesian_components
 
 
@@ -29,7 +29,7 @@ def _assign_cached_reg_scale(params, Data_res, cache_key, solver, reference_vec)
 
     cache = Data_res.setdefault("_reg_scale_cache", {})
     if cache_key not in cache:
-        cache[cache_key] = solver.update_regularization_scale(reference_vec)
+        cache[cache_key] = solver._update_regularization_scale(reference_vec)
     solver.reg_scale = cache[cache_key]
 
 

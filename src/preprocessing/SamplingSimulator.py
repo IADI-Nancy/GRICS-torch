@@ -1,6 +1,6 @@
 import torch
 
-from src.utils.visualize_ky_order import visualize_ky_order
+from src.utils.plotting import _visualize_ky_order
 
 class SamplingSimulator:
     def __init__(self, Ny, params, t_device='cpu'):
@@ -9,10 +9,10 @@ class SamplingSimulator:
         self.t_device = t_device
 
     @staticmethod
-    def visualize_ky_order(ky_per_shot, Ny, folder, fname="ky_sampling_order.png"):
-        visualize_ky_order(ky_per_shot, Ny, folder, fname)
+    def _visualize_ky_order(ky_per_shot, Ny, folder, fname="ky_sampling_order.png"):
+        _visualize_ky_order(ky_per_shot, Ny, folder, fname)
 
-    def build_ky_and_nex(self):
+    def _build_ky_and_nex(self):
         Nshots = self.params.NshotsPerNex
         Nex    = self.params.Nex
 
@@ -73,7 +73,7 @@ class SamplingSimulator:
             ky_idx.append(torch.cat(ky_list, dim=0))
             nex_idx.append(torch.cat(nex_list, dim=0))
         
-            SamplingSimulator.visualize_ky_order(
+            SamplingSimulator._visualize_ky_order(
                 ky_per_shot[nex],
                 Ny=self.Ny,
                 folder=self.params.input_data_folder,
@@ -83,7 +83,7 @@ class SamplingSimulator:
         return ky_idx, nex_idx, ky_per_shot
     
     @staticmethod
-    def build_sampling_per_nex_per_motion(
+    def _build_sampling_per_nex_per_motion(
         binned_ky_indices,  # [Nex][Nmotion]
         Nx, Ny,
         device,

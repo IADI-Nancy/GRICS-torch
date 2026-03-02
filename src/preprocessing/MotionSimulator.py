@@ -6,9 +6,9 @@ from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
-from src.utils.save_alpha_component_map import save_alpha_component_map
-from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
-from src.utils.save_motion_debug_plots import save_motion_debug_plots
+from src.utils.plotting import (
+    save_alpha_component_map, save_nonrigid_quiver_with_contours, save_motion_debug_plots,
+)
 from src.utils.nonrigid_display import to_cartesian_components
 
 class MotionSimulator:
@@ -23,14 +23,21 @@ class MotionSimulator:
         self.t_device = t_device
         self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  
     
-    def get_corrupted_kspace(self):
+    def _get_corrupted_kspace(self):
         return self.kspace
     
-    def get_corrupted_image(self):
+    def _get_corrupted_image(self):
         return self.image_no_moco
 
-    def get_motion_information(self):
+    def _get_motion_information(self):
         return self.navigator, self.tx, self.ty, self.phi
+
+    # =============================================================================
+    # =========================== SHARED CORE UTILITIES ============================
+    # =============================================================================
+    # Utilities in this block are motion-type agnostic and are reused by rigid,
+    # non-rigid, and no-motion simulation paths.
+    # =============================================================================
 
     def _build_sampling_per_line_global_states(self):
         """
@@ -77,11 +84,13 @@ class MotionSimulator:
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
 
-    # -------------------------------------------------------
-    #------------------ Simulate zero motion ----------------
-    # -------------------------------------------------------
+    # =============================================================================
+    # ================================ NO MOTION ==================================
+    # =============================================================================
+    # This block handles the strict zero-motion baseline simulation.
+    # =============================================================================
     
-    def simulate_no_motion(self):
+    def _simulate_no_motion(self):
         """
         Simulate acquisition with NO motion:
         tx = ty = phi = 0 everywhere
@@ -95,7 +104,7 @@ class MotionSimulator:
             ky_per_mot_state_idx = [[self.ky_idx]]
             ny_total = int(self.ky_idx.numel())
 
-        self.sampling_idx_per_nex = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
+        self.sampling_idx_per_nex = SamplingSimulator._build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
         
         self.TotalKspaceSamples = self.Nx * self.Ny
 
@@ -106,10 +115,18 @@ class MotionSimulator:
         self.navigator = torch.zeros(ny_total, device=self.t_device)
 
 
-    # -------------------------------------------------------
-    #---------- Realistic motion curves generation ----------
-    # -------------------------------------------------------
-    
+    # =============================================================================
+    # ============================== RIGID MOTION =================================
+    # =============================================================================
+    # This block handles rigid-motion simulation:
+    # 1) realistic per-line temporal curves
+    # 2) discrete per-shot rigid states
+    # =============================================================================
+
+    # ---------------------------------------------------------------------------
+    # ------------------------ RIGID: REALISTIC CURVES --------------------------
+    # ---------------------------------------------------------------------------
+
     def _create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
@@ -173,7 +190,7 @@ class MotionSimulator:
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
 
-    def simulate_realistic_rigid_motion(self):
+    def _simulate_realistic_rigid_motion(self):
         # One global motion state per acquired ky line (Ny * Nex states).
         self.sampling_idx = self._build_sampling_per_line_global_states()
 
@@ -193,9 +210,9 @@ class MotionSimulator:
 
         self._apply_motion(alpha, centers)
 
-    # -------------------------------------------------------
-    # ---- Generation of discrtete motion states per shot ---
-    # -------------------------------------------------------
+    # -----------------------------------------------------------------------------
+    # -------------------- Discrete Rigid States (Per-Shot) ----------------------
+    # -----------------------------------------------------------------------------
 
     def _expand_motion_to_ky(self, ky_per_mot_state_idx):
         """
@@ -279,13 +296,13 @@ class MotionSimulator:
 
         return self.navigator, alpha, centers
 
-    def simulate_discrete_rigid_motion(self):
+    def _simulate_discrete_rigid_motion(self):
         # Each shot is its own motion state
         ky_per_mot_state_idx = self.ky_per_motion_state
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device) # ← for debugging only, ignore output
+        self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device) # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = self.Ny * self.Nx
 
@@ -293,8 +310,18 @@ class MotionSimulator:
 
         self._apply_motion(alpha, centers)
 
+    # =============================================================================
+    # ============================ NON-RIGID MOTION ===============================
+    # =============================================================================
+    # This block handles non-rigid-motion simulation:
+    # 1) shared spatial alpha-field generators
+    # 2) discrete non-rigid simulation
+    # 3) realistic non-rigid simulation
+    # =============================================================================
 
-    
+    # ---------------------------------------------------------------------------
+    # -------------------- NON-RIGID: SHARED ALPHA FIELDS ----------------------
+    # ---------------------------------------------------------------------------
 
     def _create_discrete_non_rigid_alpha_fields(self):
         spatial_model = self.params.nonrigid_spatial_model
@@ -383,11 +410,15 @@ class MotionSimulator:
         alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
         return alpha_x, alpha_y, alpha_maps
 
-    def simulate_discrete_non_rigid_motion(self):
+    # ---------------------------------------------------------------------------
+    # ------------------ NON-RIGID: DISCRETE SIMULATION -------------------------
+    # ---------------------------------------------------------------------------
+
+    def _simulate_discrete_non_rigid_motion(self):
         print("Simulating non-rigid motion fields...")
 
         ky_per_mot_state_idx = self.ky_per_motion_state
-        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
+        self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device
         )
         self.TotalKspaceSamples = self.Ny * self.Nx
@@ -442,6 +473,10 @@ class MotionSimulator:
         self.phi_mot_state = phi_vec
         self._expand_motion_to_ky(ky_per_mot_state_idx)
 
+    # ---------------------------------------------------------------------------
+    # ------------------ NON-RIGID: REALISTIC SIMULATION  -----------------------
+    # ---------------------------------------------------------------------------
+
     def _create_realistic_non_rigid_motion_curve(self):
         """
         Create a respiratory-like sinusoidal motion curve with unit amplitude.
@@ -469,7 +504,7 @@ class MotionSimulator:
         signal = signal / torch.clamp(torch.max(torch.abs(signal)), min=1e-12)
         return signal
 
-    def simulate_realistic_non_rigid_motion(self):
+    def _simulate_realistic_non_rigid_motion(self):
         print("Simulating realistic non-rigid motion fields...")
 
         # One global motion state per acquired ky line (Ny * Nex states).
@@ -514,25 +549,5 @@ class MotionSimulator:
                 os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
                 flip_vertical=flip_for_display,
             )
-
-
-
-        
-
-
-
-
-    
-
-
-
-
-
-
-
-
-        
-        
-        
 
     

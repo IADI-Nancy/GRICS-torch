@@ -17,23 +17,15 @@ from src.preprocessing.MotionBinner import MotionBinner
 from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
-from src.utils.show_and_save_image import show_and_save_image
-from src.utils.save_alpha_component_map import save_alpha_component_map
-from src.utils.save_clustered_motion_plots import compute_motion_y_limits
-from src.utils.save_nonrigid_quiver_with_contours import save_nonrigid_quiver_with_contours
+from src.utils.plotting import (
+    show_and_save_image, save_alpha_component_map, compute_motion_y_limits,
+    save_nonrigid_quiver_with_contours,
+)
 from src.utils.nonrigid_display import to_cartesian_components
 
 
 class DataLoader:
-    def __init__(
-        self,
-        params,
-        sp_device=None,
-        t_device=None,
-        filename=None,
-        slice_idx=0,
-        recalculate_n_motion_states_from_navigator=False,
-    ):
+    def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=0):
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
@@ -41,19 +33,6 @@ class DataLoader:
         self.filename = filename
         self.slice_idx = slice_idx
         self.motion_plot_context = None
-        self.recalculate_n_motion_states_from_navigator = recalculate_n_motion_states_from_navigator
-
-        if (
-            self.recalculate_n_motion_states_from_navigator
-            and self.params.data_type in {"real-world", "raw-data"}
-            and self.params.motion_type == "rigid"
-        ):
-            # TODO: detect rigid motion events from navigator/belt signal and update
-            # params.N_motion_states automatically before motion binning/reconstruction.
-            raise NotImplementedError(
-                "recalculate_n_motion_states_from_navigator is not implemented yet for " # TODO to remove recalculate_n_motion_states_from_navigator everywhere
-                "real-world/raw-data rigid motion."
-            )
 
         if self.params.data_type != "shepp-logan" and self.filename is None:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
@@ -94,14 +73,8 @@ class DataLoader:
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
 
         motionSimulator = MotionSimulator(
-            self.image_ground_truth,
-            self.smaps,
-            self.ky_idx,
-            self.nex_idx,
-            self.ky_per_motion,
-            params=self.params,
-            sp_device=self.sp_device,
-            t_device=self.t_device,
+            self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_motion,
+            params=self.params, sp_device=self.sp_device, t_device=self.t_device,
         )
         
         if self.params.motion_simulation_type == 'as-it-is':
@@ -111,25 +84,25 @@ class DataLoader:
                 raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
         else:
             if self.params.motion_simulation_type == 'no-motion-data':
-                motionSimulator.simulate_no_motion()
+                motionSimulator._simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth.clone()
             else:      
                 if self.params.motion_simulation_type == 'discrete-rigid':
-                    motionSimulator.simulate_discrete_rigid_motion()
+                    motionSimulator._simulate_discrete_rigid_motion()
                 elif self.params.motion_simulation_type == 'rigid':
-                    motionSimulator.simulate_realistic_rigid_motion()
+                    motionSimulator._simulate_realistic_rigid_motion()
                 elif self.params.motion_simulation_type == 'discrete-non-rigid':
-                    motionSimulator.simulate_discrete_non_rigid_motion()
+                    motionSimulator._simulate_discrete_non_rigid_motion()
                 elif self.params.motion_simulation_type == 'non-rigid':
-                    motionSimulator.simulate_realistic_non_rigid_motion()
+                    motionSimulator._simulate_realistic_non_rigid_motion()
                 else:
                     raise ValueError("Unknown motion_simulation_type")
-                self.kspace = motionSimulator.get_corrupted_kspace()
-                self.image_no_moco = motionSimulator.get_corrupted_image()
+                self.kspace = motionSimulator._get_corrupted_kspace()
+                self.image_no_moco = motionSimulator._get_corrupted_image()
                 if hasattr(motionSimulator, "alpha_maps"):
                     self.alpha_maps_true = motionSimulator.alpha_maps
 
-            motion_curve, tx, ty, phi = motionSimulator.get_motion_information()
+            motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
             y_limits = compute_motion_y_limits(motion_curve, tx=tx, ty=ty, phi=phi)
             (
                 self.binned_indices,
@@ -137,17 +110,9 @@ class DataLoader:
                 self.motion_labels,
                 self.ky_idx_chronological,
                 self.nex_idx_chronological,
-            ) = MotionBinner.bin_motion(
-                motion_curve,
-                self.ky_idx,
-                self.nex_idx,
-                self.t_device,
-                self.params,
-                tx=tx,
-                ty=ty,
-                phi=phi,
-                y_limits=y_limits,
-                return_debug_data=True,
+            ) = MotionBinner._bin_motion(
+                motion_curve, self.ky_idx, self.nex_idx, self.t_device, self.params,
+                tx=tx, ty=ty, phi=phi, y_limits=y_limits, return_debug_data=True,
             )
             self.motion_plot_context = {
                 "motion_curve": motion_curve,
@@ -178,10 +143,8 @@ class DataLoader:
                         "amp_max": max(amp_max, 1e-12),
                     }
         
-        self.sampling_idx = SamplingSimulator.build_sampling_per_nex_per_motion(
-            self.binned_indices,  # [Nex][Nmotion]
-            self.Nx, self.Ny,
-            self.t_device
+        self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
+            self.binned_indices, self.Nx, self.Ny, self.t_device  # [Nex][Nmotion]
         )
 
         self._save_input_data_artifacts()
@@ -224,19 +187,13 @@ class DataLoader:
             and self.image_ground_truth is not None
         ):
             show_and_save_image(
-                self.image_ground_truth[0],
-                "image_ground_truth",
-                folder,
-                flip_for_display=flip_for_display,
-                jupyter_display=False,
+                self.image_ground_truth[0], "image_ground_truth", folder,
+                flip_for_display=flip_for_display, jupyter_display=False,
             )
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
             show_and_save_image(
-                self.image_no_moco[0],
-                "image_corrupted",
-                folder,
-                flip_for_display=flip_for_display,
-                jupyter_display=False,
+                self.image_no_moco[0], "image_corrupted", folder,
+                flip_for_display=flip_for_display, jupyter_display=False,
             )
 
         if (
@@ -254,27 +211,19 @@ class DataLoader:
                 alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
                 amp_max = None if scale is None else scale.get("amp_max")
                 save_alpha_component_map(
-                    alpha_x,
-                    "simulated_alpha_x_input",
+                    alpha_x, "simulated_alpha_x_input",
                     os.path.join(folder, "simulated_alpha_x_input.png"),
-                    flip_vertical=flip_for_display,
-                    abs_max=alpha_abs_max_x,
+                    flip_vertical=flip_for_display, abs_max=alpha_abs_max_x,
                 )
                 save_alpha_component_map(
-                    alpha_y,
-                    "simulated_alpha_y_input",
+                    alpha_y, "simulated_alpha_y_input",
                     os.path.join(folder, "simulated_alpha_y_input.png"),
-                    flip_vertical=flip_for_display,
-                    abs_max=alpha_abs_max_y,
+                    flip_vertical=flip_for_display, abs_max=alpha_abs_max_y,
                 )
                 save_nonrigid_quiver_with_contours(
-                    alpha_axis0,
-                    alpha_axis1,
-                    self.image_ground_truth[0],
-                    "simulated_motion_quiver_input",
+                    alpha_axis0, alpha_axis1, self.image_ground_truth[0], "simulated_motion_quiver_input",
                     os.path.join(folder, "simulated_motion_quiver_input.png"),
-                    flip_vertical=flip_for_display,
-                    amp_vmax=amp_max,
+                    flip_vertical=flip_for_display, amp_vmax=amp_max,
                 )
 
     def _has_simulated_motion(self):
@@ -344,7 +293,7 @@ class DataLoader:
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
+        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator._build_ky_and_nex()
 
     def _apply_resize_factor(self, img_np):
         factor = float(self.params.image_resize_factor)
@@ -355,12 +304,7 @@ class DataLoader:
         h, w = img_np.shape
         new_h = max(1, int(round(h * factor)))
         new_w = max(1, int(round(w * factor)))
-        return resize(
-            img_np,
-            (new_h, new_w),
-            anti_aliasing=True,
-            preserve_range=True,
-        )
+        return resize(img_np, (new_h, new_w), anti_aliasing=True, preserve_range=True)
 
     def _load_from_image(self, path_to_image):
         ext = os.path.splitext(path_to_image)[1].lower()
@@ -429,19 +373,14 @@ class DataLoader:
             (N, N),
             anti_aliasing=True,
         )
-        phantom_2d = torch.tensor(
-            phantom_np_2d,
-            dtype=torch.float64,
-            device=self.t_device
-        )
+        phantom_2d = torch.tensor(phantom_np_2d, dtype=torch.float64, device=self.t_device)
 
         phantom = phantom_2d.unsqueeze(-1).expand(N, N, Nz)  # (Nx, Ny, Nz)
 
         # 2. Create coil sensitivity maps (Ncoils, Nx, Ny, Nz)
         X, Y = torch.meshgrid(
             torch.arange(1, N + 1, device=self.t_device),
-            torch.arange(1, N + 1, device=self.t_device),
-            indexing="ij"
+            torch.arange(1, N + 1, device=self.t_device), indexing="ij"
         )
 
         sigma = N / 4
@@ -453,11 +392,7 @@ class DataLoader:
         centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]
 
         # Allocate coil maps directly in (Ncoils, Nx, Ny)
-        smaps_2d = torch.empty(
-            (Ncoils, N, N),
-            dtype=torch.cdouble,
-            device=self.t_device
-        )
+        smaps_2d = torch.empty((Ncoils, N, N), dtype=torch.cdouble, device=self.t_device)
 
         for c, (x0, y0) in enumerate(centers):
             profile = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2 * sigma ** 2))
@@ -484,16 +419,11 @@ class DataLoader:
 
         # 5. Sampling
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
+        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator._build_ky_and_nex()
 
     def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
-        reader = RawDataReader(
-            ismrmrd_file=path_to_ismrm,
-            saec_file=path_to_saec,
-            sensor_type="BELT",
-            device="cuda"
-        )
-        data = reader.read_data_from_rawdata()
+        reader = RawDataReader(ismrmrd_file=path_to_ismrm, saec_file=path_to_saec, sensor_type="BELT", device="cuda")
+        data = reader._read_data_from_rawdata()
 
         self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
         self.params.Nex = int(self.kspace.shape[1])
@@ -512,10 +442,9 @@ class DataLoader:
             self.motion_labels,
             self.ky_idx_chronological,
             self.nex_idx_chronological,
-        ) = MotionBinner.bin_motion(
-            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params
-            , y_limits=y_limits
-            , return_debug_data=True
+        ) = MotionBinner._bin_motion(
+            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params,
+            y_limits=y_limits, return_debug_data=True
         )
         self.motion_plot_context = {
             "motion_curve": motion_data,
@@ -529,11 +458,9 @@ class DataLoader:
         self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
-        SamplingSimulator.visualize_ky_order(
-            [self.ky_idx.detach().cpu()],
-            Ny=self.Ny,
-            folder=self.params.input_data_folder,
-            fname=f"ky_order_rawdata_slice{slice_idx}.png"
+        SamplingSimulator._visualize_ky_order(
+            [self.ky_idx.detach().cpu()], Ny=self.Ny,
+            folder=self.params.input_data_folder, fname=f"ky_order_rawdata_slice{slice_idx}.png"
         )
         
 
@@ -564,10 +491,9 @@ class DataLoader:
             self.motion_labels,
             self.ky_idx_chronological,
             self.nex_idx_chronological,
-        ) = MotionBinner.bin_motion(
-            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params
-            , y_limits=y_limits
-            , return_debug_data=True
+        ) = MotionBinner._bin_motion(
+            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params,
+            y_limits=y_limits, return_debug_data=True
         )
         self.motion_plot_context = {
             "motion_curve": motion_data,
@@ -581,11 +507,9 @@ class DataLoader:
         self.binned_indices = self.ky_per_motion
         self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
 
-        SamplingSimulator.visualize_ky_order(
-            [self.ky_idx.detach().cpu()],
-            Ny=self.Ny,
-            folder=self.params.input_data_folder,
-            fname=f"ky_order_realworld_slice{slice_idx}.png"
+        SamplingSimulator._visualize_ky_order(
+            [self.ky_idx.detach().cpu()], Ny=self.Ny,
+            folder=self.params.input_data_folder, fname=f"ky_order_realworld_slice{slice_idx}.png"
         )
 
     def _calc_espirit_maps(self):
@@ -603,11 +527,7 @@ class DataLoader:
 
         nCha, _, nX, nY, nSlices = kspace.shape
 
-        espirit_maps = torch.zeros(
-            (nCha, nX, nY, nSlices),
-            dtype=torch.complex128,
-            device=device
-        )
+        espirit_maps = torch.zeros((nCha, nX, nY, nSlices), dtype=torch.complex128, device=device)
 
         for i in range(nSlices):
 
@@ -616,10 +536,8 @@ class DataLoader:
                 import cupy as cp
                 kspace_cp = cp.asarray(kspace[:, 0, :, :, i].contiguous())
                 maps_cp = spmri.app.EspiritCalib(
-                    kspace_cp, calib_width=acs,
-                    kernel_width=kernel_width,
-                    max_iter=espirit_max_iter,
-                    device=sp_device
+                    kspace_cp, calib_width=acs, kernel_width=kernel_width,
+                    max_iter=espirit_max_iter, device=sp_device
                 ).run()
                 maps_cp = maps_cp.astype(cp.complex128, copy=False)
                 maps_cp = cp.ascontiguousarray(maps_cp)
@@ -629,10 +547,8 @@ class DataLoader:
             else:
                 kspace_np = kspace[:, 0, :, :, i].cpu().numpy()
                 maps_np = spmri.app.EspiritCalib(
-                    kspace_np, calib_width=acs,
-                    kernel_width=kernel_width,
-                    max_iter=espirit_max_iter,
-                    device=sp_device
+                    kspace_np, calib_width=acs, kernel_width=kernel_width,
+                    max_iter=espirit_max_iter, device=sp_device
                 ).run()
                 maps_np = maps_np.astype(np.complex128, copy=False)
                 maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
@@ -666,35 +582,23 @@ class DataLoader:
             nsamples_true = self.Nx * self.Ny
 
             motion_op_true = MotionOperator(
-                self.Nx,
-                self.Ny,
-                alpha_true,
-                self.params.motion_type,
-                motion_signal=signal_true,
+                self.Nx, self.Ny, alpha_true, self.params.motion_type, motion_signal=signal_true
             )
 
             encoding_true = EncodingOperator(
-                self.smaps,
-                nsamples_true,
-                sampling_true,
-                self.params.Nex,
-                motion_op_true,
+                self.smaps, nsamples_true, sampling_true, self.params.Nex, motion_op_true
             )
 
             kspace_vec = self.kspace[..., 0].reshape(self.Ncha, self.params.Nex, nsamples_true).flatten()
             b = encoding_true.adjoint(kspace_vec)
             x0 = torch.zeros_like(b)
             solver = ConjugateGradientSolver(
-                encoding_true,
-                reg_lambda=0.0,
-                verbose=False,
-                early_stopping=self.params.cg_early_stopping,
-                max_stag_steps=self.params.cg_max_stag_steps,
-                max_more_steps=self.params.cg_max_more_steps,
-                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+                encoding_true, reg_lambda=0.0, verbose=False,
+                early_stopping=self.params.cg_early_stopping, max_stag_steps=self.params.cg_max_stag_steps,
+                max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
                 reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
             )
-            img_vec = solver.solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
+            img_vec = solver._solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
             img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
             img_ref = self.image_ground_truth[..., 0]
 
@@ -704,9 +608,7 @@ class DataLoader:
 
             print(f"[DEBUG] GN-input consistency check (true alpha, clustered signal/sampling): rel_err={rel_err:.6e}")
             show_and_save_image(
-                img_back[0],
-                "gn_input_consistency_recovered_image",
-                self.params.debug_folder,
+                img_back[0], "gn_input_consistency_recovered_image", self.params.debug_folder,
                 flip_for_display=self.params.flip_for_display,
             )
 

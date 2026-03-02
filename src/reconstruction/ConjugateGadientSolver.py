@@ -6,8 +6,8 @@ Source: ChatGPT + Wikipedia
 class ConjugateGradientSolver:
     """
     CG and PCG solver for equations of the form:
-        A(x) = b
-    where A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
+        _A(x) = b
+    where _A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
 
     def __init__(
@@ -44,15 +44,15 @@ class ConjugateGradientSolver:
         self.last_info = None
 
     # --------------------------------------------------------------
-    # Regularized linear operator: A(x) = Eh(E(x)) + lambda_eff * R(x)
+    # Regularized linear operator: _A(x) = Eh(E(x)) + lambda_eff * R(x)
     # --------------------------------------------------------------
-    def A(self, x):
-        return self.E.normal(x) + self.effective_lambda() * self.regularization(x)
+    def _A(self, x):
+        return self.E.normal(x) + self._effective_lambda() * self._regularization(x)
 
-    def effective_lambda(self):
+    def _effective_lambda(self):
         return self.lambda_ * self.reg_scale
 
-    def update_regularization_scale(self, reference):
+    def _update_regularization_scale(self, reference):
         if (not self.use_reg_scale_proxy) or self.lambda_ == 0.0:
             self.reg_scale = 1.0
             return self.reg_scale
@@ -74,7 +74,7 @@ class ConjugateGradientSolver:
 
             v = v / (torch.linalg.norm(v) + eps)
             data_norm = torch.linalg.norm(self.E.normal(v))
-            reg_norm = torch.linalg.norm(self.regularization(v))
+            reg_norm = torch.linalg.norm(self._regularization(v))
 
             if reg_norm > eps and torch.isfinite(data_norm) and torch.isfinite(reg_norm):
                 ratios.append((data_norm / reg_norm).real.item())
@@ -88,23 +88,23 @@ class ConjugateGradientSolver:
         if self.verbose:
             print(
                 f"Regularizer proxy scale: {self.reg_scale:.6e}, "
-                f"lambda_eff={self.effective_lambda():.6e}"
+                f"lambda_eff={self._effective_lambda():.6e}"
             )
         return self.reg_scale
     
-    def regularization(self, x):
+    def _regularization(self, x):
         if self.regularizer == "Tikhonov":
             return x
         elif self.regularizer == "Tikhonov_gradient":
-            return self.gradient_op(x)
+            return self._gradient_op(x)
         elif self.regularizer == "Tikhonov_laplacian":
-            return self.laplacian_op(x)
+            return self._laplacian_op(x)
         else:
             raise ValueError("Unknown regularizer")
     
-    def gradient_op(self, x):
+    def _gradient_op(self, x):
         if self.regularization_shape is None:
-            raise ValueError("regularization_shape must be set for Tikhonov_gradient regularization.")
+            raise ValueError("regularization_shape must be set for Tikhonov_gradient _regularization.")
         field = x.view(*self.regularization_shape)
         # Forward differences with zero-gradient (non-periodic) boundaries.
         dx = torch.zeros_like(field)
@@ -124,7 +124,7 @@ class ConjugateGradientSolver:
 
         return (dxx + dyy).reshape(-1)
     
-    def laplacian_op(self, x):
+    def _laplacian_op(self, x):
         field = x.view(*self.regularization_shape)
         nx = field.shape[-2]
         ny = field.shape[-1]
@@ -165,7 +165,7 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     def cg(self, b, x0=None, max_iter=20, tol=1e-3):
         """
-        Solve A(x) = b using Conjugate Gradient.
+        Solve _A(x) = b using Conjugate Gradient.
 
         Parameters:
             b        : RHS vector, shape (NxNy,)
@@ -182,8 +182,8 @@ class ConjugateGradientSolver:
             else:
                 x = x0.clone().to(self.device)
 
-            # A(x)
-            Ax = self.A(x)
+            # _A(x)
+            Ax = self._A(x)
 
             # Residual
             r = b - Ax
@@ -212,7 +212,7 @@ class ConjugateGradientSolver:
             stop_reason = "initial_tolerance"
 
             for it in range(max_iter):
-                Ap = self.A(p)
+                Ap = self._A(p)
                 iters_done = it + 1
 
                 denom = torch.dot(torch.conj(p), Ap).real
@@ -237,7 +237,7 @@ class ConjugateGradientSolver:
                 )
                 if refresh_true_residual:
                     # MATLAB-style stabilization: periodically recompute true residual.
-                    r = b - self.A(x)
+                    r = b - self._A(x)
                     res_norm = torch.linalg.norm(r)
                 rel_res = (res_norm / b_norm).item()
                 residual_norm_history.append(float(res_norm.item()))
@@ -295,6 +295,6 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG
     # --------------------------------------------------------------
-    def solve_cg(self, b, **kwargs):
-        self.update_regularization_scale(b)
+    def _solve_cg(self, b, **kwargs):
+        self._update_regularization_scale(b)
         return self.cg(b, **kwargs)

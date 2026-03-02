@@ -1,6 +1,6 @@
 import torch
 
-from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
+from src.utils.plotting import save_clustered_motion_plots
 
 def _kmeans_torch(x, k, n_iter=20):
     N, _ = x.shape
@@ -26,7 +26,7 @@ def _kmeans_torch(x, k, n_iter=20):
 
 class MotionBinner:
     @staticmethod
-    def bin_motion(
+    def _bin_motion(
         motion_curve,
         ky_idx,
         nex_idx,

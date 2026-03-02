@@ -167,7 +167,7 @@ class RawDataReader:
 
     def _read_motion_and_kspace(self, slice_idx=None):
 
-        time_saec, resp = RespiratoryDataReader.read_and_process_data(
+        time_saec, resp = RespiratoryDataReader._read_and_process_data(
             self.saec_file, self.sensor_type)
 
         time_saec = torch.tensor(time_saec, device=self.device)
@@ -206,7 +206,7 @@ class RawDataReader:
         }
 
 
-    def read_data_from_rawdata(self, h5filename=None, slice_idx=None):
+    def _read_data_from_rawdata(self, h5filename=None, slice_idx=None):
 
         data = self._read_motion_and_kspace(slice_idx=slice_idx)
 
