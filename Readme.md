@@ -12,7 +12,7 @@ Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr)
 - `src/utils/`: plotting, diagnostics, notebook display helpers
 - `config/`: TOML configs for reconstruction, sampling, motion simulation, and general runtime
 
-\+ five demos
+\+ five demos. Attention: the reconstruction parameters were adjusted to make the reconstruction work for these concrete examples; however, if the random seed or other conditions change, the reconstruction parameters may require an adjustment.
 
 ## Environment Setup
 
@@ -175,7 +175,7 @@ Each run writes into folders from `config/general.toml`:
 
 - `input_data/`: sampling order, motion curves, corrupted and ground-truth images (if they exist), and simulated motion (if it exists)
 - `debug_outputs/`: results per reconstruction level
-- `logs/`: residual curves and per-restart logs
+- `logs/`: residual curves and run log
 - `results/`: final reconstructed outputs
 
 By default, these folders are cleaned before each run (`clean_output_folders_before_run = true`).

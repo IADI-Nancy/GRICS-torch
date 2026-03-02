@@ -225,7 +225,7 @@ class DataLoader:
         ):
             show_and_save_image(
                 self.image_ground_truth[0],
-                "img_ground_truth",
+                "image_ground_truth",
                 folder,
                 flip_for_display=flip_for_display,
                 jupyter_display=False,
@@ -233,7 +233,7 @@ class DataLoader:
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
             show_and_save_image(
                 self.image_no_moco[0],
-                "img_corrupted",
+                "image_corrupted",
                 folder,
                 flip_for_display=flip_for_display,
                 jupyter_display=False,

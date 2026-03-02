@@ -4,11 +4,6 @@ motion_type = "rigid"
 # Manual number of motion states used for reconstruction.
 # This value is selected only if manual mode is selected (i.e., no motion simulation override).
 N_motion_states = 4
-# Number of random restarts for joint optimization - used to initialize the motion parameters 
-# from different random starting points, and pick the best result. The first iteration is always
-# initialized with zero motion, and the rest with random motion parameters.
-# The amplitude of random motion parameters is determined by the motion simulation config.
-max_restarts = 1
 # Apply extra scaling to motion updates during GN iterations.
 use_scaled_motion_update = false
 # Multi-resolution scale factors (relative to full resolution).

@@ -115,9 +115,6 @@ def refresh_derived(params):
     if not hasattr(params, "Nex"):
         params.Nex = 1
 
-    if params.motion_type == "non-rigid":
-        params.max_restarts = 1
-
     os.makedirs(params.debug_folder, exist_ok=True)
     os.makedirs(params.logs_folder, exist_ok=True)
     os.makedirs(params.results_folder, exist_ok=True)

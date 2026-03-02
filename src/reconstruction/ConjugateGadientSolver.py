@@ -161,62 +161,9 @@ class ConjugateGradientSolver:
 
 
     # --------------------------------------------------------------
-    # Preconditioners ----------------------------------------------
+    # Conjugate Gradient Solver
     # --------------------------------------------------------------
-
-    def jacobi_preconditioner(self, N):
-        """ 
-        Build Jacobi preconditioner: M^{-1} = diag(A)^(-1)
-        Approximated by applying A to basis vectors implicitly via ones-vector.
-        """
-        ones_img = torch.ones(N, dtype=torch.complex128, device=self.device)
-        d = self.A(ones_img).real   # diagonal approximation
-        d = torch.clamp(d, min=1e-6)
-        return lambda r: r / d
-
-    def jacobi_probe_preconditioner(self, N, num_probes=8, damping=1e-3, dtype=None):
-        """
-        Probe-based Jacobi preconditioner:
-            diag(A) ~= E[ conj(z) .* (A z) ]
-        with random unit-modulus complex probes z.
-        """
-        n_probes = max(1, int(num_probes))
-        eps = 1e-12
-
-        if dtype is None:
-            dtype = torch.complex128
-
-        if not torch.is_complex(torch.empty((), dtype=dtype)):
-            dtype = torch.complex128
-
-        diag = torch.zeros(N, dtype=torch.float64, device=self.device)
-
-        with torch.no_grad():
-            for _ in range(n_probes):
-                # z in {1, -1, i, -i}; unbiased for Hermitian diagonals.
-                phases = torch.randint(0, 4, (N,), device=self.device)
-                z = torch.empty(N, dtype=dtype, device=self.device)
-                z[phases == 0] = 1.0 + 0.0j
-                z[phases == 1] = -1.0 + 0.0j
-                z[phases == 2] = 0.0 + 1.0j
-                z[phases == 3] = 0.0 - 1.0j
-
-                Az = self.A(z)
-                diag += (torch.conj(z) * Az).real.to(torch.float64)
-
-            diag /= float(n_probes)
-            diag = torch.clamp(diag, min=0.0)
-
-            median_val = torch.median(diag)
-            floor = torch.clamp(median_val * float(damping), min=eps)
-            inv_diag = 1.0 / torch.clamp(diag, min=floor)
-
-        return lambda r: r * inv_diag.to(r.dtype)
-
-    # --------------------------------------------------------------
-    # Conjugate Gradient Solver (with optional preconditioner)
-    # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=20, tol=1e-3, M=None):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3):
         """
         Solve A(x) = b using Conjugate Gradient.
 
@@ -225,7 +172,6 @@ class ConjugateGradientSolver:
             x0       : initial guess
             max_iter : max iterations
             tol      : tolerance
-            M        : preconditioner function M(r) ~ M^{-1} r
         """
         with torch.no_grad():
             b = b.to(self.device)
@@ -244,12 +190,7 @@ class ConjugateGradientSolver:
             b_norm = torch.linalg.norm(b) + 1e-12
             tolb = tol * b_norm
 
-            # Preconditioned residual
-            if M is None:
-                z = r.clone()
-            else:
-                z = M(r)
-
+            z = r.clone()
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
             eps = torch.finfo(r.real.dtype).eps
@@ -323,10 +264,7 @@ class ConjugateGradientSolver:
                         stop_reason = "early_stopping"
                         break
 
-                if M is None:
-                    z = r.clone()
-                else:
-                    z = M(r)
+                z = r.clone()
 
                 rz_new = torch.dot(torch.conj(r), z).real
                 if rz_old.abs() < 1e-15:
@@ -359,12 +297,4 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     def solve_cg(self, b, **kwargs):
         self.update_regularization_scale(b)
-        return self.cg(b, M=None, **kwargs)
-
-    # --------------------------------------------------------------
-    # Convenience function: solve with Jacobi PCG
-    # --------------------------------------------------------------
-    def solve_pcg_jacobi(self, b, **kwargs):
-        self.update_regularization_scale(b)
-        M = self.jacobi_preconditioner(b.shape[0])
-        return self.cg(b, M=M, **kwargs)
+        return self.cg(b, **kwargs)

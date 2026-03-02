@@ -4,8 +4,6 @@ motion_type = "non-rigid"
 # Manual number of motion states used for reconstruction.
 # This value is selected only if manual mode is selected (i.e., no motion simulation override).
 N_motion_states = 4
-# Number of random restarts for joint optimization - fixed to 1 for the non-rigid case.
-max_restarts = 1
 # Apply extra scaling to motion updates during GN iterations.
 use_scaled_motion_update = false
 # Multi-resolution scale factors (relative to full resolution).
@@ -25,11 +23,6 @@ cg_max_more_steps = 0
 cg_use_reg_scale_proxy = true
 # Number of probes for regularization scaling estimate.
 cg_reg_scale_num_probes = 8
-# Motion-model CG preconditioner ("none", "jacobi_probe", or "cpp_gs").
-motion_cg_preconditioner = "cpp_gs"
-# Relative floor for the estimated diagonal in motion-model preconditioner.
-motion_cg_preconditioner_damping = 1.0e-3
-
 # Image reconstruction regularization weight.
 lambda_r = 5.0e-2
 # Maximum CG/GN inner iterations for image update.

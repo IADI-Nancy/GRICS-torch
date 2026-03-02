@@ -17,6 +17,22 @@ def _format_cg_info(cg_info):
     )
 
 
+def _console(params, message):
+    if params.print_to_console:
+        print(message)
+
+
+def _assign_cached_reg_scale(params, Data_res, cache_key, solver, reference_vec):
+    if not params.cg_use_reg_scale_proxy:
+        solver.reg_scale = 1.0
+        return
+
+    cache = Data_res.setdefault("_reg_scale_cache", {})
+    if cache_key not in cache:
+        cache[cache_key] = solver.update_regularization_scale(reference_vec)
+    solver.reg_scale = cache[cache_key]
+
+
 def _initialize_global_tracking():
     global_best_metric = float("inf")
     global_best_image = None
@@ -43,9 +59,9 @@ def _resolve_gn_iterations_per_level(params, res_levels):
     raise ValueError("GN_iterations_per_level must be int, list, or tuple.")
 
 
-def _init_restart_logging(params, restart_idx, n_levels, gn_iters_per_level):
+def _init_run_logging(params, n_levels, gn_iters_per_level):
     os.makedirs(params.logs_folder, exist_ok=True)
-    log_path = os.path.join(params.logs_folder, f"restart_{restart_idx}.log")
+    log_path = os.path.join(params.logs_folder, "joint_reconstruction.log")
     param_items = {}
     simulation_param_keys = {"motion_simulation_type", "num_motion_events", "max_tx", "max_ty", "max_phi",
                              "max_center_x", "max_center_y", "seed", "motion_tau", "nonrigid_motion_amplitude",
@@ -61,7 +77,7 @@ def _init_restart_logging(params, restart_idx, n_levels, gn_iters_per_level):
         param_items[key] = value
 
     with open(log_path, "w") as f:
-        f.write(f"Restart {restart_idx}\n")
+        f.write("Joint reconstruction run\n")
         f.write(f"Motion type: {params.motion_type}\n")
         f.write(f"GN iterations per level: {gn_iters_per_level}\n\n")
         f.write("Parameters (excluding simulation parameters):\n")
@@ -75,17 +91,17 @@ def _init_restart_logging(params, restart_idx, n_levels, gn_iters_per_level):
     }
 
 
-def _append_restart_log(restart_log, line=""):
-    with open(restart_log["path"], "a") as f:
+def _append_run_log(run_log, line=""):
+    with open(run_log["path"], "a") as f:
         f.write(line + "\n")
 
 
-def _save_restart_residual_plots(logs_folder, restart_log, restart_idx):
-    recon_path = os.path.join(logs_folder, f"residual_recon_restart_{restart_idx}.png")
-    motion_path = os.path.join(logs_folder, f"residual_motion_restart_{restart_idx}.png")
-    save_residual_subplots(restart_log["recon_residuals_by_level"], title=f"Reconstruction residuals - restart {restart_idx}",
+def _save_run_residual_plots(logs_folder, run_log):
+    recon_path = os.path.join(logs_folder, "recon_residual.png")
+    motion_path = os.path.join(logs_folder, "motion_residual.png")
+    save_residual_subplots(run_log["recon_residuals_by_level"], title="Reconstruction residuals",
                            y_label="Relative residual", out_path=recon_path)
-    save_residual_subplots(restart_log["motion_residuals_by_level"], title=f"Motion normalized residuals - restart {restart_idx}",
+    save_residual_subplots(run_log["motion_residuals_by_level"], title="Motion normalized residuals",
                            y_label="||dm||2 / (||alpha||2 + eps)", out_path=motion_path)
 
 
@@ -106,7 +122,7 @@ def _update_global_best(best_relres, best_image, best_motion, global_best_metric
     return global_best_metric, global_best_image, global_best_motion
 
 
-def _save_nonrigid_motion_debug(Data_res, restart_idx, level_idx, motion_type, debug_folder, flip_for_display):
+def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, flip_for_display):
     if motion_type != "non-rigid":
         return
 
@@ -131,13 +147,13 @@ def _save_nonrigid_motion_debug(Data_res, restart_idx, level_idx, motion_type, d
         alpha_y_for_quiver = alpha_y
 
     for comp_name, comp in components:
-        save_alpha_component_map(comp, f"{comp_name} restart {restart_idx} level {level_idx}",
-                                 os.path.join(debug_folder, f"{comp_name}_restart_{restart_idx}_level{level_idx}.png"),
+        save_alpha_component_map(comp, f"{comp_name} level {level_idx}",
+                                 os.path.join(debug_folder, f"{comp_name}_level{level_idx}.png"),
                                  flip_vertical=flip_for_display)
 
     save_nonrigid_quiver_with_contours(
         alpha_x_for_quiver, alpha_y_for_quiver, Data_res["ReconstructedImage"][0],
-        f"motion field restart {restart_idx} level {level_idx}",
-        os.path.join(debug_folder, f"motion_quiver_restart_{restart_idx}_level{level_idx}.png"),
+        f"motion field level {level_idx}",
+        os.path.join(debug_folder, f"motion_quiver_level{level_idx}.png"),
         flip_vertical=flip_for_display,
     )

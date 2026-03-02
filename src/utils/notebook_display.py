@@ -86,8 +86,8 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
     input_folder = Path(params.input_data_folder)
     results_folder = Path(params.results_folder)
 
-    recon_logs = sorted(logs_folder.glob("residual_recon_restart_*.png"))
-    motion_logs = sorted(logs_folder.glob("residual_motion_restart_*.png"))
+    recon_logs = sorted(logs_folder.glob("recon_residual.png"))
+    motion_logs = sorted(logs_folder.glob("motion_residual.png"))
     logs_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
     if motion_logs:
         display_image_row(
@@ -105,14 +105,14 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
         )
 
     image_paths = [
-        _first_existing_path(input_folder / "img_corrupted.png", input_folder / "input_distorted.png"),
-        str(results_folder / "reconstructed_image.png"),
+        _first_existing_path(input_folder / "image_corrupted.png", input_folder / "input_distorted.png"),
+        str(results_folder / "image_reconstructed.png"),
     ]
     subtitles = ["Corrupted", "Corrected"]
     images_figsize = None
     if has_ground_truth:
         image_paths.append(
-            _first_existing_path(input_folder / "img_ground_truth.png", input_folder / "input_ground_truth.png")
+            _first_existing_path(input_folder / "image_ground_truth.png", input_folder / "input_ground_truth.png")
         )
         subtitles.append("Ground truth")
         images_figsize = (13.0, 4.8)
