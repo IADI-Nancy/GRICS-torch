@@ -22,9 +22,6 @@ class MotionSimulator:
         self.sp_device = sp_device
         self.t_device = t_device
         self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  
-
-    def get_simulated_sampling(self):
-        return self.ky_idx, self.nex_idx, self.TotalKspaceSamples
     
     def get_corrupted_kspace(self):
         return self.kspace
@@ -59,7 +56,7 @@ class MotionSimulator:
 
         return sampling
 
-    def apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
+    def _apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
         if motion_type is None:
             motion_type = self.params.motion_type
 
@@ -113,7 +110,7 @@ class MotionSimulator:
     #---------- Realistic motion curves generation ----------
     # -------------------------------------------------------
     
-    def create_realistic_motion_curves(self):
+    def _create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
 
@@ -135,9 +132,6 @@ class MotionSimulator:
         tx  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
         ty  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
         phi = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
-
-        # Full time axis
-        t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
 
         for i, ti in enumerate(event_times):
             ti = event_times[i].item()
@@ -163,7 +157,7 @@ class MotionSimulator:
         M_centered = M - M.mean(dim=1, keepdim=True)
         # Perform SVD (PCA)
         # U: 3x3, S: singular values, Vh: NyxNy
-        U, S, Vh = torch.linalg.svd(M_centered, full_matrices=False)
+        U, _, _ = torch.linalg.svd(M_centered, full_matrices=False)
         # First principal component direction (in parameter space)
         u1 = U[:, 0]
         # Project the centered data onto the first PC
@@ -185,7 +179,7 @@ class MotionSimulator:
 
         self.TotalKspaceSamples = self.Ny * self.Nx
         # generate motion curves and parameters
-        self.navigator, self.tx, self.ty, self.phi = self.create_realistic_motion_curves()
+        self.navigator, self.tx, self.ty, self.phi = self._create_realistic_motion_curves()
 
         # Apply simulated motion
         alpha = torch.zeros(3, self.Ny * self.params.Nex, device=self.t_device)
@@ -197,13 +191,13 @@ class MotionSimulator:
         centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(self.Ny * self.params.Nex, device=self.t_device)
         centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.randn(self.Ny * self.params.Nex, device=self.t_device)
 
-        self.apply_motion(alpha, centers)
+        self._apply_motion(alpha, centers)
 
     # -------------------------------------------------------
     # ---- Generation of discrtete motion states per shot ---
     # -------------------------------------------------------
 
-    def expand_motion_to_ky(self, ky_per_mot_state_idx):
+    def _expand_motion_to_ky(self, ky_per_mot_state_idx):
         """
         Expand per-motion-state parameters into per-ky vectors
         in chronological acquisition order.
@@ -237,7 +231,7 @@ class MotionSimulator:
                 ptr += n
                 m += 1
 
-    def create_discrete_motion_curves(self, ky_per_mot_state_idx):
+    def _create_discrete_motion_curves(self, ky_per_mot_state_idx):
         Nshots = self.params.Nshots
 
         alpha = torch.zeros((3, Nshots), device=self.t_device)
@@ -278,7 +272,7 @@ class MotionSimulator:
         # Project motion onto PC1 → navigator
         self.navigator_mot_state = motion_mat @ pc1  # (Nshots,)
 
-        self.expand_motion_to_ky(ky_per_mot_state_idx)
+        self._expand_motion_to_ky(ky_per_mot_state_idx)
         # save debug plots
         if self.params.debug_flag:
             save_motion_debug_plots(self.navigator, self.tx, self.ty, self.phi, self.params.debug_folder)
@@ -295,14 +289,14 @@ class MotionSimulator:
         
         self.TotalKspaceSamples = self.Ny * self.Nx
 
-        self.navigator, alpha, centers = self.create_discrete_motion_curves(ky_per_mot_state_idx)
+        self.navigator, alpha, centers = self._create_discrete_motion_curves(ky_per_mot_state_idx)
 
-        self.apply_motion(alpha, centers)
+        self._apply_motion(alpha, centers)
 
 
     
 
-    def create_discrete_non_rigid_alpha_fields(self):
+    def _create_discrete_non_rigid_alpha_fields(self):
         spatial_model = self.params.nonrigid_spatial_model
         if spatial_model == "gaussian":
             alpha_x, alpha_y, alpha_maps = self._create_gaussian_non_rigid_alpha_fields()
@@ -411,7 +405,7 @@ class MotionSimulator:
         # For non-rigid motion_type_flag==2, MATLAB uses S = XTranslationVector.
         S = tx_vec
 
-        alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
+        alpha_x, alpha_y, alpha_maps = self._create_discrete_non_rigid_alpha_fields()
         self.alpha_maps = alpha_maps
 
         if self.params.debug_flag:
@@ -440,15 +434,15 @@ class MotionSimulator:
                 flip_vertical=flip_for_display,
             )
 
-        self.apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
+        self._apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
 
         self.navigator_mot_state = S
         self.tx_mot_state = tx_vec
         self.ty_mot_state = ty_vec
         self.phi_mot_state = phi_vec
-        self.expand_motion_to_ky(ky_per_mot_state_idx)
+        self._expand_motion_to_ky(ky_per_mot_state_idx)
 
-    def create_realistic_non_rigid_motion_curve(self):
+    def _create_realistic_non_rigid_motion_curve(self):
         """
         Create a respiratory-like sinusoidal motion curve with unit amplitude.
         Frequency (cycles per image/Nex block) and phase are randomized.
@@ -482,13 +476,13 @@ class MotionSimulator:
         self.sampling_idx = self._build_sampling_per_line_global_states()
         self.TotalKspaceSamples = self.Ny * self.Nx
 
-        alpha_x, alpha_y, alpha_maps = self.create_discrete_non_rigid_alpha_fields()
+        alpha_x, alpha_y, alpha_maps = self._create_discrete_non_rigid_alpha_fields()
         amp = float(self.params.nonrigid_motion_amplitude)
         alpha_maps = alpha_maps * amp
         self.alpha_maps = alpha_maps
 
-        self.navigator = self.create_realistic_non_rigid_motion_curve()
-        self.apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
+        self.navigator = self._create_realistic_non_rigid_motion_curve()
+        self._apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
         # Keep compatibility with downstream plotting/debug interfaces.
         # TODO to remove this part and to make a proper separation between rigid and non-rigid motion information in the codebase.

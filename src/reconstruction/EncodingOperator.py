@@ -21,7 +21,7 @@ class EncodingOperator:
 
     def forward(self, image):
          # ---- Sizes ----
-        Ncoils, Nx, Ny, Nsli = self.smaps.shape
+        Ncoils, Nx, Ny, _ = self.smaps.shape
         N_motion_states         = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
         KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex128, device=self.device)
         image = image.reshape(self.Nex, Nx, Ny)
@@ -54,7 +54,7 @@ class EncodingOperator:
 
     def adjoint(self, KspaceData):
         device = self.device
-        Ncoils, Nx, Ny, Nsli = self.smaps.shape
+        Ncoils, Nx, Ny, _ = self.smaps.shape
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
         KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples)
         Image = torch.zeros((self.Nex, Nx, Ny), dtype=torch.complex128, device=device)

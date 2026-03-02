@@ -64,7 +64,7 @@ def _drop_keys(cfg, keys):
         cfg.pop(key, None)
 
 
-def refresh_derived(params):
+def _refresh_derived(params):
     torch.set_default_dtype(torch.float64)
 
     if not hasattr(params, "flip_for_display"):
@@ -247,4 +247,4 @@ def load_config(
         cfg["flip_for_display"] = data_type in {"real-world", "raw-data"}
 
     params = SimpleNamespace(**cfg)
-    return refresh_derived(params)
+    return _refresh_derived(params)

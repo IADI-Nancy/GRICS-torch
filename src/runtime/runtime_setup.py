@@ -55,14 +55,14 @@ def _clean_folder_contents(folder):
             child.unlink()
 
 
-def clean_run_output_folders(params):
+def _clean_run_output_folders(params):
     _clean_folder_contents(params.debug_folder)
     _clean_folder_contents(params.logs_folder)
     _clean_folder_contents(params.results_folder)
     _clean_folder_contents(params.input_data_folder)
 
 
-def install_runtime_safety_guards():
+def _install_runtime_safety_guards():
     global _GUARDS_INSTALLED
     if _GUARDS_INSTALLED:
         return
@@ -77,9 +77,9 @@ def install_runtime_safety_guards():
 
 
 def initialize_runtime(params, print_gpu_info=False):
-    install_runtime_safety_guards()
+    _install_runtime_safety_guards()
     if params.clean_output_folders_before_run:
-        clean_run_output_folders(params)
+        _clean_run_output_folders(params)
 
     runtime_device = str(getattr(params, "runtime_device", "gpu")).lower()
     if runtime_device not in {"cpu", "gpu"}:

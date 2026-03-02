@@ -22,7 +22,7 @@ class RespiratoryDataReader:
     import numpy as np
 
     @staticmethod
-    def find_longest_valid_sequence(starts, stops):
+    def _find_longest_valid_sequence(starts, stops):
         """
         starts, stops: 1D numpy arrays of uint64 timestamps
 
@@ -61,7 +61,7 @@ class RespiratoryDataReader:
         return best_start, best_stop, max_duration
 
     @staticmethod
-    def get_respiration_from_saec(filename, sensor_type, flag_LR=False):
+    def _get_respiration_from_saec(filename, sensor_type, flag_LR=False):
         SAECData = h5Saec.from_file(filename.strip())
         ticksTo1s = SAECData.attributes.ticksTo1s
         respiratory_data = []
@@ -82,8 +82,8 @@ class RespiratoryDataReader:
                         print("Accelerometer data was not found for a MARMOT")
 
             if 'SAEC_TRIGGER_SIEMENS' in attr:
-                sequence_start, sequence_stop, max_duration = \
-                    RespiratoryDataReader.find_longest_valid_sequence(value.SeqStart.timestamp.values, value.SeqStop.timestamp.values)
+                _, sequence_stop, _ = \
+                    RespiratoryDataReader._find_longest_valid_sequence(value.SeqStart.timestamp.values, value.SeqStop.timestamp.values)
 
         timestamps_in_sec = []
         for timestamp in timestampsSAEC:
@@ -93,7 +93,7 @@ class RespiratoryDataReader:
         return np.asarray(timestamps_in_sec), respiratory_data
 
     @staticmethod
-    def detect_MARMOT_displacement(timestamps, respiratory_data_filtered_lp, respiratory_data_filtered_hp, i_MARMOT):
+    def _detect_marmot_displacement(timestamps, respiratory_data_filtered_lp, respiratory_data_filtered_hp, i_MARMOT):
         threshold = 0.002# 0.001
         displaced = np.zeros(respiratory_data_filtered_lp.shape[1])
         for i in range(respiratory_data_filtered_lp.shape[1]):
@@ -123,7 +123,7 @@ class RespiratoryDataReader:
         return displaced
 
     @staticmethod
-    def get_filtered_MARMOT_data(timestamps, respiratory_data, i_sensor):
+    def _get_filtered_marmot_data(timestamps, respiratory_data, i_sensor):
         fsampling = np.float64(len(timestamps[i_sensor])) / (timestamps[i_sensor][-1] - timestamps[i_sensor][0])
 
         order = 1
@@ -146,13 +146,13 @@ class RespiratoryDataReader:
             respiratory_data_filtered_hp[:, idx_track] = filtfilt(b, a, respiratory_data_filtered_lp[:, idx_track])
             sigma[idx_track] = np.std(respiratory_data_filtered_hp[:, idx_track])
 
-        displaced = RespiratoryDataReader.detect_MARMOT_displacement(timestamps[i_sensor], respiratory_data_filtered_lp, respiratory_data_filtered_hp, i_sensor)
+        displaced = RespiratoryDataReader._detect_marmot_displacement(timestamps[i_sensor], respiratory_data_filtered_lp, respiratory_data_filtered_hp, i_sensor)
         sigma[displaced == 0] = 0
 
         return respiratory_data_filtered_hp, sigma
 
     @staticmethod
-    def get_filtered_resp_data(timestamps, respiratory_data, sersor_type, path_to_graph=None):
+    def _get_filtered_resp_data(timestamps, respiratory_data, sersor_type, path_to_graph=None):
         if sersor_type == 'BELT' :
             timestamps = np.squeeze(timestamps[0])
             respiratory_data = respiratory_data[0]
@@ -198,7 +198,7 @@ class RespiratoryDataReader:
             max_sigma = np.zeros(len(respiratory_data))
             tracks = np.zeros(len(respiratory_data))
             for i_sensor in range(len(respiratory_data)):
-                respiratory_data_filtered_hp, sigma = RespiratoryDataReader.get_filtered_MARMOT_data(timestamps, respiratory_data, i_sensor)
+                respiratory_data_filtered_hp, sigma = RespiratoryDataReader._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
                 
                 track_idx = np.argmax(sigma)
                 max_sigma[i_sensor] = sigma[track_idx]
@@ -215,6 +215,6 @@ class RespiratoryDataReader:
 
     @staticmethod
     def read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
-        timestamps_saec, respiratory_data_saec = RespiratoryDataReader.get_respiration_from_saec(saec_filename, sensor_type)
-        respiratory_data_filtered = RespiratoryDataReader.get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
+        timestamps_saec, respiratory_data_saec = RespiratoryDataReader._get_respiration_from_saec(saec_filename, sensor_type)
+        respiratory_data_filtered = RespiratoryDataReader._get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
         return np.squeeze(timestamps_saec), np.squeeze(respiratory_data_filtered)

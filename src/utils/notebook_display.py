@@ -34,7 +34,7 @@ def _infer_has_ground_truth(params):
     return motion_sim_type not in {"as-it-is", "no-motion-data"}
 
 
-def display_image_row(image_paths, subtitles, title=None, figsize=None):
+def _display_image_row(image_paths, subtitles, title=None, figsize=None):
     present = []
     for path, subtitle in zip(image_paths, subtitles):
         img = _load_image(path)
@@ -90,14 +90,14 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
     motion_logs = sorted(logs_folder.glob("motion_residual.png"))
     logs_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
     if motion_logs:
-        display_image_row(
+        _display_image_row(
             [str(motion_logs[-1])],
             [""],
             title=None,
             figsize=logs_figsize,
         )
     if recon_logs:
-        display_image_row(
+        _display_image_row(
             [str(recon_logs[-1])],
             [""],
             title=None,
@@ -106,7 +106,7 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
 
     image_paths = [
         _first_existing_path(input_folder / "image_corrupted.png", input_folder / "input_distorted.png"),
-        str(results_folder / "image_reconstructed.png"),
+        _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex1.png"),
     ]
     subtitles = ["Corrupted", "Corrected"]
     images_figsize = None
@@ -118,10 +118,10 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
         images_figsize = (13.0, 4.8)
     else:
         images_figsize = (10.0, 4.8)
-    display_image_row(image_paths, subtitles, title="Images", figsize=images_figsize)
+    _display_image_row(image_paths, subtitles, title="Images", figsize=images_figsize)
 
     if motion_type == "rigid":
-        display_image_row(
+        _display_image_row(
             [
                 str(input_folder / "clustered_motion_curves_chronological.png"),
                 str(results_folder / "clustered_motion_curves_chronological.png"),
@@ -131,7 +131,7 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
             figsize=(images_figsize[0], 3.4),
         )
     elif motion_type == "non-rigid":
-        display_image_row(
+        _display_image_row(
             [
                 str(input_folder / "simulated_motion_quiver_input.png"),
                 str(results_folder / "final_motion_quiver.png"),
@@ -160,7 +160,7 @@ def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_
     )
     motion_vs_ky_path = str(input_folder / "clustered_motion_curve_sorted_ky.png")
 
-    display_image_row(
+    _display_image_row(
         [sampling_path, motion_vs_ky_path],
         ["Sampling order (ky)", "Motion curve in ky order"],
         title="Sampling And Motion",

@@ -59,9 +59,9 @@ class DataLoader:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
         
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
-            self.generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
+            self._generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
-            self.load_realworld_data(self.filename, slice_idx=self.slice_idx)
+            self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
             if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
                 path_to_ismrm, path_to_saec = self.filename
@@ -74,11 +74,11 @@ class DataLoader:
                     "(ismrmrd_file, saec_file) or a dict with keys "
                     "'ismrmrd_file' and 'saec_file'."
                 )
-            self.load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
+            self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
-            self.load_from_image(self.filename)
+            self._load_from_image(self.filename)
         elif self.params.data_type == 'from_dicom':
-            self.load_from_dicom(self.filename)
+            self._load_from_dicom(self.filename)
         else:
             raise ValueError("Unknown data_type")
 
@@ -88,7 +88,7 @@ class DataLoader:
         self.kspace_nomotion = self.kspace.clone()
 
         # Calculate ESPIRiT maps and input image
-        self.smaps = self.calc_espirit_maps()
+        self.smaps = self._calc_espirit_maps()
         self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
         smaps_replicated = self.smaps.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
@@ -362,7 +362,7 @@ class DataLoader:
             preserve_range=True,
         )
 
-    def load_from_image(self, path_to_image):
+    def _load_from_image(self, path_to_image):
         ext = os.path.splitext(path_to_image)[1].lower()
         if ext == ".npy":
             img_np = np.load(path_to_image)
@@ -380,7 +380,7 @@ class DataLoader:
         img_t = torch.from_numpy(img_np).to(self.t_device, dtype=torch.float64)
         self._build_synthetic_kspace_from_reference_image(img_t)
 
-    def load_from_dicom(self, path_to_dicom):
+    def _load_from_dicom(self, path_to_dicom):
         try:
             import pydicom
         except ImportError as e:
@@ -404,7 +404,7 @@ class DataLoader:
 
 
     # Ncoils should be a perfect square (or close) for coil map generation
-    def generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
+    def _generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
         # 1. Create phantom (Nx, Ny, Nz)
         fill_fraction = float(self.params.SheppLoganFillFraction)
         fill_fraction = min(max(fill_fraction, 0.1), 1.0)
@@ -486,7 +486,7 @@ class DataLoader:
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator.build_ky_and_nex()
 
-    def load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
+    def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
         reader = RawDataReader(
             ismrmrd_file=path_to_ismrm,
             saec_file=path_to_saec,
@@ -537,7 +537,7 @@ class DataLoader:
         )
         
 
-    def load_realworld_data(self, path_to_data, slice_idx=0):
+    def _load_realworld_data(self, path_to_data, slice_idx=0):
         data = {}
         with h5py.File(path_to_data, 'r') as f:
             data['motion_data'] = f['motion_data'][:]
@@ -588,7 +588,7 @@ class DataLoader:
             fname=f"ky_order_realworld_slice{slice_idx}.png"
         )
 
-    def calc_espirit_maps(self):
+    def _calc_espirit_maps(self):
         acs=self.params.acs
         kernel_width=self.params.kernel_width
         espirit_max_iter = self.params.espirit_max_iter

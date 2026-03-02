@@ -41,7 +41,7 @@ def _initialize_global_tracking():
     return global_best_metric, global_best_image, global_best_motion, global_converged
 
 
-def _resolve_gn_iterations_per_level(params, res_levels):
+def _parse_gn_iterations_per_level(params, res_levels):
     gn_cfg = params.GN_iterations_per_level
     if isinstance(gn_cfg, int):
         return [gn_cfg] * len(res_levels)

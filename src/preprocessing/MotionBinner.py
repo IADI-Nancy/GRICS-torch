@@ -2,8 +2,8 @@ import torch
 
 from src.utils.save_clustered_motion_plots import save_clustered_motion_plots
 
-def kmeans_torch(x, k, n_iter=20):
-    N, D = x.shape
+def _kmeans_torch(x, k, n_iter=20):
+    N, _ = x.shape
 
     # Better init: random unique points
     perm = torch.randperm(N, device=x.device)
@@ -44,7 +44,7 @@ class MotionBinner:
         Nex = params.Nex
 
         # ---- K-means clustering (global, across all Nex) ----
-        labels, centers = kmeans_torch(motion_curve.unsqueeze(1), Nbins)
+        labels, centers = _kmeans_torch(motion_curve.unsqueeze(1), Nbins)
 
         # ---- Allocate output: [Nex][Nbins] ----
         binned_indices = [

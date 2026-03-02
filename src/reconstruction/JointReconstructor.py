@@ -17,7 +17,7 @@ from src.utils.joint_reconstructor_utils import (
     _format_cg_info,
     _init_run_logging,
     _initialize_level_tracking,
-    _resolve_gn_iterations_per_level,
+    _parse_gn_iterations_per_level,
     _save_nonrigid_motion_debug,
     _save_run_residual_plots,
 )
@@ -28,7 +28,7 @@ from src.utils.joint_reconstructor_utils import (
 class JointReconstructor:
 
     def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None):
-        Ncoils, Nx_full, Ny_full, Nsli = smaps.shape
+        Ncoils, Nx_full, Ny_full, _ = smaps.shape
 
         # Parameters constant for all resolutions        
         self.params = params
@@ -55,7 +55,7 @@ class JointReconstructor:
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
 
-    def resize_img_2D(self, img, new_size):
+    def _resize_img_2d(self, img, new_size):
         is_complex = img.is_complex()
 
         # ---------- Helper: interpolate real/imag ----------
@@ -88,7 +88,7 @@ class JointReconstructor:
         return torch.complex(real, imag)
         
 
-    def downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res):
+    def _downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res):
         Nx_full, Ny_full, = self.Data_full["Nx"], self.Data_full["Ny"]
 
         # central crop coordinates
@@ -118,7 +118,7 @@ class JointReconstructor:
 
         return Sampling_res
 
-    def downsample_kspace(self, Nx_res, Ny_res):
+    def _downsample_kspace(self, Nx_res, Ny_res):
         Nx_full, Ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
         kspace_full = self.Data_full["KspaceData"]
 
@@ -133,10 +133,7 @@ class JointReconstructor:
 
         return kspace_res   
 
-    # ----------------------------------------------------------------------
-    # Build low-resolution data structure at given resolution level
-    # ----------------------------------------------------------------------
-    def downsample_data(self, res_factor):    
+    def _downsample_data(self, res_factor):    
         Nx = int(round(self.Data_full["Nx"] * res_factor))
         Ny = int(round(self.Data_full["Ny"] * res_factor))
 
@@ -144,16 +141,16 @@ class JointReconstructor:
         Data_res["Nx"] = Nx
         Data_res["Ny"] = Ny
         
-        Data_res["SensitivityMaps"] = self.resize_img_2D(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
-        Data_res["SamplingIndices"] = self.downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny)
-        Data_res["KspaceData"] = self.downsample_kspace(Nx, Ny)
+        Data_res["SensitivityMaps"] = self._resize_img_2d(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
+        Data_res["SamplingIndices"] = self._downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny)
+        Data_res["KspaceData"] = self._downsample_kspace(Nx, Ny)
         Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
         return Data_res
     
-    def upsample_data(self, Data_prev, Data_res):
+    def _upsample_data(self, Data_prev, Data_res):
         img_prev = Data_prev["ReconstructedImage"]
-        img_res = self.resize_img_2D(img_prev, (Data_res["Nx"], Data_res["Ny"]))
+        img_res = self._resize_img_2d(img_prev, (Data_res["Nx"], Data_res["Ny"]))
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]
@@ -163,12 +160,12 @@ class JointReconstructor:
             Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
             Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
         else:
-            mot_res = self.resize_img_2D(mot_prev, (Data_res["Nx"], Data_res["Ny"]))
+            mot_res = self._resize_img_2d(mot_prev, (Data_res["Nx"], Data_res["Ny"]))
             mot_res[0] = mot_res[0] * Data_res["Nx"] / Data_prev["Nx"]
             mot_res[1] = mot_res[1] * Data_res["Ny"] / Data_prev["Ny"]
             Data_res["MotionModel"] = mot_res
 
-    def build_motion_operator(self, Data_res):
+    def _build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
         alpha = Data_res["MotionModel"]
         if self.params.motion_type == "rigid":
@@ -178,17 +175,17 @@ class JointReconstructor:
             motionOperator = MotionOperator(Nx, Ny, alpha, self.params.motion_type, motion_signal=motion_signal.to(dtype=alpha.dtype))
         return motionOperator
 
-    def build_encoding_operator(self, Data_res):
+    def _build_encoding_operator(self, Data_res):
         E = EncodingOperator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
                              self.params.Nex, Data_res["MotionOperator"])
         return E
     
-    def build_motion_perturbation_simulator(self, Data_res):
+    def _build_motion_perturbation_simulator(self, Data_res):
         J = MotionPerturbationSimulator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
                                         self.params.Nex, Data_res["ReconstructedImage"], Data_res["MotionOperator"])
         return J
 
-    def solve_image(self, Data_res):
+    def _solve_image(self, Data_res):
         x0 = Data_res["ReconstructedImage"]
         x0 = x0.to(self.device)
         E = Data_res["E"]
@@ -208,9 +205,6 @@ class JointReconstructor:
         img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
 
-    # # ----------------------------------------------------------------------
-    # # Solve for motion model update
-    # # ----------------------------------------------------------------------
     def _n_motion_params(self, Data_res):
         if self.params.motion_type == "rigid":
             return self.Nalpha * self.params.N_motion_states
@@ -257,7 +251,7 @@ class JointReconstructor:
         _console(self.params, f"\n=== Resolution level {idx_res+1}: factor {r} ===")
 
         # Prepare low-resolution dataset
-        Data_res = self.downsample_data(r)
+        Data_res = self._downsample_data(r)
 
         # Initialize image and motion model
         if idx_res == 0:
@@ -273,25 +267,26 @@ class JointReconstructor:
     # Perform full multi-resolution Gauss–Newton joint reconstruction
     # ----------------------------------------------------------------------
     def run(self):
+        # Initialize multi-resolution schedule and per-level GN iteration counts.
         ResLevels = self.params.ResolutionLevels
-        gn_iters_per_level = _resolve_gn_iterations_per_level(self.params, ResLevels)
-
+        gn_iters_per_level = _parse_gn_iterations_per_level(self.params, ResLevels)
         run_log = _init_run_logging(self.params, len(ResLevels), gn_iters_per_level)
-        run_t0 = time.perf_counter()
-        global_best_metric = float("inf")
-        global_best_image = None
-        global_best_motion = None
-        last_image = None
-        last_motion = None
+        run_t0 = time.perf_counter() # total run timer
+        best_image = None
+        best_motion = None
 
+        # Loop over each configured resolution level.
         for idx_res, r in enumerate(ResLevels):
             GN_iter = gn_iters_per_level[idx_res]
-            level_t0 = time.perf_counter()
+            level_t0 = time.perf_counter()  # Level timer.
+            # Build level-specific data
             Data_res = self._prepare_resolution_level(idx_res, r)
             if idx_res != 0:
-                self.upsample_data(Data_prev, Data_res)
-            level_init_time = time.perf_counter() - level_t0
+                self._upsample_data(Data_prev, Data_res)
+            level_init_time = time.perf_counter() - level_t0 # Compute setup time for this level.
+            s_res = Data_res["KspaceData"].flatten()
 
+            # Log level header and initialization timing.
             _append_run_log(
                 run_log,
                 (
@@ -301,29 +296,30 @@ class JointReconstructor:
                 ),
             )
 
+            # Initialize per-level residual tracking and best-at-level image and motion snapshots.
             (residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion) = _initialize_level_tracking()
-            s_res = Data_res["KspaceData"].flatten()
+            
+            # Enable and display progress-bars (only for notebook mode).
             show_bar = self.params.jupyter_notebook_flag
-            # Use a tqdm progress-bar context when there are GN iterations; otherwise use a no-op context manager.
             bar_ctx = tqdm(total=GN_iter, desc=f"Resolution level {idx_res + 1}/{len(ResLevels)}", \
                 disable=(not show_bar), leave=True, dynamic_ncols=True, position=0) if GN_iter > 0 else nullcontext()
 
             # Gauss–Newton iterations
-            with bar_ctx as pbar:
+            with bar_ctx as pbar: # Enter progress-bar context
                 for it in range(GN_iter):
-                    _console(self.params, f"  GN iteration {it+1}/{GN_iter}")
-                    fp_t0 = time.perf_counter()
+                    _console(self.params, f"  GN iteration {it+1}/{GN_iter}")                    
+                    fp_t0 = time.perf_counter() # Fixed-point iteration timer.
 
                     # -------------------------------IMAGE RECONSTRUCTION STEP -------------------------
 
                     # 1) Build motion and encoding operators
-                    Data_res["MotionOperator"] = self.build_motion_operator(Data_res)
-                    Data_res["E"] = self.build_encoding_operator(Data_res)
+                    Data_res["MotionOperator"] = self._build_motion_operator(Data_res)
+                    Data_res["E"] = self._build_encoding_operator(Data_res)
 
                     # 2) Solve for image
                     _console(self.params, "    Solving for image...")
-                    t_img = time.perf_counter()
-                    img = self.solve_image(Data_res)
+                    t_img = time.perf_counter() # Image-solve timer.
+                    img = self._solve_image(Data_res)
                     img_elapsed = time.perf_counter() - t_img
                     Data_res["ReconstructedImage"] = img
                     _append_run_log(
@@ -331,29 +327,29 @@ class JointReconstructor:
                         f"    Reconstruction step : {_format_cg_info(self._last_image_cg_info)}, elapsed time = {img_elapsed:.6f} s",
                     )
 
+                    # Skip residual/motion step for the very last GN step of the final resolution level.
                     if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
                         if pbar is not None:
-                            pbar.update(1)
+                            pbar.update(1) # Advance progress bar for this completed iteration.
                         break
 
                     # 3) Compute residual
                     x = img.flatten()
-                    y = Data_res["E"].forward(x)
-                    residual = s_res - y
-                    res_norm = torch.linalg.norm(residual).item()
-                    rel_res = res_norm / (torch.linalg.norm(s_res).item() + 1e-12)
+                    y = Data_res["E"].forward(x) # Predict k-space from current image and motion estimate.
+                    residual = s_res - y # Compute data residual in k-space.
+                    res_norm = torch.linalg.norm(residual).item() # Residual L2 norm.
+                    rel_res = res_norm / (torch.linalg.norm(s_res).item() + 1e-12) # Relative residual
                     residual_recon_norms.append(rel_res)
                     if pbar is not None:
-                        pbar.set_postfix(recon=f"{rel_res:.2e}")
+                        pbar.set_postfix(recon=f"{rel_res:.2e}") # Show residual value in progress bar.
 
+                    # Early-stop current level if residual worsens after at least one update.
                     if it > 0 and rel_res > best_relres:
                         _console(self.params, "    Relative residual increased — restoring best solution at this level.")
-                        _append_run_log(
-                            run_log,
-                            "    Relative residual increased - restoring best solution at this level.",
-                        )
+                        _append_run_log(run_log, \
+                            "    Relative residual increased - restoring best solution at this level.",)
                         if pbar is not None:
-                            pbar.update(1)
+                            pbar.update(1) # Advance progress bar for this iteration before exiting.
                         break
 
                     # Residual improved: store current image/motion as level-best.
@@ -363,45 +359,50 @@ class JointReconstructor:
 
                     # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
 
-                    # 4) Build Jacobian encoding operator for solving ∇_u(E)·δu = δkspace
-                    Data_res["J"] = self.build_motion_perturbation_simulator(Data_res)
+                    # 4) Build linearized motion-perturbation simulator around current estimate ∇_u(E)·δu = δkspace
+                    Data_res["J"] = self._build_motion_perturbation_simulator(Data_res)
 
                     # 5) Solve for motion update
                     _console(self.params, "    Solving for motion update...")
-                    t_mot = time.perf_counter()
-                    dm = self.solve_motion(Data_res, residual)
+                    t_mot = time.perf_counter() # Motion-solve timer.
+                    motion_update = self.solve_motion(Data_res, residual)
                     mot_elapsed = time.perf_counter() - t_mot
+                    Data_res["MotionModel"] += motion_update.real
 
-                    Data_res["MotionModel"] += dm.real
-                    dm_norm = torch.linalg.norm(dm.flatten()).item()
+                    # 6) Compute and log motion update norms.
+                    motion_update_norm = torch.linalg.norm(motion_update.flatten()).item() # Motion update L2 norm.
                     alpha_norm = torch.linalg.norm(Data_res["MotionModel"].flatten()).item()
-                    dm_rel_norm = dm_norm / (alpha_norm + 1e-12)
-                    residual_motion_norms.append(dm_rel_norm)
+                    motion_update_rel_norm = motion_update_norm / (alpha_norm + 1e-12) # Relative motion update norm
+                    residual_motion_norms.append(motion_update_rel_norm)
                     fp_elapsed = time.perf_counter() - fp_t0
-                    _append_run_log(
-                        run_log,
+                    _append_run_log(run_log, \
                         (
                             f"    Model optimization step: {_format_cg_info(self._last_motion_cg_info)}, "
                             f"elapsed time = {mot_elapsed:.6f} s\n"
                             f"    Fixed point iter {it}: "
                             f"recon_rel_residual = {rel_res:.6e}, "
-                            f"motion_rel_residual = {dm_rel_norm:.6e}, "
-                            f"motion_norm = {dm_norm:.6e} : {fp_elapsed:.6f} s\n"
-                        ),
-                    )
+                            f"motion_rel_residual = {motion_update_rel_norm:.6e}, "
+                            f"motion_norm = {motion_update_norm:.6e} : {fp_elapsed:.6f} s\n"
+                        ),)
+                    
+                    # Advance progress bar after completing both image and motion steps.
                     if pbar is not None:
                         pbar.update(1)
 
+            # ------------------------------- SAVE DEBUG OUTPUTS AND LOGS -------------------------
             if self.params.debug_flag:
+                # Restore level-best solution before saving debug images.
                 if best_image is not None and best_motion is not None:
                     Data_res["ReconstructedImage"] = best_image
                     Data_res["MotionModel"] = best_motion
+                # Save reconstructed image at current level.
                 show_and_save_image(
                     Data_res["ReconstructedImage"][0],
                     f"image_resolution_level{idx_res + 1}",
                     self.params.debug_folder,
                     flip_for_display=self.params.flip_for_display,
                 )
+                # Save non-rigid motion debug plots when applicable.
                 _save_nonrigid_motion_debug(
                     Data_res,
                     idx_res + 1,
@@ -410,22 +411,15 @@ class JointReconstructor:
                     self.params.flip_for_display,
                 )
 
+            # Store per-level reconstruction and motion residual curves in run log object.
             run_log["recon_residuals_by_level"][idx_res] = residual_recon_norms
             run_log["motion_residuals_by_level"][idx_res] = residual_motion_norms
             level_elapsed = time.perf_counter() - level_t0
-            _append_run_log(
-                run_log,
-                f"    Total time of resolution level {idx_res}: {level_elapsed:.6f} s\n",
-            )
-
+            _append_run_log(run_log, \
+                f"    Total time of resolution level {idx_res}: {level_elapsed:.6f} s\n",)
+            
+            # Keep current level data as previous-level initializer for next scale.
             Data_prev = Data_res
-            if "ReconstructedImage" in Data_res and "MotionModel" in Data_res:
-                last_image = Data_res["ReconstructedImage"].clone()
-                last_motion = Data_res["MotionModel"].clone()
-            if best_image is not None and best_motion is not None and best_relres < global_best_metric:
-                global_best_metric = best_relres
-                global_best_image = best_image.clone()
-                global_best_motion = best_motion.clone()
 
         _append_run_log(
             run_log,
@@ -433,25 +427,45 @@ class JointReconstructor:
         )
         _save_run_residual_plots(self.params.logs_folder, run_log)
 
-        # Robust fallback for degenerate short-run settings (e.g. one GN step).
-        if global_best_image is None or global_best_motion is None:
-            if last_image is None or last_motion is None:
+        # If no valid best was tracked in the last level, fallback to Data_res (the last solution)
+        if best_image is None or best_motion is None:
+            if "Data_res" not in locals() or "ReconstructedImage" not in Data_res or "MotionModel" not in Data_res:
                 raise RuntimeError("Reconstruction did not produce a valid image/motion solution.")
-            global_best_image = last_image
-            global_best_motion = last_motion
+            best_image = Data_res["ReconstructedImage"].clone()
+            best_motion = Data_res["MotionModel"].clone()
 
-        global_best_image_unscaled = global_best_image * self.kspace_scale
-        show_and_save_image(
-            global_best_image_unscaled[0],
-            'image_reconstructed',
-            self.params.results_folder,
-            flip_for_display=self.params.flip_for_display,
-        )
+        # Rescale reconstructed image back to original k-space magnitude scale.
+        best_image_unscaled = best_image * self.kspace_scale
+        # Save final reconstructed image(s): one file per Nex when Nex > 1.
+        if best_image_unscaled.shape[0] == 1:
+            show_and_save_image(
+                best_image_unscaled[0],
+                "image_reconstructed",
+                self.params.results_folder,
+                flip_for_display=self.params.flip_for_display,
+            )
+        else:
+            # Save the average across Nex as the default "corrected" image for notebook display.
+            show_and_save_image(
+                best_image_unscaled.mean(dim=0),
+                "image_reconstructed",
+                self.params.results_folder,
+                flip_for_display=self.params.flip_for_display,
+            )
+            # Also save each Nex image separately for inspection/debugging.
+            for nex_idx in range(best_image_unscaled.shape[0]):
+                show_and_save_image(
+                    best_image_unscaled[nex_idx],
+                    f"image_reconstructed_nex{nex_idx + 1}",
+                    self.params.results_folder,
+                    flip_for_display=self.params.flip_for_display,
+                )
+
         if self.params.motion_type == "rigid":
-            save_final_rigid_motion_plots(global_best_motion, self.motion_plot_context, self.params.results_folder,
+            save_final_rigid_motion_plots(best_motion, self.motion_plot_context, self.params.results_folder,
                                           self.params.N_motion_states, self.params.ResolutionLevels, self.params.data_type)
-        if self.params.motion_type == "non-rigid":
-            save_final_nonrigid_alpha_maps(global_best_motion, global_best_image_unscaled[0], self.params.results_folder,
+        elif self.params.motion_type == "non-rigid":
+            save_final_nonrigid_alpha_maps(best_motion, best_image_unscaled[0], self.params.results_folder,
                                            flip_for_display=self.params.flip_for_display, motion_plot_context=self.motion_plot_context)
 
-        return global_best_image_unscaled, global_best_motion
+        return best_image_unscaled, best_motion

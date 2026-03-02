@@ -6,7 +6,7 @@ from src.utils.fftnc import fftnc, ifftnc
 from src.preprocessing.RespiratoryDataReader import RespiratoryDataReader
 
 
-def is_noise(acq):
+def _is_noise(acq):
     return acq.isFlagSet(ismrmrd.ACQ_IS_NOISE_MEASUREMENT)
 
 
@@ -19,7 +19,7 @@ class RawDataReader:
         self.device = device
 
 
-    def remove_oversampling(self, kspace: torch.Tensor):
+    def _remove_oversampling(self, kspace: torch.Tensor):
 
         device = kspace.device
         dtype = kspace.dtype
@@ -46,7 +46,7 @@ class RawDataReader:
         return kspace_cropped
 
 
-    def extract_mri_info(self):
+    def _extract_mri_info(self):
 
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
 
@@ -76,7 +76,7 @@ class RawDataReader:
         for i in range(dset.number_of_acquisitions()):
             acq = dset.read_acquisition(i)
 
-            if acq.isFlagSet(ismrmrd.ACQ_IS_NOISE_MEASUREMENT):
+            if _is_noise(acq):
                 continue
 
             timestamps.append(float(acq.acquisition_time_stamp))
@@ -101,7 +101,7 @@ class RawDataReader:
         )
 
 
-    def interp1d_torch(self, x, y, x_new):
+    def _interp1d_torch(self, x, y, x_new):
 
         x = x.flatten()
         y = y.flatten()
@@ -127,7 +127,7 @@ class RawDataReader:
         return y_new
 
 
-    def reshape_data_slicewise(self, respiratory_data_interpolated, slices, idx_ky, idx_kz, idx_nex):
+    def _reshape_data_slicewise(self, respiratory_data_interpolated, slices, idx_ky, idx_kz, idx_nex):
 
         device = respiratory_data_interpolated.device
 
@@ -165,7 +165,7 @@ class RawDataReader:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    def read_motion_and_kspace(self, slice_idx=None):
+    def _read_motion_and_kspace(self, slice_idx=None):
 
         time_saec, resp = RespiratoryDataReader.read_and_process_data(
             self.saec_file, self.sensor_type)
@@ -174,16 +174,16 @@ class RawDataReader:
         resp = torch.tensor(resp, device=self.device)
 
         kspace, time_kspace, slices, idx_ky, idx_kz, idx_nex = \
-            self.extract_mri_info()
+            self._extract_mri_info()
 
-        respiratory_interpolated = self.interp1d_torch(
+        respiratory_interpolated = self._interp1d_torch(
             time_saec, resp, time_kspace)
 
         motion_data, line_idx_y, line_idx_z, line_idx_nex = \
-            self.reshape_data_slicewise(
+            self._reshape_data_slicewise(
                 respiratory_interpolated, slices, idx_ky, idx_kz, idx_nex)
 
-        kspace = self.remove_oversampling(kspace)
+        kspace = self._remove_oversampling(kspace)
 
         if slice_idx is not None:
             n_slices = int(kspace.shape[-1])
@@ -208,7 +208,7 @@ class RawDataReader:
 
     def read_data_from_rawdata(self, h5filename=None, slice_idx=None):
 
-        data = self.read_motion_and_kspace(slice_idx=slice_idx)
+        data = self._read_motion_and_kspace(slice_idx=slice_idx)
 
         if h5filename is not None:
             with h5py.File(h5filename, 'w') as f:

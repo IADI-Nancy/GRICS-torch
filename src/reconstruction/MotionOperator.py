@@ -23,9 +23,9 @@ class MotionOperator:
         self.centers = centers
         self.motion_signal = motion_signal
         if motion_type == 'rigid':
-            self.initialize_rigid_motion_operator()
+            self._initialize_rigid_motion_operator()
         elif motion_type == 'non-rigid':
-            self.initialize_non_rigid_motion_operator()
+            self._initialize_non_rigid_motion_operator()
         else:
             raise ValueError(f"Unknown motion type: {motion_type}")    
 
@@ -35,7 +35,7 @@ class MotionOperator:
     # ---------------------------------------------------------
     # Rigid motion
     # ---------------------------------------------------------
-    def initialize_rigid_motion_operator(self):
+    def _initialize_rigid_motion_operator(self):
         Nx = self.Nx
         Ny = self.Ny
         alpha = self.alpha
@@ -88,13 +88,13 @@ class MotionOperator:
 
     # ------------------------ Geometric derivatives ----------------------------
 
-    def translation_derivative(self):
+    def _translation_derivative(self):
         ones = torch.ones((self.Nx, self.Ny), device=self.device)
         zeros = torch.zeros_like(ones)
         return (ones, zeros), (zeros, ones)
 
 
-    def phi_derivative(self, motion_state):
+    def _phi_derivative(self, motion_state):
         phi = self.alpha[2,motion_state] 
         xmc = self.X - self.centers[0,motion_state]
         ymc = self.Y - self.centers[1,motion_state]
@@ -121,8 +121,8 @@ class MotionOperator:
         dt_x, dt_y, dphi = delta_alpha
 
         # Derivative fields
-        (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
-        dX_dphi, dY_dphi = self.phi_derivative(motion_state)
+        (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self._translation_derivative()
+        dX_dphi, dY_dphi = self._phi_derivative(motion_state)
 
         # Combine linearly
         du_x = (
@@ -151,8 +151,8 @@ class MotionOperator:
         if self.motion_type != 'rigid':
             raise NotImplementedError("apply_JH is only implemented for rigid motion.")
 
-        (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self.translation_derivative()
-        dX_dphi, dY_dphi = self.phi_derivative(motion_state)
+        (dX_dtx, dY_dtx), (dX_dty, dY_dty) = self._translation_derivative()
+        dX_dphi, dY_dphi = self._phi_derivative(motion_state)
 
         # Each parameter is a scalar product <v_m, du>
         dt_x  = torch.sum(dX_dtx * du_x + dY_dtx * du_y)
@@ -164,7 +164,7 @@ class MotionOperator:
     # ---------------------------------------------------------
     # -------------------- Non-rigid motion -------------------
     # ---------------------------------------------------------
-    def initialize_non_rigid_motion_operator(self):
+    def _initialize_non_rigid_motion_operator(self):
         alpha = self.alpha
         signal = torch.as_tensor(self.motion_signal, device=self.device, dtype=alpha.dtype)
 

@@ -26,12 +26,8 @@ class MotionPerturbationSimulator:
         self.image = image
         self.motionOperator = motionOperator
         self.Nalpha = motionOperator.alpha.shape[0]  # number of motion parameters (t_x, t_y, phi)
-        
 
-    def set_image(self, image):
-        self.image = image.reshape(self.Nex, self.SensitivityMaps.shape[1], self.SensitivityMaps.shape[2])
-
-    def gradient_2d(self, img):
+    def _gradient_2d(self, img):
         # Central differences in the interior, one-sided at boundaries.
         gx = torch.empty_like(img)
         gy = torch.empty_like(img)
@@ -49,7 +45,7 @@ class MotionPerturbationSimulator:
         return gx, gy
 
     def forward(self, MotionModelPerturbation):
-        Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
+        Ncoils, Nx, Ny, _ = self.SensitivityMaps.shape
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
 
         if self.motionOperator.motion_type == "rigid":
@@ -80,7 +76,7 @@ class MotionPerturbationSimulator:
                 WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
                 # 2) Spatial gradients ∂I/∂x, ∂I/∂y
-                Gx, Gy = self.gradient_2d(WarpedImage)
+                Gx, Gy = self._gradient_2d(WarpedImage)
 
                 # 3) motion model and displacement field perturbations
                 if self.motionOperator.motion_type == "rigid":
@@ -119,7 +115,7 @@ class MotionPerturbationSimulator:
             MotionModelAdjoint: shape [2, N_motion_states]
         """
 
-        Ncoils, Nx, Ny, Nsli = self.SensitivityMaps.shape
+        Ncoils, Nx, Ny, _ = self.SensitivityMaps.shape
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
 
         ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
@@ -151,7 +147,7 @@ class MotionPerturbationSimulator:
                 WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
                 # 2) Gradients of warped image
-                Gx, Gy = self.gradient_2d(WarpedImage)
+                Gx, Gy = self._gradient_2d(WarpedImage)
 
                 # 3) Allocate adjoint image accumulator (summed over coils)
                 ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex128, device=self.device)
