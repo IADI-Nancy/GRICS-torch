@@ -181,18 +181,28 @@ class DataLoader:
 
         flip_for_display = self.params.flip_for_display
 
+        def _to_2d_for_display(img):
+            if img is None:
+                return None
+            if img.ndim == 2:
+                return img
+            if img.ndim == 3:
+                # For 3D inputs, save the central z-slice for quick visual checks.
+                return img[..., img.shape[-1] // 2]
+            raise ValueError(f"Expected 2D or 3D image for display, got shape {tuple(img.shape)}.")
+
         if (
             self._has_simulated_motion()
             and hasattr(self, "image_ground_truth")
             and self.image_ground_truth is not None
         ):
             show_and_save_image(
-                self.image_ground_truth[0], "image_ground_truth", folder,
+                _to_2d_for_display(self.image_ground_truth[0]), "image_ground_truth", folder,
                 flip_for_display=flip_for_display, jupyter_display=False,
             )
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
             show_and_save_image(
-                self.image_no_moco[0], "image_corrupted", folder,
+                _to_2d_for_display(self.image_no_moco[0]), "image_corrupted", folder,
                 flip_for_display=flip_for_display, jupyter_display=False,
             )
 
@@ -347,10 +357,7 @@ class DataLoader:
         self._build_synthetic_kspace_from_reference_image(img_t)
 
 
-    # Ncoils should be a perfect square (or close) for coil map generation
-    def _generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
-        # 1. Create phantom (Nx, Ny, Nz)
-        fill_fraction = float(self.params.SheppLoganFillFraction)
+    def _build_shepp_logan_2d(self, N, fill_fraction):
         fill_fraction = min(max(fill_fraction, 0.1), 1.0)
         phantom_native = shepp_logan_phantom()
         h, w = phantom_native.shape
@@ -373,17 +380,76 @@ class DataLoader:
             (N, N),
             anti_aliasing=True,
         )
-        phantom_2d = torch.tensor(phantom_np_2d, dtype=torch.float64, device=self.t_device)
+        return phantom_np_2d
 
-        phantom = phantom_2d.unsqueeze(-1).expand(N, N, Nz)  # (Nx, Ny, Nz)
+    def _build_shepp_logan_3d(self, N, Nz, fill_fraction):
+        # 3D modified Shepp-Logan approximation using a sum of ellipsoids.
+        fill_fraction = min(max(float(fill_fraction), 0.1), 1.0)
+        x = np.linspace(-1.0, 1.0, N, dtype=np.float64) / fill_fraction
+        y = np.linspace(-1.0, 1.0, N, dtype=np.float64) / fill_fraction
+        z = np.linspace(-1.0, 1.0, Nz, dtype=np.float64) / fill_fraction
+        X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
+        phantom = np.zeros((N, N, Nz), dtype=np.float64)
+
+        # (A, a, b, c, x0, y0, z0, phi_deg), with in-plane rotation phi.
+        ellipsoids = [
+            (1.0,   0.69,   0.92,   0.90,   0.0,    0.0,    0.0,    0.0),
+            (-0.8,  0.6624, 0.874,  0.88,   0.0,   -0.0184, 0.0,    0.0),
+            (-0.2,  0.11,   0.31,   0.22,   0.22,   0.0,    0.0,  -18.0),
+            (-0.2,  0.16,   0.41,   0.28,  -0.22,   0.0,    0.0,   18.0),
+            (0.1,   0.21,   0.25,   0.41,   0.0,    0.35,  -0.15,   0.0),
+            (0.1,   0.046,  0.046,  0.05,   0.0,    0.10,   0.25,   0.0),
+            (0.1,   0.046,  0.046,  0.05,   0.0,   -0.10,   0.25,   0.0),
+            (0.1,   0.046,  0.023,  0.05,  -0.08,  -0.605,  0.0,    0.0),
+            (0.1,   0.023,  0.023,  0.02,   0.0,   -0.606,  0.0,    0.0),
+            (0.1,   0.023,  0.046,  0.02,   0.06,  -0.605,  0.0,    0.0),
+        ]
+
+        for A, a, b, c, x0, y0, z0, phi_deg in ellipsoids:
+            phi = np.deg2rad(phi_deg)
+            x_shift = X - x0
+            y_shift = Y - y0
+            z_shift = Z - z0
+            x_rot = x_shift * np.cos(phi) + y_shift * np.sin(phi)
+            y_rot = -x_shift * np.sin(phi) + y_shift * np.cos(phi)
+            inside = (x_rot / a) ** 2 + (y_rot / b) ** 2 + (z_shift / c) ** 2 <= 1.0
+            phantom[inside] += A
+
+        # Match in-plane orientation of the canonical 2D Shepp-Logan (major axis vertical).
+        phantom = np.swapaxes(phantom, 0, 1)
+
+        # Keep the expected non-negative intensity profile.
+        phantom = np.clip(phantom, 0.0, None)
+        max_val = float(phantom.max())
+        if max_val > 0:
+            phantom /= max_val
+        return phantom
+
+    # Ncoils should be a perfect square (or close) for coil map generation
+    def _generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
+        # 1. Create phantom (Nx, Ny, Nz)
+        fill_fraction = float(self.params.SheppLoganFillFraction)
+        if int(Nz) > 1:
+            phantom_np = self._build_shepp_logan_3d(N, Nz, fill_fraction)
+            phantom = torch.tensor(phantom_np, dtype=torch.float64, device=self.t_device)
+        else:
+            phantom_np_2d = self._build_shepp_logan_2d(N, fill_fraction)
+            phantom_2d = torch.tensor(phantom_np_2d, dtype=torch.float64, device=self.t_device)
+            phantom = phantom_2d.unsqueeze(-1).expand(N, N, Nz)  # (Nx, Ny, Nz)
+        self.phantom_generated = phantom.clone()
 
         # 2. Create coil sensitivity maps (Ncoils, Nx, Ny, Nz)
-        X, Y = torch.meshgrid(
+        X, Y, Z = torch.meshgrid(
             torch.arange(1, N + 1, device=self.t_device),
-            torch.arange(1, N + 1, device=self.t_device), indexing="ij"
+            torch.arange(1, N + 1, device=self.t_device),
+            torch.arange(1, Nz + 1, device=self.t_device),
+            indexing="ij",
         )
 
-        sigma = N / 4
+        sigma_xy = N / 4
+        # Large z-spread to keep meaningful sensitivity over the full slab.
+        sigma_z = max(float(Nz) / 2.5, 1.0)
+        z0 = (Nz + 1) / 2.0
 
         # Coil centers on (approximately) square grid
         grid_size = math.ceil(math.sqrt(Ncoils))
@@ -391,24 +457,23 @@ class DataLoader:
         ys = torch.linspace(N / 4, 3 * N / 4, grid_size, device=self.t_device)
         centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]
 
-        # Allocate coil maps directly in (Ncoils, Nx, Ny)
-        smaps_2d = torch.empty((Ncoils, N, N), dtype=torch.cdouble, device=self.t_device)
+        # Allocate coil maps directly in (Ncoils, Nx, Ny, Nz)
+        smaps = torch.empty((Ncoils, N, N, Nz), dtype=torch.cdouble, device=self.t_device)
 
         for c, (x0, y0) in enumerate(centers):
-            profile = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2 * sigma ** 2))
+            profile_xy = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2 * sigma_xy ** 2))
+            profile_z = torch.exp(-((Z - z0) ** 2) / (2 * sigma_z ** 2))
+            profile = profile_xy * profile_z
             phase = (
                 torch.exp(1j * 2 * math.pi * torch.rand(1, device=self.t_device))
                 if random_phase else 1.0
             )
-            smaps_2d[c] = profile * phase
-
-        # Expand to Nz: (Ncoils, Nx, Ny, Nz)
-        smaps = smaps_2d.unsqueeze(-1).expand(Ncoils, N, N, Nz)
+            smaps[c] = profile * phase
         self.smaps_generated = smaps.clone()
 
         # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
-        phantom = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
-        coil_imgs = phantom * smaps             # (Ncoils, Nx, Ny, Nz)
+        phantom_for_coils = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
+        coil_imgs = phantom_for_coils * smaps             # (Ncoils, Nx, Ny, Nz)
         coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
 
         coil_imgs = coil_imgs.contiguous()       # important for FFT speed
