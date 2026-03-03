@@ -2,7 +2,7 @@
 *.DS_Store
 *.pt
 __pycache__/
-data/
+
 debug_outputs/
 logs/
 results/
@@ -14,3 +14,5 @@ bart-*
 .vscode/*
 !.vscode/settings.json
 tests/
+data/*
+!data/demo_motion-free_breast_image.png
