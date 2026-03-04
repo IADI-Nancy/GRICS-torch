@@ -1,6 +1,5 @@
 import torch
 from  src.utils.fftnc import fftnc, ifftnc
-from src.reconstruction.MotionOperator import MotionOperator
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
@@ -44,14 +43,41 @@ class MotionPerturbationSimulator:
 
         return gx, gy
 
+    def _gradient_3d(self, img):
+        # Central differences in the interior, one-sided at boundaries.
+        gx = torch.empty_like(img)
+        gy = torch.empty_like(img)
+        gz = torch.empty_like(img)
+
+        # x-gradient (axis 0)
+        gx[1:-1, :, :] = 0.5 * (img[2:, :, :] - img[:-2, :, :])
+        gx[0, :, :] = img[1, :, :] - img[0, :, :]
+        gx[-1, :, :] = img[-1, :, :] - img[-2, :, :]
+
+        # y-gradient (axis 1)
+        gy[:, 1:-1, :] = 0.5 * (img[:, 2:, :] - img[:, :-2, :])
+        gy[:, 0, :] = img[:, 1, :] - img[:, 0, :]
+        gy[:, -1, :] = img[:, -1, :] - img[:, -2, :]
+
+        # z-gradient (axis 2)
+        gz[:, :, 1:-1] = 0.5 * (img[:, :, 2:] - img[:, :, :-2])
+        gz[:, :, 0] = img[:, :, 1] - img[:, :, 0]
+        gz[:, :, -1] = img[:, :, -1] - img[:, :, -2]
+
+        return gx, gy, gz
+
     def forward(self, MotionModelPerturbation):
-        Ncoils, Nx, Ny, _ = self.SensitivityMaps.shape
+        Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
+        is_3d = int(Nz) > 1
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
 
         if self.motionOperator.motion_type == "rigid":
             MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_motion_states)
         else:
-            MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
+            if is_3d:
+                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, Nz)
+            else:
+                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
                 device=self.device,
@@ -73,29 +99,48 @@ class MotionPerturbationSimulator:
                     continue
                 image_nex = self.image[nex]
                 # 1) Warp the image using the motion operator
-                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+                if is_3d:
+                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
+                else:
+                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
-                # 2) Spatial gradients ∂I/∂x, ∂I/∂y
-                Gx, Gy = self._gradient_2d(WarpedImage)
+                # 2) Spatial gradients
+                if is_3d:
+                    Gx, Gy, Gz = self._gradient_3d(WarpedImage)
+                else:
+                    Gx, Gy = self._gradient_2d(WarpedImage)
 
                 # 3) motion model and displacement field perturbations
                 if self.motionOperator.motion_type == "rigid":
-                    dux, duy = self.motionOperator._apply_J(MotionModelPerturbation[:, motion_state], motion_state)
+                    if is_3d:
+                        dux, duy, duz = self.motionOperator._apply_J(MotionModelPerturbation[:, motion_state], motion_state)
+                    else:
+                        dux, duy = self.motionOperator._apply_J(MotionModelPerturbation[:, motion_state], motion_state)
                 else:
                     # Non-rigid model is modulated by the state-dependent motion signal.
                     dux = MotionModelPerturbation[0] * motion_signal[motion_state]
                     duy = MotionModelPerturbation[1] * motion_signal[motion_state]
+                    if is_3d:
+                        duz = MotionModelPerturbation[2] * motion_signal[motion_state]
 
                 # 4) optical-flow first-order perturbation
-                WarpedImageError = Gx * dux + Gy * duy
+                if is_3d:
+                    WarpedImageError = Gx * dux + Gy * duy + Gz * duz
+                    fft_dims = (0, 1, 2)
+                else:
+                    WarpedImageError = Gx * dux + Gy * duy
+                    fft_dims = (0, 1)
 
                 # 5) Loop over coils
                 for coil in range(Ncoils):
                     # apply coil sensitivities
-                    WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil].squeeze()
+                    if is_3d:
+                        WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil]
+                    else:
+                        WarpedImageSeenByCoil = WarpedImageError * self.SensitivityMaps[coil].squeeze(-1)
 
                     # FFT
-                    ImFT = fftnc(WarpedImageSeenByCoil, dims=(0, 1))
+                    ImFT = fftnc(WarpedImageSeenByCoil, dims=fft_dims)
 
                     # Sampling operator: extract measured samples
                     sampled = ImFT.flatten()[SamplingIndices]
@@ -115,7 +160,8 @@ class MotionPerturbationSimulator:
             MotionModelAdjoint: shape [2, N_motion_states]
         """
 
-        Ncoils, Nx, Ny, _ = self.SensitivityMaps.shape
+        Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
+        is_3d = int(Nz) > 1
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
 
         ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
@@ -125,9 +171,10 @@ class MotionPerturbationSimulator:
                                             dtype=torch.complex128,
                                             device=self.device)
         else:
-            MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny),
-                                            dtype=torch.complex128,
-                                            device=self.device)
+            if is_3d:
+                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, Nz), dtype=torch.complex128, device=self.device)
+            else:
+                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny), dtype=torch.complex128, device=self.device)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
                 device=self.device,
@@ -144,40 +191,60 @@ class MotionPerturbationSimulator:
                     continue
                 image_nex = self.image[nex]
                 # 1) Warp image with motion state operator
-                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+                if is_3d:
+                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
+                else:
+                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
 
                 # 2) Gradients of warped image
-                Gx, Gy = self._gradient_2d(WarpedImage)
+                if is_3d:
+                    Gx, Gy, Gz = self._gradient_3d(WarpedImage)
+                    kspace_shape = (Nx, Ny, Nz)
+                    fft_dims = (0, 1, 2)
+                else:
+                    Gx, Gy = self._gradient_2d(WarpedImage)
+                    kspace_shape = (Nx, Ny)
+                    fft_dims = (0, 1)
 
                 # 3) Allocate adjoint image accumulator (summed over coils)
-                ResidualImage = torch.zeros((Nx, Ny), dtype=torch.complex128, device=self.device)
+                ResidualImage = torch.zeros(kspace_shape, dtype=torch.complex128, device=self.device)
 
                 # --- Coil loop --------------------------------------------------------
                 for coil in range(Ncoils):
 
                     # 4) Extract coil residual samples and place them back into k-space
-                    KspaceDataCoilNex = torch.zeros((Nx * Ny,), dtype=torch.complex128, device=self.device)
+                    KspaceDataCoilNex = torch.zeros((Nx * Ny * Nz,), dtype=torch.complex128, device=self.device)
 
                     KspaceDataCoilNex[SamplingIndices] = ResidualKspace[coil, nex, SamplingIndices]
 
-                    KspaceDataCoilNex = KspaceDataCoilNex.reshape(Nx, Ny)
+                    KspaceDataCoilNex = KspaceDataCoilNex.reshape(kspace_shape)
                     # 5) Inverse FFT to go back to image domain
-                    ImageSeenByCoil = ifftnc(KspaceDataCoilNex, dims=(0, 1))
+                    ImageSeenByCoil = ifftnc(KspaceDataCoilNex, dims=fft_dims)
 
                     # 6) Apply coil sensitivity adjoint (complex conjugate)
-                    ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
+                    if is_3d:
+                        ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj()
+                    else:
+                        ResidualImage += ImageSeenByCoil * self.SensitivityMaps[coil].conj().squeeze(-1)
 
-                # 7) Inner products with Gx and Gy → scalar dux, duy contributions
+                # 7) Inner products with gradients -> scalar/field displacement contributions
                 du_x = (ResidualImage * Gx.conj())
                 du_y = (ResidualImage * Gy.conj())
+                if is_3d:
+                    du_z = (ResidualImage * Gz.conj())
 
                 # Apply the adjoint Jacobian
                 if self.motionOperator.motion_type == "rigid":
-                    MotionModelPerturbation[:, motion_state] += self.motionOperator._apply_JH(du_x, du_y, motion_state)
+                    if is_3d:
+                        MotionModelPerturbation[:, motion_state] += self.motionOperator._apply_JH(du_x, du_y, motion_state, du_z=du_z)
+                    else:
+                        MotionModelPerturbation[:, motion_state] += self.motionOperator._apply_JH(du_x, du_y, motion_state)
                 else:
                     # Adjoint of multiplication by motion_signal is multiplication by its complex conjugate.
                     MotionModelPerturbation[0] += du_x * motion_signal[motion_state]
                     MotionModelPerturbation[1] += du_y * motion_signal[motion_state]
+                    if is_3d:
+                        MotionModelPerturbation[2] += du_z * motion_signal[motion_state]
             
         return MotionModelPerturbation.flatten()
     

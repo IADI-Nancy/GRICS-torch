@@ -28,13 +28,17 @@ from src.utils.joint_reconstructor_utils import (
 class JointReconstructor:
 
     def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None):
-        Ncoils, Nx_full, Ny_full, _ = smaps.shape
+        Ncoils, Nx_full, Ny_full, Nz_full = smaps.shape
 
         # Parameters constant for all resolutions        
         self.params = params
         self.Ncoils = Ncoils
+        self.Nz_full = int(Nz_full)
         self.device = KspaceData.device
-        self.Nalpha = 3 if self.params.motion_type == "rigid" else 2
+        if self.params.motion_type == "rigid":
+            self.Nalpha = 6 if self.Nz_full > 1 else 3
+        else:
+            self.Nalpha = 3 if self.Nz_full > 1 else 2
         self.kspace_scale = float(kspace_scale)
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
@@ -47,6 +51,7 @@ class JointReconstructor:
         self.Data_full = {}
         self.Data_full["Nx"] = Nx_full
         self.Data_full["Ny"] = Ny_full
+        self.Data_full["Nz"] = self.Nz_full
         self.Data_full["SensitivityMaps"] = smaps
         self.Data_full["KspaceData"] = KspaceData
         self.Data_full["Nsamples"] = sum(
@@ -55,12 +60,28 @@ class JointReconstructor:
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
 
-    def _resize_img_2d(self, img, new_size):
+    def _resize_img_xy(self, img, new_size):
         is_complex = img.is_complex()
+        target_3d = len(new_size) == 3
 
         # ---------- Helper: interpolate real/imag ----------
         def interp_part(x):
-            """Interpolate real-valued tensor of shape [H,W] or [C,H,W]."""
+            """Interpolate real-valued tensor in 2D or 3D spatial coordinates."""
+            if target_3d:
+                nx_new, ny_new, nz_new = new_size
+                if x.ndim == 3:
+                    # [Nx, Ny, Nz] -> [1, 1, Nz, Nx, Ny]
+                    xv = x.permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
+                    out = F.interpolate(xv, size=(nz_new, nx_new, ny_new), mode="trilinear", align_corners=False)
+                    return out[0, 0].permute(1, 2, 0)  # [Nx, Ny, Nz]
+                elif x.ndim == 4:
+                    # [C, Nx, Ny, Nz] -> [1, C, Nz, Nx, Ny]
+                    xv = x.permute(0, 3, 1, 2).unsqueeze(0)
+                    out = F.interpolate(xv, size=(nz_new, nx_new, ny_new), mode="trilinear", align_corners=False)
+                    return out[0].permute(0, 2, 3, 1)  # [C, Nx, Ny, Nz]
+                else:
+                    raise ValueError(f"Unexpected shape {x.shape} for 3D resize.")
+
             if x.ndim == 2:
                 x = x.unsqueeze(0).unsqueeze(0)   # [1,1,H,W]
                 out = F.interpolate(x, size=new_size, mode="bilinear", align_corners=False)
@@ -74,7 +95,6 @@ class JointReconstructor:
                     rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
                     out_list.append(rc[0, 0])
                 return torch.stack(out_list, dim=0)
-
             else:
                 raise ValueError(f"Unexpected shape {x.shape}")
 
@@ -86,71 +106,109 @@ class JointReconstructor:
         real = interp_part(img.real)
         imag = interp_part(img.imag)
         return torch.complex(real, imag)
+
+    # Backward-compatible alias used by existing code paths.
+    def _resize_img_2d(self, img, new_size):
+        return self._resize_img_xy(img, new_size)
         
 
-    def _downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res):
-        Nx_full, Ny_full, = self.Data_full["Nx"], self.Data_full["Ny"]
+    def _downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res, Nz_res=1):
+        Nx_full, Ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
+        Nz_full = int(self.Data_full.get("Nz", 1))
 
         # central crop coordinates
         x0 = (Nx_full - Nx_res) // 2
         y0 = (Ny_full - Ny_res) // 2
+        z0 = (Nz_full - Nz_res) // 2
 
         Sampling_res = []
 
         for nex in range(self.params.Nex):
             Sampling_res.append([])
             for indices in Sampling_full[nex]:
-                # compute x,y coordinates
-                x = indices // Ny_full
-                y = indices % Ny_full
+                if Nz_full > 1:
+                    # Decode flattened 3D index: idx = ((x * Ny) + y) * Nz + z
+                    z = indices % Nz_full
+                    xy = indices // Nz_full
+                    x = xy // Ny_full
+                    y = xy % Ny_full
+                else:
+                    # compute x,y coordinates for 2D flattening
+                    x = indices // Ny_full
+                    y = indices % Ny_full
 
                 # mask inside central region
-                mask = (x >= x0) & (x < x0 + Nx_res) & (y >= y0) & (y < y0 + Ny_res)
+                if Nz_full > 1:
+                    mask = (
+                        (x >= x0) & (x < x0 + Nx_res)
+                        & (y >= y0) & (y < y0 + Ny_res)
+                        & (z >= z0) & (z < z0 + Nz_res)
+                    )
+                else:
+                    mask = (x >= x0) & (x < x0 + Nx_res) & (y >= y0) & (y < y0 + Ny_res)
 
                 # keep only those indices
                 x_crop = x[mask] - x0
                 y_crop = y[mask] - y0
 
-                # re-flatten for Nx_res × Ny_res grid
-                new_inds = x_crop * Ny_res + y_crop
+                if Nz_full > 1:
+                    z_keep = z[mask] - z0
+                    # re-flatten for Nx_res × Ny_res × Nz_full grid
+                    new_inds = (x_crop * Ny_res + y_crop) * Nz_res + z_keep
+                else:
+                    # re-flatten for Nx_res × Ny_res grid
+                    new_inds = x_crop * Ny_res + y_crop
 
                 Sampling_res[nex].append(new_inds)
 
         return Sampling_res
 
-    def _downsample_kspace(self, Nx_res, Ny_res):
+    def _downsample_kspace(self, Nx_res, Ny_res, Nz_res=1):
         Nx_full, Ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
+        Nz_full = int(self.Data_full.get("Nz", 1))
         kspace_full = self.Data_full["KspaceData"]
 
         # central crop coordinates
         x0 = (Nx_full - Nx_res) // 2
         y0 = (Ny_full - Ny_res) // 2
+        z0 = (Nz_full - Nz_res) // 2
 
-        # create mask
-        mask = torch.zeros((Nx_full, Ny_full), dtype=torch.bool, device=kspace_full.device)
-        mask[x0:x0+Nx_res, y0:y0+Ny_res] = True
-        kspace_res = kspace_full[:, :, mask, :].reshape(kspace_full.shape[0], kspace_full.shape[1], -1)
+        if Nz_full > 1:
+            kspace_res = kspace_full[:, :, x0:x0 + Nx_res, y0:y0 + Ny_res, z0:z0 + Nz_res]
+        else:
+            kspace_res = kspace_full[:, :, x0:x0 + Nx_res, y0:y0 + Ny_res, :]
+        kspace_res = kspace_res.reshape(kspace_full.shape[0], kspace_full.shape[1], -1)
 
         return kspace_res   
 
     def _downsample_data(self, res_factor):    
         Nx = int(round(self.Data_full["Nx"] * res_factor))
         Ny = int(round(self.Data_full["Ny"] * res_factor))
+        Nz_full = int(self.Data_full.get("Nz", 1))
+        Nz = int(round(Nz_full * res_factor)) if Nz_full > 1 else 1
+        Nz = max(Nz, 1)
 
         Data_res = {}
         Data_res["Nx"] = Nx
         Data_res["Ny"] = Ny
-        
-        Data_res["SensitivityMaps"] = self._resize_img_2d(self.Data_full["SensitivityMaps"].squeeze(), (Nx, Ny)).unsqueeze(-1)
-        Data_res["SamplingIndices"] = self._downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny)
-        Data_res["KspaceData"] = self._downsample_kspace(Nx, Ny)
+        Data_res["Nz"] = Nz
+
+        resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
+        Data_res["SensitivityMaps"] = self._resize_img_xy(self.Data_full["SensitivityMaps"], resize_shape)
+        Data_res["SamplingIndices"] = self._downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz)
+        Data_res["KspaceData"] = self._downsample_kspace(Nx, Ny, Nz_res=Nz)
         Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
         return Data_res
     
     def _upsample_data(self, Data_prev, Data_res):
         img_prev = Data_prev["ReconstructedImage"]
-        img_res = self._resize_img_2d(img_prev, (Data_res["Nx"], Data_res["Ny"]))
+        resize_shape = (
+            (Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+            if int(Data_res.get("Nz", 1)) > 1 else
+            (Data_res["Nx"], Data_res["Ny"])
+        )
+        img_res = self._resize_img_xy(img_prev, resize_shape)
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]
@@ -158,21 +216,34 @@ class JointReconstructor:
             Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_motion_states), device=self.device)
             Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
             Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
-            Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
+            if self.Nalpha > 3:
+                Data_res["MotionModel"][2,:] = mot_prev[2,:] * Data_res.get("Nz", 1) / max(1, Data_prev.get("Nz", 1))
+                Data_res["MotionModel"][3:,:] = mot_prev[3:,:]
+            else:
+                Data_res["MotionModel"][2,:] = mot_prev[2,:]  # rotations remain the same
         else:
-            mot_res = self._resize_img_2d(mot_prev, (Data_res["Nx"], Data_res["Ny"]))
+            resize_shape = (
+                (Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+                if int(Data_res.get("Nz", 1)) > 1 else
+                (Data_res["Nx"], Data_res["Ny"])
+            )
+            mot_res = self._resize_img_xy(mot_prev, resize_shape)
             mot_res[0] = mot_res[0] * Data_res["Nx"] / Data_prev["Nx"]
             mot_res[1] = mot_res[1] * Data_res["Ny"] / Data_prev["Ny"]
+            if mot_res.shape[0] > 2 and int(Data_res.get("Nz", 1)) > 1:
+                mot_res[2] = mot_res[2] * Data_res["Nz"] / max(1, Data_prev["Nz"])
             Data_res["MotionModel"] = mot_res
 
     def _build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
         alpha = Data_res["MotionModel"]
         if self.params.motion_type == "rigid":
-            motionOperator = MotionOperator(Nx, Ny, alpha, self.params.motion_type)
+            motionOperator = MotionOperator(Nx, Ny, alpha, self.params.motion_type, Nz=Data_res.get("Nz", 1))
         else:
             motion_signal = self.motion_signal
-            motionOperator = MotionOperator(Nx, Ny, alpha, self.params.motion_type, motion_signal=motion_signal.to(dtype=alpha.dtype))
+            motionOperator = MotionOperator(
+                Nx, Ny, alpha, self.params.motion_type, motion_signal=motion_signal.to(dtype=alpha.dtype), Nz=Data_res.get("Nz", 1)
+            )
         return motionOperator
 
     def _build_encoding_operator(self, Data_res):
@@ -202,13 +273,16 @@ class JointReconstructor:
         img_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_recon, tol=self.params.tol_recon)
         self._last_image_cg_info = solver.last_info
 
-        img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
+        if int(Data_res.get("Nz", 1)) > 1:
+            img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+        else:
+            img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
 
     def _n_motion_params(self, Data_res):
         if self.params.motion_type == "rigid":
             return self.Nalpha * self.params.N_motion_states
-        return self.Nalpha * Data_res["Nx"] * Data_res["Ny"]
+        return self.Nalpha * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
     def _solve_motion(self, Data_res, residual):
         Nparams = self._n_motion_params(Data_res)
@@ -244,7 +318,10 @@ class JointReconstructor:
         if self.params.motion_type == "rigid":
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_motion_states)
         else:
-            motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"])
+            if int(Data_res.get("Nz", 1)) > 1:
+                motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+            else:
+                motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"])
         return motion_perturb
     
     def _prepare_resolution_level(self, idx_res, r):
@@ -255,12 +332,23 @@ class JointReconstructor:
 
         # Initialize image and motion model
         if idx_res == 0:
-            Data_res["ReconstructedImage"] = torch.zeros((self.params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=self.device)
+            if int(Data_res.get("Nz", 1)) > 1:
+                Data_res["ReconstructedImage"] = torch.zeros(
+                    (self.params.Nex, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]),
+                    dtype=torch.complex128, device=self.device
+                )
+            else:
+                Data_res["ReconstructedImage"] = torch.zeros((self.params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=self.device)
             
             if self.params.motion_type == "rigid":
                 Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_motion_states), device=self.device)
             elif self.params.motion_type == "non-rigid":
-                Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"]), device=self.device)
+                if int(Data_res.get("Nz", 1)) > 1:
+                    Data_res["MotionModel"] = torch.zeros(
+                        (self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]), device=self.device
+                    )
+                else:
+                    Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"]), device=self.device)
         return Data_res
 
     # ----------------------------------------------------------------------
@@ -290,7 +378,7 @@ class JointReconstructor:
             _append_run_log(
                 run_log,
                 (
-                    f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x1, "
+                    f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x{Data_res.get('Nz', 1)}, "
                     f"{Data_res['Ny']} views, {self.params.N_motion_states} virtual times)\n"
                     f"    Resolution level initializations : {level_init_time:.6f} s\n"
                 ),
@@ -438,24 +526,33 @@ class JointReconstructor:
         best_image_unscaled = best_image * self.kspace_scale
         # Save final reconstructed image(s): one file per Nex when Nex > 1.
         if best_image_unscaled.shape[0] == 1:
+            img_to_save = best_image_unscaled[0]
+            if img_to_save.ndim == 3:
+                img_to_save = img_to_save[..., img_to_save.shape[-1] // 2]
             show_and_save_image(
-                best_image_unscaled[0],
+                img_to_save,
                 "image_reconstructed",
                 self.params.results_folder,
                 flip_for_display=self.params.flip_for_display,
             )
         else:
             # Save the average across Nex as the default "corrected" image for notebook display.
+            mean_img = best_image_unscaled.mean(dim=0)
+            if mean_img.ndim == 3:
+                mean_img = mean_img[..., mean_img.shape[-1] // 2]
             show_and_save_image(
-                best_image_unscaled.mean(dim=0),
+                mean_img,
                 "image_reconstructed",
                 self.params.results_folder,
                 flip_for_display=self.params.flip_for_display,
             )
             # Also save each Nex image separately for inspection/debugging.
             for nex_idx in range(best_image_unscaled.shape[0]):
+                img_nex = best_image_unscaled[nex_idx]
+                if img_nex.ndim == 3:
+                    img_nex = img_nex[..., img_nex.shape[-1] // 2]
                 show_and_save_image(
-                    best_image_unscaled[nex_idx],
+                    img_nex,
                     f"image_reconstructed_nex{nex_idx + 1}",
                     self.params.results_folder,
                     flip_for_display=self.params.flip_for_display,

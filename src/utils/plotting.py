@@ -14,9 +14,44 @@ def show_and_save_image(
     jupyter_display: bool | None = None,
 ):
     """
-    Display and save a single 2D image (real or complex),
-    scaled between the 2nd and 98th percentile.
+    Display and save:
+    - a single 2D image, or
+    - for 3D volumes, a 1x3 panel of central XY/XZ/YZ planes.
     """
+    if img.ndim == 3 and img.shape[-1] not in (3, 4):
+        vol = img.detach().cpu()
+        if torch.is_complex(vol):
+            vol = torch.abs(vol)
+
+        ix = vol.shape[0] // 2
+        iy = vol.shape[1] // 2
+        iz = vol.shape[2] // 2
+        planes = [vol[:, :, iz], vol[:, iy, :], vol[ix, :, :]]
+        titles = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
+
+        if flip_for_display:
+            planes = [torch.flipud(p) for p in planes]
+
+        all_vals = torch.cat([p.reshape(-1) for p in planes]).numpy()
+        vmin = np.percentile(all_vals, 2)
+        vmax = np.percentile(all_vals, 98)
+
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        for j in range(3):
+            ax = axes[j]
+            im = ax.imshow(planes[j].numpy(), vmin=vmin, vmax=vmax, cmap="gray")
+            ax.set_title(f"{image_name} | {titles[j]}")
+            ax.axis("off")
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        os.makedirs(folder, exist_ok=True)
+        fig.savefig(os.path.join(folder, image_name + ".png"), bbox_inches="tight", pad_inches=0)
+        should_display = jupyter_notebook_flag if jupyter_display is None else bool(jupyter_display)
+        if should_display:
+            plt.show()
+        plt.close(fig)
+        return
+
     if img.ndim == 3 and img.shape[-1] == 1:
         img = img.squeeze(-1)
 
