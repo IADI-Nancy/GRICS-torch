@@ -431,3 +431,44 @@ def _visualize_ky_order(ky_per_shot, ny, folder, fname="ky_sampling_order.png"):
     plt.tight_layout()
     plt.savefig(os.path.join(folder, fname))
     plt.close(fig)
+
+
+def _visualize_ky_kz_order(ky_per_block, kz_per_block, ny, nz, folder, fname="ky_kz_sampling_order.png"):
+    if nz <= 1:
+        return
+
+    os.makedirs(folder, exist_ok=True)
+
+    order_map = torch.full((ny, nz), -1.0, dtype=torch.float64)
+    order = 0
+    nblocks = min(len(ky_per_block), len(kz_per_block))
+
+    for b in range(nblocks):
+        ky_vals = ky_per_block[b].to(torch.int64).reshape(-1)
+        kz_vals = kz_per_block[b].to(torch.int64).reshape(-1)
+        for ky in ky_vals.tolist():
+            if ky < 0 or ky >= ny:
+                continue
+            for kz in kz_vals.tolist():
+                if kz < 0 or kz >= nz:
+                    continue
+                order_map[ky, kz] = float(order)
+                order += 1
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    masked = np.ma.masked_less(order_map.numpy(), 0)
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad(color="black")
+    im = ax.imshow(masked, origin="lower", aspect="auto", cmap=cmap)
+
+    ax.set_xlabel("kz")
+    ax.set_ylabel("ky")
+    ax.set_title("Sampling order in (ky, kz)")
+
+    if order > 0:
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Acquisition order (first -> last)")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(folder, fname))
+    plt.close(fig)

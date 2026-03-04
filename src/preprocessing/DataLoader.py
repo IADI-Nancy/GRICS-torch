@@ -144,7 +144,8 @@ class DataLoader:
                     }
         
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
-            self.binned_indices, self.Nx, self.Ny, self.t_device  # [Nex][Nmotion]
+            self.binned_indices, self.t_device, self.Nx, self.Ny,
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type  # [Nex][Nmotion]
         )
 
         self._save_input_data_artifacts()
@@ -300,7 +301,7 @@ class DataLoader:
         coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1).contiguous()
 
         self.kspace = fftnc(coil_imgs, dims=(-3, -2, -1))
-        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator._build_ky_and_nex()
@@ -480,7 +481,7 @@ class DataLoader:
 
         # 4. FFT → k-space (Ncoils, Nx, Ny, Nz)
         self.kspace = fftnc(coil_imgs, dims=(-3, -2, -1))
-        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         # 5. Sampling
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
@@ -521,7 +522,7 @@ class DataLoader:
             "y_limits": y_limits,
         }
         self.binned_indices = self.ky_per_motion
-        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
@@ -570,7 +571,7 @@ class DataLoader:
             "y_limits": y_limits,
         }
         self.binned_indices = self.ky_per_motion
-        self.Ncha, _, self.Nx, self.Ny, self.Nsli = self.kspace.shape
+        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
@@ -590,41 +591,83 @@ class DataLoader:
         if sp_device is None:
             sp_device = sp.Device(0 if use_gpu else -1)
 
-        nCha, _, nX, nY, nSlices = kspace.shape
+        Ncha, _, Nx, Ny, Nz = kspace.shape
 
-        espirit_maps = torch.zeros((nCha, nX, nY, nSlices), dtype=torch.complex128, device=device)
-
-        for i in range(nSlices):
-
+        # 3D calibration for volumetric data, 2D calibration for single-slice data.
+        if Nz > 1:
             # ---- GPU path ----
             if use_gpu:
                 import cupy as cp
-                kspace_cp = cp.asarray(kspace[:, 0, :, :, i].contiguous())
+
+                kspace_cp = cp.asarray(kspace[:, 0, :, :, :].contiguous())
                 maps_cp = spmri.app.EspiritCalib(
-                    kspace_cp, calib_width=acs, kernel_width=kernel_width,
-                    max_iter=espirit_max_iter, device=sp_device
+                    kspace_cp,
+                    calib_width=acs,
+                    kernel_width=kernel_width,
+                    max_iter=espirit_max_iter,
+                    device=sp_device,
                 ).run()
                 maps_cp = maps_cp.astype(cp.complex128, copy=False)
                 maps_cp = cp.ascontiguousarray(maps_cp)
                 maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
+                espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1])
+
+                cp.get_default_memory_pool().free_all_blocks()
+                cp.get_default_pinned_memory_pool().free_all_blocks()
+                torch.cuda.empty_cache()
 
             # ---- CPU path ----
             else:
-                kspace_np = kspace[:, 0, :, :, i].cpu().numpy()
+                kspace_np = kspace[:, 0, :, :, :].cpu().numpy()
                 maps_np = spmri.app.EspiritCalib(
-                    kspace_np, calib_width=acs, kernel_width=kernel_width,
-                    max_iter=espirit_max_iter, device=sp_device
+                    kspace_np,
+                    calib_width=acs,
+                    kernel_width=kernel_width,
+                    max_iter=espirit_max_iter,
+                    device=sp_device,
+                ).run()
+                maps_np = maps_np.astype(np.complex128, copy=False)
+                maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
+                espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
+
+            return espirit_maps
+
+        espirit_maps = torch.zeros((Ncha, Nx, Ny, Nz), dtype=torch.complex128, device=device)
+
+        # Legacy 2D slice calibration (single-slice data).
+        for z in range(Nz):
+            if use_gpu:
+                import cupy as cp
+
+                kspace_cp = cp.asarray(kspace[:, 0, :, :, z].contiguous())
+                maps_cp = spmri.app.EspiritCalib(
+                    kspace_cp,
+                    calib_width=acs,
+                    kernel_width=kernel_width,
+                    max_iter=espirit_max_iter,
+                    device=sp_device,
+                ).run()
+                maps_cp = maps_cp.astype(cp.complex128, copy=False)
+                maps_cp = cp.ascontiguousarray(maps_cp)
+                maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
+            else:
+                kspace_np = kspace[:, 0, :, :, z].cpu().numpy()
+                maps_np = spmri.app.EspiritCalib(
+                    kspace_np,
+                    calib_width=acs,
+                    kernel_width=kernel_width,
+                    max_iter=espirit_max_iter,
+                    device=sp_device,
                 ).run()
                 maps_np = maps_np.astype(np.complex128, copy=False)
                 maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
 
-            espiritual = torch.complex(maps_t[..., 0], maps_t[..., 1])
-            espirit_maps[:, :, :, i] = espiritual
+            espirit_maps[:, :, :, z] = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
 
-            if use_gpu:
-                cp.get_default_memory_pool().free_all_blocks()
-                cp.get_default_pinned_memory_pool().free_all_blocks()
-                torch.cuda.empty_cache()
+        if use_gpu:
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            torch.cuda.empty_cache()
 
         return espirit_maps
 

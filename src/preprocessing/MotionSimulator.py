@@ -21,7 +21,7 @@ class MotionSimulator:
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
-        self.Ncha, self.Nx, self.Ny, self.Nsli = smaps.shape  
+        self.Ncha, self.Nx, self.Ny, self.Nz = smaps.shape
     
     def _get_corrupted_kspace(self):
         return self.kspace
@@ -54,11 +54,16 @@ class MotionSimulator:
             for _ in range(nex_total)
         ]
         kx = torch.arange(self.Nx, device=self.t_device, dtype=torch.int64)
+        kz = torch.arange(self.Nz, device=self.t_device, dtype=torch.int64) if self.Nz > 1 else None
 
         for state in range(ny_total):
             nex = int(nex_flat[state].item())
             ky = ky_flat[state].to(torch.int64).reshape(1)
-            samp = (ky[:, None] + self.Ny * kx[None, :]).reshape(-1)
+            samp_xy = (ky[:, None] + self.Ny * kx[None, :])
+            if self.Nz > 1:
+                samp = (samp_xy[:, :, None] * self.Nz + kz[None, None, :]).reshape(-1)
+            else:
+                samp = samp_xy.reshape(-1)
             sampling[nex][state] = samp
 
         return sampling
@@ -68,7 +73,7 @@ class MotionSimulator:
             motion_type = self.params.motion_type
 
         self.MotionOperator = MotionOperator(
-            self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal
+            self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz
         )
 
         E = EncodingOperator(
@@ -79,7 +84,7 @@ class MotionSimulator:
             self.MotionOperator
         )
         kspace_corruped = E.forward(self.image)
-        self.kspace = kspace_corruped.reshape(self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nsli)
+        self.kspace = kspace_corruped.reshape(self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nz)
 
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
@@ -104,9 +109,12 @@ class MotionSimulator:
             ky_per_mot_state_idx = [[self.ky_idx]]
             ny_total = int(self.ky_idx.numel())
 
-        self.sampling_idx_per_nex = SamplingSimulator._build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device)
+        self.sampling_idx_per_nex = SamplingSimulator._build_sampling_per_nex_per_motion(
+            ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
+        )
         
-        self.TotalKspaceSamples = self.Nx * self.Ny
+        self.TotalKspaceSamples = self.Nx * self.Ny * self.Nz
 
         # Expand zero motion to ky (chronological)
         self.tx        = torch.zeros(ny_total, device=self.t_device)
@@ -194,7 +202,7 @@ class MotionSimulator:
         # One global motion state per acquired ky line (Ny * Nex states).
         self.sampling_idx = self._build_sampling_per_line_global_states()
 
-        self.TotalKspaceSamples = self.Ny * self.Nx
+        self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
         # generate motion curves and parameters
         self.navigator, self.tx, self.ty, self.phi = self._create_realistic_motion_curves()
 
@@ -235,47 +243,98 @@ class MotionSimulator:
 
         ptr = 0  # write pointer (chronological)
 
-        m = 0  # motion state index
         for ky_list in ky_per_mot_state_idx:      # loop over Nex
-            for ky in ky_list:                    # loop over shots
+            for shot_idx, ky in enumerate(ky_list):  # loop over shot index within Nex
                 n = ky.numel()
 
-                self.tx[ptr:ptr+n]        = self.tx_mot_state[m]
-                self.ty[ptr:ptr+n]        = self.ty_mot_state[m]
-                self.phi[ptr:ptr+n]       = self.phi_mot_state[m]
-                self.navigator[ptr:ptr+n] = self.navigator_mot_state[m]
+                # EncodingOperator consumes motion states by shot index shared across Nex.
+                self.tx[ptr:ptr+n]        = self.tx_mot_state[shot_idx]
+                self.ty[ptr:ptr+n]        = self.ty_mot_state[shot_idx]
+                self.phi[ptr:ptr+n]       = self.phi_mot_state[shot_idx]
+                self.navigator[ptr:ptr+n] = self.navigator_mot_state[shot_idx]
 
                 ptr += n
-                m += 1
 
     def _create_discrete_motion_curves(self, ky_per_mot_state_idx):
-        Nshots = self.params.Nshots
+        if len(ky_per_mot_state_idx) == 0:
+            raise ValueError("ky_per_mot_state_idx cannot be empty.")
+        Nshots = len(ky_per_mot_state_idx[0])
+        for ky_list in ky_per_mot_state_idx:
+            if len(ky_list) != Nshots:
+                raise ValueError("All Nex entries must have the same number of shot states.")
 
-        alpha = torch.zeros((3, Nshots), device=self.t_device)
+        if self.Nz > 1:
+            alpha = torch.zeros((6, Nshots), device=self.t_device)
 
-        # Translation X: [-max_tx, +max_tx]
-        self.tx_mot_state = self.params.max_tx * (2 * torch.rand(Nshots, device=self.t_device) - 1)
-        alpha[0, :] = self.tx_mot_state
+            max_tx_3d = float(getattr(self.params, "max_tx_3d", getattr(self.params, "max_tx", 0.0)))
+            max_ty_3d = float(getattr(self.params, "max_ty_3d", getattr(self.params, "max_ty", 0.0)))
+            max_tz_3d = float(getattr(self.params, "max_tz_3d", 0.0))
+            max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0)))
+            max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0)))
+            max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0)))
 
-        # Translation Y: [-max_ty, +max_ty]
-        self.ty_mot_state = self.params.max_ty * (2 * torch.rand(Nshots, device=self.t_device) - 1)
-        alpha[1, :] = self.ty_mot_state
+            self.tx_mot_state = max_tx_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            self.ty_mot_state = max_ty_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            self.tz_mot_state = max_tz_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            self.rx_mot_state = max_rx_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
+            self.ry_mot_state = max_ry_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
+            self.rz_mot_state = max_rz_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
 
-        # Rotation: [-max_phi, +max_phi] degrees → radians
-        self.phi_mot_state = self.params.max_phi * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
-        alpha[2, :] = self.phi_mot_state
+            alpha[0, :] = self.tx_mot_state
+            alpha[1, :] = self.ty_mot_state
+            alpha[2, :] = self.tz_mot_state
+            alpha[3, :] = self.rx_mot_state
+            alpha[4, :] = self.ry_mot_state
+            alpha[5, :] = self.rz_mot_state
 
-        # Centers
-        centers = torch.zeros((2, Nshots), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(Nshots, device=self.t_device)
-        centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
+            # Keep legacy plotting outputs populated.
+            self.phi_mot_state = self.rz_mot_state
+
+            max_center_x_3d = float(getattr(self.params, "max_center_x_3d", getattr(self.params, "max_center_x", 0.0)))
+            max_center_y_3d = float(getattr(self.params, "max_center_y_3d", getattr(self.params, "max_center_y", 0.0)))
+            max_center_z_3d = float(getattr(self.params, "max_center_z_3d", 0.0))
+            centers = torch.zeros((3, Nshots), device=self.t_device)
+            centers[0, :] = self.Nx / 2 + max_center_x_3d * torch.ones(Nshots, device=self.t_device)
+            centers[1, :] = self.Ny / 2 + max_center_y_3d * torch.ones(Nshots, device=self.t_device)
+            centers[2, :] = self.Nz / 2 + max_center_z_3d * torch.ones(Nshots, device=self.t_device)
+
+            motion_mat = torch.stack(
+                [
+                    self.tx_mot_state,
+                    self.ty_mot_state,
+                    self.tz_mot_state,
+                    self.rx_mot_state,
+                    self.ry_mot_state,
+                    self.rz_mot_state,
+                ],
+                dim=1,
+            )
+        else:
+            alpha = torch.zeros((3, Nshots), device=self.t_device)
+
+            # Translation X: [-max_tx, +max_tx]
+            self.tx_mot_state = self.params.max_tx * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            alpha[0, :] = self.tx_mot_state
+
+            # Translation Y: [-max_ty, +max_ty]
+            self.ty_mot_state = self.params.max_ty * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            alpha[1, :] = self.ty_mot_state
+
+            # Rotation: [-max_phi, +max_phi] degrees → radians
+            self.phi_mot_state = self.params.max_phi * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
+            alpha[2, :] = self.phi_mot_state
+
+            # Centers
+            centers = torch.zeros((2, Nshots), device=self.t_device)
+            centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(Nshots, device=self.t_device)
+            centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
+
+            # Stack motion parameters: (Nshots, 3)
+            motion_mat = torch.stack([self.tx_mot_state, self.ty_mot_state, self.phi_mot_state], dim=1)  # (Nshots, 3)
 
         # -------------------------------------------------
         # Build navigator = first principal component
         # -------------------------------------------------
-        # Stack motion parameters: (Nshots, 3)
-        motion_mat = torch.stack([self.tx_mot_state, self.ty_mot_state, self.phi_mot_state], dim=1)  # (Nshots, 3)
-
         # Center the data
         motion_mat = motion_mat - motion_mat.mean(dim=0, keepdim=True)
 
@@ -302,9 +361,12 @@ class MotionSimulator:
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device) # ← for debugging only, ignore output
+        self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
+            ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
+        ) # ← for debugging only, ignore output
         
-        self.TotalKspaceSamples = self.Ny * self.Nx
+        self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
         self.navigator, alpha, centers = self._create_discrete_motion_curves(ky_per_mot_state_idx)
 
@@ -419,9 +481,10 @@ class MotionSimulator:
 
         ky_per_mot_state_idx = self.ky_per_motion_state
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
-            ky_per_mot_state_idx, self.Nx, self.Ny, self.t_device
+            ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
         )
-        self.TotalKspaceSamples = self.Ny * self.Nx
+        self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
         # Total number of motion states across all Nex acquisitions.
         Nshots = sum(len(shot_list) for shot_list in ky_per_mot_state_idx)
@@ -509,7 +572,7 @@ class MotionSimulator:
 
         # One global motion state per acquired ky line (Ny * Nex states).
         self.sampling_idx = self._build_sampling_per_line_global_states()
-        self.TotalKspaceSamples = self.Ny * self.Nx
+        self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
         alpha_x, alpha_y, alpha_maps = self._create_discrete_non_rigid_alpha_fields()
         amp = float(self.params.nonrigid_motion_amplitude)

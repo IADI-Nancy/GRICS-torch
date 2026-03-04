@@ -15,3 +15,18 @@ max_center_x = 0
 max_center_y = 0
 # Transition duration (in lines) for each motion event (inverse to motion speed).
 motion_tau = 2
+
+[motion_3d]
+# 3D rigid motion parameter limits (currently ignored by 2D simulation paths).
+# Translation limits in voxels.
+max_tx_3d = 4.0
+max_ty_3d = 3.0
+max_tz_3d = 2.0
+# Rotation limits in degrees (x, y, z axes).
+max_rx_3d = 6.0
+max_ry_3d = 6.0
+max_rz_3d = 10.0
+# Rotation-center offsets in voxels.
+max_center_x_3d = 0.0
+max_center_y_3d = 0.0
+max_center_z_3d = 0.0
