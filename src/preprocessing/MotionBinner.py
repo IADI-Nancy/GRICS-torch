@@ -35,6 +35,10 @@ class MotionBinner:
         tx=None,
         ty=None,
         phi=None,
+        tz=None,
+        rx=None,
+        ry=None,
+        rz=None,
         y_limits=None,
         return_debug_data=False,
     ):
@@ -74,6 +78,10 @@ class MotionBinner:
             tx=tx,
             ty=ty,
             phi=phi,
+            tz=tz,
+            rx=rx,
+            ry=ry,
+            rz=rz,
             data_type=params.data_type,
             y_limits=y_limits,
         )

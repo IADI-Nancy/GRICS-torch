@@ -103,7 +103,17 @@ class DataLoader:
                     self.alpha_maps_true = motionSimulator.alpha_maps
 
             motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
-            y_limits = compute_motion_y_limits(motion_curve, tx=tx, ty=ty, phi=phi)
+            tz = getattr(motionSimulator, "tz", None)
+            rx = getattr(motionSimulator, "rx", None)
+            ry = getattr(motionSimulator, "ry", None)
+            rz = getattr(motionSimulator, "rz", None)
+            # In 3D rigid mode, phi is a legacy compatibility alias (mapped to rz).
+            # Hide it from input plots to avoid duplicate rotational traces.
+            phi_for_plot = None if (self.Nz > 1 and rz is not None) else phi
+
+            y_limits = compute_motion_y_limits(
+                motion_curve, tx=tx, ty=ty, phi=phi_for_plot, tz=tz, rx=rx, ry=ry, rz=rz
+            )
             (
                 self.binned_indices,
                 self.motion_signal,
@@ -112,7 +122,8 @@ class DataLoader:
                 self.nex_idx_chronological,
             ) = MotionBinner._bin_motion(
                 motion_curve, self.ky_idx, self.nex_idx, self.t_device, self.params,
-                tx=tx, ty=ty, phi=phi, y_limits=y_limits, return_debug_data=True,
+                tx=tx, ty=ty, phi=phi_for_plot, tz=tz, rx=rx, ry=ry, rz=rz,
+                y_limits=y_limits, return_debug_data=True,
             )
             self.motion_plot_context = {
                 "motion_curve": motion_curve,

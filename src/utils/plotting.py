@@ -199,7 +199,17 @@ def _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels):
         ax.axvline(right, color=color, linestyle="--", linewidth=1.4, alpha=0.9)
 
 
-def compute_motion_y_limits(motion_curve, tx=None, ty=None, phi=None, pad_ratio=0.05):
+def compute_motion_y_limits(
+    motion_curve,
+    tx=None,
+    ty=None,
+    phi=None,
+    tz=None,
+    rx=None,
+    ry=None,
+    rz=None,
+    pad_ratio=0.05,
+):
     vals = [torch.as_tensor(motion_curve).detach().flatten().cpu()]
     if tx is not None:
         vals.append(torch.as_tensor(tx).detach().flatten().cpu())
@@ -207,6 +217,14 @@ def compute_motion_y_limits(motion_curve, tx=None, ty=None, phi=None, pad_ratio=
         vals.append(torch.as_tensor(ty).detach().flatten().cpu())
     if phi is not None:
         vals.append(torch.as_tensor(phi).detach().flatten().cpu())
+    if tz is not None:
+        vals.append(torch.as_tensor(tz).detach().flatten().cpu())
+    if rx is not None:
+        vals.append(torch.as_tensor(rx).detach().flatten().cpu())
+    if ry is not None:
+        vals.append(torch.as_tensor(ry).detach().flatten().cpu())
+    if rz is not None:
+        vals.append(torch.as_tensor(rz).detach().flatten().cpu())
 
     all_vals = torch.cat(vals) if vals else torch.tensor([0.0])
     y_min = float(torch.min(all_vals).item())
@@ -231,6 +249,10 @@ def save_clustered_motion_plots(
     tx=None,
     ty=None,
     phi=None,
+    tz=None,
+    rx=None,
+    ry=None,
+    rz=None,
     data_type=None,
     y_limits=None,
 ):
@@ -264,6 +286,14 @@ def save_clustered_motion_plots(
         ax.plot(torch.as_tensor(ty).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid ty (line)")
     if phi is not None:
         ax.plot(torch.as_tensor(phi).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid phi (line)")
+    if tz is not None:
+        ax.plot(torch.as_tensor(tz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid tz (line)")
+    if rx is not None:
+        ax.plot(torch.as_tensor(rx).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid rx (line)")
+    if ry is not None:
+        ax.plot(torch.as_tensor(ry).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid ry (line)")
+    if rz is not None:
+        ax.plot(torch.as_tensor(rz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid rz (line)")
 
     if data_type in {"real-world", "raw-data"}:
         sample_label_prefix = "Measured motion signal samples"

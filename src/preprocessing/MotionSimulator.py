@@ -138,20 +138,21 @@ class MotionSimulator:
     def _create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
+        n_events = int(getattr(self.params, "num_motion_events", 3))
+        n_events = max(1, n_events)
+        tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
+        tau = max(1, tau)
 
         # 1) Generate random motion event times over the full acquisition.
         total_lines = self.Ny * self.params.Nex
         event_times = torch.sort(
-            torch.randint(0, total_lines, (self.params.num_motion_events,), device=self.t_device)
+            torch.randint(0, total_lines, (n_events,), device=self.t_device)
         ).values
 
-        # Motion transition sharpness (smaller tau -> faster motion)
-        tau = self.params.motion_tau
-
         # 2) Generate random amplitudes for each event
-        A_tx  = self.params.max_tx  * (2 * torch.rand(self.params.num_motion_events, device=self.t_device) - 1)
-        A_ty  = self.params.max_ty  * (2 * torch.rand(self.params.num_motion_events, device=self.t_device) - 1)
-        A_phi = self.params.max_phi * (2 * torch.rand(self.params.num_motion_events, device=self.t_device) - 1) * (torch.pi/180)
+        A_tx  = self.params.max_tx  * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        A_ty  = self.params.max_ty  * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        A_phi = self.params.max_phi * (2 * torch.rand(n_events, device=self.t_device) - 1) * (torch.pi/180)
 
         # 3) Build independent motion curves
         tx  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
@@ -198,23 +199,121 @@ class MotionSimulator:
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
 
+    def _create_realistic_motion_curves_3d(self):
+        # Time axis: one value per k-space line (Ny * Nex global states).
+        n_states = self.Ny * self.params.Nex
+        t = torch.arange(n_states, device=self.t_device, dtype=torch.float64)
+        n_events = int(getattr(self.params, "num_motion_events", 3))
+        n_events = max(1, n_events)
+        tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
+        tau = max(1, tau)
+
+        # Random motion event times over the full acquisition.
+        event_times = torch.sort(
+            torch.randint(0, n_states, (n_events,), device=self.t_device)
+        ).values
+
+        max_tx_3d = float(getattr(self.params, "max_tx_3d", getattr(self.params, "max_tx", 0.0)))
+        max_ty_3d = float(getattr(self.params, "max_ty_3d", getattr(self.params, "max_ty", 0.0)))
+        max_tz_3d = float(getattr(self.params, "max_tz_3d", 0.0))
+        max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0)))
+        max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0)))
+        max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0)))
+
+        A_tx = max_tx_3d * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        A_ty = max_ty_3d * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        A_tz = max_tz_3d * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        A_rx = max_rx_3d * (2 * torch.rand(n_events, device=self.t_device) - 1) * (torch.pi / 180)
+        A_ry = max_ry_3d * (2 * torch.rand(n_events, device=self.t_device) - 1) * (torch.pi / 180)
+        A_rz = max_rz_3d * (2 * torch.rand(n_events, device=self.t_device) - 1) * (torch.pi / 180)
+
+        tx = torch.zeros(n_states, device=self.t_device)
+        ty = torch.zeros(n_states, device=self.t_device)
+        tz = torch.zeros(n_states, device=self.t_device)
+        rx = torch.zeros(n_states, device=self.t_device)
+        ry = torch.zeros(n_states, device=self.t_device)
+        rz = torch.zeros(n_states, device=self.t_device)
+
+        for i, _ in enumerate(event_times):
+            ti = event_times[i].item()
+            t_end = min(ti + tau, n_states)
+            alpha = np.linspace(0.0, 1.0, t_end - ti)
+            s = 0.5 * (1.0 - np.cos(np.pi * alpha))
+
+            f = torch.zeros(n_states, device=self.t_device)
+            f[ti:t_end] = torch.from_numpy(s).to(self.t_device)
+            if t_end < n_states:
+                f[t_end:] = 1.0
+
+            tx += A_tx[i] * f
+            ty += A_ty[i] * f
+            tz += A_tz[i] * f
+            rx += A_rx[i] * f
+            ry += A_ry[i] * f
+            rz += A_rz[i] * f
+
+        M = torch.stack([tx, ty, tz, rx, ry, rz], dim=0)
+        M_centered = M - M.mean(dim=1, keepdim=True)
+        U, _, _ = torch.linalg.svd(M_centered, full_matrices=False)
+        u1 = U[:, 0]
+        navigator = torch.matmul(u1.unsqueeze(0), M_centered).squeeze(0)
+        navigator = navigator / torch.clamp(navigator.abs().max(), min=1e-12)
+
+        if self.params.debug_flag:
+            # Keep existing debug plot signature by visualizing rz as the rotational surrogate.
+            save_motion_debug_plots(navigator, tx, ty, rz, self.params.debug_folder, event_times)
+
+        return navigator, tx, ty, tz, rx, ry, rz
+
     def _simulate_realistic_rigid_motion(self):
         # One global motion state per acquired ky line (Ny * Nex states).
         self.sampling_idx = self._build_sampling_per_line_global_states()
 
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
-        # generate motion curves and parameters
-        self.navigator, self.tx, self.ty, self.phi = self._create_realistic_motion_curves()
+        n_states = self.Ny * self.params.Nex
 
-        # Apply simulated motion
-        alpha = torch.zeros(3, self.Ny * self.params.Nex, device=self.t_device)
-        alpha[0, :] = self.tx
-        alpha[1, :] = self.ty
-        alpha[2, :] = self.phi
+        if self.Nz > 1:
+            # Generate 3D realistic rigid curves and parameters.
+            (
+                self.navigator,
+                self.tx,
+                self.ty,
+                self.tz,
+                self.rx,
+                self.ry,
+                self.rz,
+            ) = self._create_realistic_motion_curves_3d()
 
-        centers = torch.zeros((2, self.Ny * self.params.Nex), device=self.t_device)
-        centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(self.Ny * self.params.Nex, device=self.t_device)
-        centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.randn(self.Ny * self.params.Nex, device=self.t_device)
+            alpha = torch.zeros(6, n_states, device=self.t_device)
+            alpha[0, :] = self.tx
+            alpha[1, :] = self.ty
+            alpha[2, :] = self.tz
+            alpha[3, :] = self.rx
+            alpha[4, :] = self.ry
+            alpha[5, :] = self.rz
+
+            # Keep compatibility with existing plotting/debug interfaces.
+            self.phi = self.rz
+
+            max_center_x_3d = float(getattr(self.params, "max_center_x_3d", getattr(self.params, "max_center_x", 0.0)))
+            max_center_y_3d = float(getattr(self.params, "max_center_y_3d", getattr(self.params, "max_center_y", 0.0)))
+            max_center_z_3d = float(getattr(self.params, "max_center_z_3d", 0.0))
+            centers = torch.zeros((3, n_states), device=self.t_device)
+            centers[0, :] = self.Nx / 2 + max_center_x_3d * torch.ones(n_states, device=self.t_device)
+            centers[1, :] = self.Ny / 2 + max_center_y_3d * torch.ones(n_states, device=self.t_device)
+            centers[2, :] = self.Nz / 2 + max_center_z_3d * torch.ones(n_states, device=self.t_device)
+        else:
+            # 2D realistic rigid (existing behavior).
+            self.navigator, self.tx, self.ty, self.phi = self._create_realistic_motion_curves()
+
+            alpha = torch.zeros(3, n_states, device=self.t_device)
+            alpha[0, :] = self.tx
+            alpha[1, :] = self.ty
+            alpha[2, :] = self.phi
+
+            centers = torch.zeros((2, n_states), device=self.t_device)
+            centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(n_states, device=self.t_device)
+            centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.randn(n_states, device=self.t_device)
 
         self._apply_motion(alpha, centers)
 

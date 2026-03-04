@@ -60,10 +60,22 @@ def save_final_rigid_motion_plots(motion_model, motion_plot_context, results_fol
     labels = labels_in.to(dtype=torch.long, device=motion_model.device)
     tx = motion_model[0, labels]
     ty = motion_model[1, labels]
-    phi = motion_model[2, labels]
+    phi = None
+    tz = None
+    rx = None
+    ry = None
+    rz = None
+    if motion_model.shape[0] >= 6:
+        tz = motion_model[2, labels]
+        rx = motion_model[3, labels]
+        ry = motion_model[4, labels]
+        rz = motion_model[5, labels]
+    else:
+        phi = motion_model[2, labels]
 
     save_clustered_motion_plots(
         motion_curve=motion_curve, labels=labels_in, ky_idx=ky_idx, nex_idx=nex_idx, nbins=n_motion_states,
         output_folder=results_folder, resolution_levels=context.get("resolution_levels", resolution_levels),
-        tx=tx, ty=ty, phi=phi, data_type=context.get("data_type", data_type), y_limits=context.get("y_limits"),
+        tx=tx, ty=ty, phi=phi, tz=tz, rx=rx, ry=ry, rz=rz,
+        data_type=context.get("data_type", data_type), y_limits=context.get("y_limits"),
     )
