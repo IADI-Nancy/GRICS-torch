@@ -1,23 +1,12 @@
 [motion]
+# Motion simulation data dimensionality tag for compatibility checks.
+motion_simulation_config_dimension = "3D"
 # Motion simulation model used for synthetic corruption.
-motion_simulation_type = "rigid"
+motion_simulation_type = "rigid_3d"
 # Number of smooth motion events across the acquisition.
-num_motion_events = 4
-# Maximum x-translation amplitude in pixels.
-max_tx = 4.0
-# Maximum y-translation amplitude in pixels.
-max_ty = 3.0
-# Maximum in-plane rotation amplitude in degrees.
-max_phi = 10.0
-# Maximum x-offset for rotation center in pixels.
-max_center_x = 0
-# Maximum y-offset for rotation center in pixels.
-max_center_y = 0
+num_motion_events = 2
 # Transition duration (in lines) for each motion event (inverse to motion speed).
-motion_tau = 2
-
-[motion_3d]
-# 3D rigid motion parameter limits (currently ignored by 2D simulation paths).
+motion_tau = 3
 # Translation limits in voxels.
 max_tx_3d = 4.0
 max_ty_3d = 3.0

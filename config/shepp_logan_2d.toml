@@ -1,4 +1,6 @@
 [shepp_logan]
+# Global data dimensionality selection.
+data_dimension = "2D"
 # Phantom matrix size (Nx=Ny).
 N_SheppLogan = 128
 # Number of synthetic receive coils.

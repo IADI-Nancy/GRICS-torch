@@ -193,28 +193,18 @@ class DataLoader:
 
         flip_for_display = self.params.flip_for_display
 
-        def _to_2d_for_display(img):
-            if img is None:
-                return None
-            if img.ndim == 2:
-                return img
-            if img.ndim == 3:
-                # For 3D inputs, save the central z-slice for quick visual checks.
-                return img[..., img.shape[-1] // 2]
-            raise ValueError(f"Expected 2D or 3D image for display, got shape {tuple(img.shape)}.")
-
         if (
             self._has_simulated_motion()
             and hasattr(self, "image_ground_truth")
             and self.image_ground_truth is not None
         ):
             show_and_save_image(
-                _to_2d_for_display(self.image_ground_truth[0]), "image_ground_truth", folder,
+                self.image_ground_truth[0], "image_ground_truth", folder,
                 flip_for_display=flip_for_display, jupyter_display=False,
             )
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
             show_and_save_image(
-                _to_2d_for_display(self.image_no_moco[0]), "image_corrupted", folder,
+                self.image_no_moco[0], "image_corrupted", folder,
                 flip_for_display=flip_for_display, jupyter_display=False,
             )
 

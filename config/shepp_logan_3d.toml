@@ -1,0 +1,11 @@
+[shepp_logan]
+# Global data dimensionality selection.
+data_dimension = "3D"
+# Phantom matrix size (Nx=Ny).
+N_SheppLogan = 128
+# Number of synthetic receive coils.
+Ncoils_SheppLogan = 4
+# Number of slices for the phantom volume.
+Nz_SheppLogan = 64
+# Fraction of the image occupied by the phantom object (<=1). Lower adds more margins.
+SheppLoganFillFraction = 1.0

@@ -1,6 +1,8 @@
 [motion]
+# Motion simulation data dimensionality tag for compatibility checks.
+motion_simulation_config_dimension = "2D"
 # Motion simulation model used for synthetic corruption.
-motion_simulation_type = "discrete-non-rigid"
+motion_simulation_type = "discrete_nonrigid_2d"
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 5.0
 # Spatial support/size parameter for generated displacement fields.

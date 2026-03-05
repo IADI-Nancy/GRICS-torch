@@ -27,7 +27,7 @@ Main config groups:
 - `config/reconstruction/*.toml`: solver/reconstruction settings
 - `config/sampling_simulation/*.toml`: synthetic k-space ordering
 - `config/motion_simulation/*.toml`: synthetic motion model parameters
-- `config/shepp_logan.toml`: Shepp-Logan phantom generation parameters
+- `config/shepp_logan_2d.toml`: Shepp-Logan phantom generation parameters (2D default; use `config/shepp_logan_3d.toml` for 3D)
 
 Important consistency rule:
 - `GN_iterations_per_level` must match `ResolutionLevels` length exactly.
@@ -40,7 +40,7 @@ The `data_type` selected in `load_config(...)` controls how input data is built 
 
 Synthetic phantom data generated in `DataLoader.generate_shepp_logan(...)`.
 Required config files:
-- `config/shepp_logan.toml`
+- `config/shepp_logan_2d.toml` (or `config/shepp_logan_3d.toml` for 3D data)
 - a sampling simulation config file
 - a motion simulation config file (otherwise there is nothing to correct)
 

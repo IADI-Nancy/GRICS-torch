@@ -1,0 +1,24 @@
+[motion]
+# Motion simulation data dimensionality tag for compatibility checks.
+motion_simulation_config_dimension = "3D"
+# Motion simulation model used for synthetic corruption.
+motion_simulation_type = "discrete_nonrigid_3d"
+# Global scale for synthetic non-rigid displacement fields.
+nonrigid_motion_amplitude = 5.0
+# Spatial support/size parameter for generated displacement fields.
+displacementfield_size = 1
+
+# Spatial non-rigid model: "respiratory" (default) or "gaussian" (legacy).
+nonrigid_spatial_model = "respiratory"
+# Inferior activation center in normalized SI coordinates [-1, 1].
+nonrigid_diaphragm_level = 0.2
+# Steepness of inferior activation transition.
+nonrigid_diaphragm_sharpness = 10.0
+# Lateral spread of the respiratory motion envelope.
+nonrigid_lateral_sigma = 0.35
+# Relative strength of left-right displacement vs SI displacement.
+nonrigid_ap_fraction = 0.2
+# Extra SI gain toward the most inferior area.
+nonrigid_inferior_gain = 0.0
+# Additional attenuation toward the top region (higher -> stronger decrease at top).
+nonrigid_top_decay = 1.0

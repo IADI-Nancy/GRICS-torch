@@ -95,6 +95,15 @@ class JointReconstructor:
                     rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
                     out_list.append(rc[0, 0])
                 return torch.stack(out_list, dim=0)
+            elif x.ndim == 4 and x.shape[-1] == 1:
+                # 2D-with-single-z convention: [C, Nx, Ny, 1] -> [C, Nx_new, Ny_new, 1]
+                C = x.shape[0]
+                out_list = []
+                for c in range(C):
+                    xc = x[c, :, :, 0].unsqueeze(0).unsqueeze(0)
+                    rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
+                    out_list.append(rc[0, 0])
+                return torch.stack(out_list, dim=0).unsqueeze(-1)
             else:
                 raise ValueError(f"Unexpected shape {x.shape}")
 
@@ -526,11 +535,8 @@ class JointReconstructor:
         best_image_unscaled = best_image * self.kspace_scale
         # Save final reconstructed image(s): one file per Nex when Nex > 1.
         if best_image_unscaled.shape[0] == 1:
-            img_to_save = best_image_unscaled[0]
-            if img_to_save.ndim == 3:
-                img_to_save = img_to_save[..., img_to_save.shape[-1] // 2]
             show_and_save_image(
-                img_to_save,
+                best_image_unscaled[0],
                 "image_reconstructed",
                 self.params.results_folder,
                 flip_for_display=self.params.flip_for_display,
@@ -538,8 +544,6 @@ class JointReconstructor:
         else:
             # Save the average across Nex as the default "corrected" image for notebook display.
             mean_img = best_image_unscaled.mean(dim=0)
-            if mean_img.ndim == 3:
-                mean_img = mean_img[..., mean_img.shape[-1] // 2]
             show_and_save_image(
                 mean_img,
                 "image_reconstructed",
@@ -548,11 +552,8 @@ class JointReconstructor:
             )
             # Also save each Nex image separately for inspection/debugging.
             for nex_idx in range(best_image_unscaled.shape[0]):
-                img_nex = best_image_unscaled[nex_idx]
-                if img_nex.ndim == 3:
-                    img_nex = img_nex[..., img_nex.shape[-1] // 2]
                 show_and_save_image(
-                    img_nex,
+                    best_image_unscaled[nex_idx],
                     f"image_reconstructed_nex{nex_idx + 1}",
                     self.params.results_folder,
                     flip_for_display=self.params.flip_for_display,

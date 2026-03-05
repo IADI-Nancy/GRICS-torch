@@ -64,6 +64,53 @@ def _drop_keys(cfg, keys):
         cfg.pop(key, None)
 
 
+_MOTION_SIM_ALIASES = {
+    # Dimension-agnostic legacy names.
+    "as-it-is": ("as-it-is", None),
+    "as_it_is": ("as-it-is", None),
+    "no-motion-data": ("no-motion-data", None),
+    "no_motion_data": ("no-motion-data", None),
+    "rigid": ("rigid", None),
+    "discrete-rigid": ("discrete-rigid", None),
+    "discrete_rigid": ("discrete-rigid", None),
+    "non-rigid": ("non-rigid", None),
+    "non_rigid": ("non-rigid", None),
+    "discrete-non-rigid": ("discrete-non-rigid", None),
+    "discrete_non_rigid": ("discrete-non-rigid", None),
+    # New explicit names.
+    "rigid_2d": ("rigid", "2D"),
+    "rigid_3d": ("rigid", "3D"),
+    "discrete_rigid_2d": ("discrete-rigid", "2D"),
+    "discrete_rigid_3d": ("discrete-rigid", "3D"),
+    "nonrigid_2d": ("non-rigid", "2D"),
+    "nonrigid_3d": ("non-rigid", "3D"),
+    "discrete_nonrigid_2d": ("discrete-non-rigid", "2D"),
+    "discrete_nonrigid_3d": ("discrete-non-rigid", "3D"),
+    "no_motion_data_2d": ("no-motion-data", "2D"),
+    "no_motion_data_3d": ("no-motion-data", "3D"),
+    "as_it_is_2d": ("as-it-is", "2D"),
+    "as_it_is_3d": ("as-it-is", "3D"),
+}
+
+
+def _normalize_data_dimension(dim):
+    if dim is None:
+        return None
+    d = str(dim).strip().upper()
+    if d in {"2D", "2"}:
+        return "2D"
+    if d in {"3D", "3"}:
+        return "3D"
+    raise ValueError("data_dimension must be '2D' or '3D'.")
+
+
+def _parse_motion_simulation_type(raw_type):
+    key = str(raw_type).strip().lower()
+    if key not in _MOTION_SIM_ALIASES:
+        raise ValueError(f"Unsupported motion_simulation_type: {raw_type}")
+    return _MOTION_SIM_ALIASES[key]
+
+
 def _refresh_derived(params):
     torch.set_default_dtype(torch.float64)
 
@@ -91,6 +138,50 @@ def _refresh_derived(params):
 
     if not hasattr(params, "motion_simulation_type"):
         params.motion_simulation_type = "as-it-is"
+
+    # Infer/normalize global data dimension.
+    data_dim_raw = getattr(params, "data_dimension", None)
+    inferred_dim = None
+    if hasattr(params, "Nz_SheppLogan"):
+        inferred_dim = "3D" if int(params.Nz_SheppLogan) > 1 else "2D"
+    if data_dim_raw is None:
+        params.data_dimension = inferred_dim if inferred_dim is not None else "2D"
+    else:
+        params.data_dimension = _normalize_data_dimension(data_dim_raw)
+
+    # Canonicalize motion simulation type and track optional type-implied dimension.
+    motion_type_canonical, motion_type_dim = _parse_motion_simulation_type(params.motion_simulation_type)
+    existing_motion_dim = _normalize_data_dimension(getattr(params, "motion_simulation_dimension", None))
+    if existing_motion_dim is not None:
+        motion_type_dim = existing_motion_dim
+    params.motion_simulation_type = motion_type_canonical
+    params.motion_simulation_dimension = motion_type_dim
+
+    if motion_type_dim is not None and motion_type_dim != params.data_dimension:
+        raise ValueError(
+            f"motion_simulation_type implies {motion_type_dim}, but data_dimension is {params.data_dimension}."
+        )
+
+    # Optional explicit dimension tags from config files.
+    recon_dim = _normalize_data_dimension(getattr(params, "reconstruction_dimension", None))
+    motion_cfg_dim = _normalize_data_dimension(getattr(params, "motion_simulation_config_dimension", None))
+    if recon_dim is not None and recon_dim != params.data_dimension:
+        raise ValueError(
+            f"Reconstruction config is tagged {recon_dim}, but data_dimension is {params.data_dimension}."
+        )
+    if motion_cfg_dim is not None and motion_cfg_dim != params.data_dimension:
+        raise ValueError(
+            f"Motion simulation config is tagged {motion_cfg_dim}, but data_dimension is {params.data_dimension}."
+        )
+
+    # Shepp-Logan must match declared dimension.
+    if hasattr(params, "Nz_SheppLogan"):
+        nz_dim = "3D" if int(params.Nz_SheppLogan) > 1 else "2D"
+        if nz_dim != params.data_dimension:
+            raise ValueError(
+                f"Shepp-Logan Nz_SheppLogan={int(params.Nz_SheppLogan)} implies {nz_dim}, "
+                f"but data_dimension is {params.data_dimension}."
+            )
 
     manual_states = int(params.N_motion_states)
     if manual_states < 1:
@@ -133,6 +224,7 @@ def load_config(
     sampling_config=None,
     motion_simulation_config=None,
     motion_simulation_type=None,
+    data_dimension=None,
     kspace_sampling_type=None,
     NshotsPerNex=None,
     Nex=None,
@@ -181,6 +273,8 @@ def load_config(
         cfg["kspace_sampling_type"] = kspace_sampling_type
     if motion_simulation_type is not None:
         cfg["motion_simulation_type"] = motion_simulation_type
+    if data_dimension is not None:
+        cfg["data_dimension"] = data_dimension
     if NshotsPerNex is not None:
         cfg["NshotsPerNex"] = int(NshotsPerNex)
     if Nex is not None:
@@ -223,6 +317,10 @@ def load_config(
             raise ValueError(
                 "NshotsPerNex and Nex are required when kspace_sampling_type is specified."
             )
+
+    motion_type_canonical, motion_type_dim = _parse_motion_simulation_type(cfg["motion_simulation_type"])
+    cfg["motion_simulation_type"] = motion_type_canonical
+    cfg["motion_simulation_dimension"] = motion_type_dim
 
     if cfg["motion_simulation_type"] in {"as-it-is", "no-motion-data"}:
         _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)

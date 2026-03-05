@@ -1,4 +1,6 @@
 [reconstruction]
+# Reconstruction data dimensionality tag for compatibility checks.
+reconstruction_dimension = "3D"
 # Motion model used by reconstruction ("rigid" or "non-rigid").
 motion_type = "rigid"
 # Manual number of motion states used for reconstruction.
@@ -25,14 +27,14 @@ cg_use_reg_scale_proxy = true
 cg_reg_scale_num_probes = 8
 
 # Image reconstruction regularization weight.
-lambda_r = 5.0e-2
+lambda_r = 2.0e-1
 # Maximum CG/GN inner iterations for image update.
 max_iter_recon = 160
 # Convergence tolerance for image update.
 tol_recon = 1.0e-3
 
 # Motion reconstruction regularization weight.
-lambda_m = 1.0e-1
+lambda_m = 2.0e-1
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 128
 # Convergence tolerance for motion update.
