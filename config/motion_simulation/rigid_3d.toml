@@ -1,21 +1,30 @@
 [motion]
+# The rigid-motion amplitude values are taken from:
+# Topolnjak et al. Assessment of Subject Head Motion in Diffusion MRI.
+# doi: 10.1117/12.3006633
+# The extreme values are used.
+#
 # Motion simulation data dimensionality tag for compatibility checks.
 motion_simulation_config_dimension = "3D"
-# Motion simulation model used for synthetic corruption.
-motion_simulation_type = "rigid_3d"
+# Motion model type ("rigid" or "non-rigid").
+motion_type = "rigid"
+# Temporal simulation mode: "realistic" (continuous) or "per-shot" (piecewise-constant).
+motion_state_mode = "realistic"
 # Number of smooth motion events across the acquisition.
 num_motion_events = 2
 # Transition duration (in lines) for each motion event (inverse to motion speed).
-motion_tau = 3
-# Translation limits in voxels.
-max_tx_3d = 4.0
-max_ty_3d = 3.0
-max_tz_3d = 2.0
+motion_tau = 10
+# Translation limits in mm (converted to voxels using FoVxy_mm/FoVz_mm).
+max_tx_3d = 3.0
+max_ty_3d = 11.0
+max_tz_3d = 13.0
 # Rotation limits in degrees (x, y, z axes).
-max_rx_3d = 6.0
-max_ry_3d = 6.0
-max_rz_3d = 10.0
-# Rotation-center offsets in voxels.
+max_rx_3d = 6.0 # roll / head tilt
+max_ry_3d = 11.0 # pitch / "yes"
+max_rz_3d = 3.0  # yaw / "no"
+# Rotation-center offsets in mm (converted using FoVxy_mm/FoVz_mm).
+# Head-like pivot assumption: near the upper cervical spine (posterior/inferior
+# relative to the image center), with small/no left-right offset.
 max_center_x_3d = 0.0
-max_center_y_3d = 0.0
-max_center_z_3d = 0.0
+max_center_y_3d = -10.0
+max_center_z_3d = -25.0

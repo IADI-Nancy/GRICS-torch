@@ -1,16 +1,16 @@
 [motion]
 # Motion simulation data dimensionality tag for compatibility checks.
 motion_simulation_config_dimension = "2D"
-# Motion simulation model used for synthetic corruption.
-motion_simulation_type = "nonrigid_2d"
+# Motion model type ("rigid" or "non-rigid").
+motion_type = "non-rigid"
+# Temporal simulation mode: "realistic" (continuous) or "per-shot" (piecewise-constant).
+motion_state_mode = "realistic"
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 2.0
 # Random respiratory cycles over full acquisition duration.
 nonrigid_resp_cycles_min = 6
 nonrigid_resp_cycles_max = 7
 
-# Spatial non-rigid model: "respiratory" (default) or "gaussian" (legacy).
-nonrigid_spatial_model = "respiratory"
 # Inferior activation center in normalized SI coordinates [-1, 1].
 nonrigid_diaphragm_level = 0.2
 # Steepness of inferior activation transition.

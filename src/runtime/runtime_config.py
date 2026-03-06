@@ -35,10 +35,8 @@ _RIGID_MOTION_KEYS = {
 
 _NONRIGID_MOTION_KEYS = {
     "nonrigid_motion_amplitude",
-    "displacementfield_size",
     "nonrigid_resp_cycles_min",
     "nonrigid_resp_cycles_max",
-    "nonrigid_spatial_model",
     "nonrigid_diaphragm_level",
     "nonrigid_diaphragm_sharpness",
     "nonrigid_lateral_sigma",
@@ -56,6 +54,32 @@ _CODE_DEFAULTS = {
     "nonrigid_resp_cycles_max": 5.0,
     "jupyter_notebook_flag": False,
     "runtime_device": "gpu",
+}
+
+
+_MOTION_TYPE_ALIASES = {
+    "rigid": "rigid",
+    "non-rigid": "non-rigid",
+    "non_rigid": "non-rigid",
+    "nonrigid": "non-rigid",
+}
+
+_MOTION_STATE_MODE_ALIASES = {
+    "realistic": "realistic",
+    "per-shot": "per-shot",
+    "per_shot": "per-shot",
+    "discrete": "per-shot",
+    "shotwise": "per-shot",
+    "shot-wise": "per-shot",
+}
+
+_SIM_TYPE_TO_MODEL = {
+    "rigid": ("rigid", "realistic"),
+    "discrete-rigid": ("rigid", "per-shot"),
+    "non-rigid": ("non-rigid", "realistic"),
+    "discrete-non-rigid": ("non-rigid", "per-shot"),
+    "as-it-is": (None, None),
+    "no-motion-data": (None, None),
 }
 
 
@@ -111,6 +135,32 @@ def _parse_motion_simulation_type(raw_type):
     return _MOTION_SIM_ALIASES[key]
 
 
+def _normalize_motion_type(raw_motion_type):
+    key = str(raw_motion_type).strip().lower()
+    if key not in _MOTION_TYPE_ALIASES:
+        raise ValueError(f"Unsupported motion_type: {raw_motion_type}")
+    return _MOTION_TYPE_ALIASES[key]
+
+
+def _normalize_motion_state_mode(raw_mode):
+    key = str(raw_mode).strip().lower()
+    if key not in _MOTION_STATE_MODE_ALIASES:
+        raise ValueError(
+            f"Unsupported motion_state_mode: {raw_mode}. Supported: 'realistic', 'per-shot'."
+        )
+    return _MOTION_STATE_MODE_ALIASES[key]
+
+
+def _simulation_type_from_motion_model(motion_type, motion_state_mode):
+    mtype = _normalize_motion_type(motion_type)
+    mode = _normalize_motion_state_mode(motion_state_mode)
+    if mtype == "rigid":
+        return "rigid" if mode == "realistic" else "discrete-rigid"
+    if mtype == "non-rigid":
+        return "non-rigid" if mode == "realistic" else "discrete-non-rigid"
+    raise ValueError(f"Unsupported motion_type: {motion_type}")
+
+
 def _refresh_derived(params):
     torch.set_default_dtype(torch.float64)
 
@@ -129,12 +179,23 @@ def _refresh_derived(params):
         params.print_to_console = not bool(params.jupyter_notebook_flag)
     if not hasattr(params, "verbose"):
         params.verbose = not bool(params.jupyter_notebook_flag)
+    if not hasattr(params, "kspace_sampling_type"):
+        # Keep loaded-data workflows explicit; synthetic workflows default to linear.
+        if params.data_type in {"real-world", "raw-data"}:
+            params.kspace_sampling_type = "from-data"
+        else:
+            params.kspace_sampling_type = "linear"
 
     has_sampling_sim = hasattr(params, "NshotsPerNex") and hasattr(params, "Nex")
     if has_sampling_sim:
         params.Nshots = int(params.NshotsPerNex) * int(params.Nex)
     elif not hasattr(params, "Nshots"):
         params.Nshots = 1
+
+    params.motion_type = _normalize_motion_type(params.motion_type)
+
+    if hasattr(params, "motion_state_mode"):
+        params.motion_state_mode = _normalize_motion_state_mode(params.motion_state_mode)
 
     if not hasattr(params, "motion_simulation_type"):
         params.motion_simulation_type = "as-it-is"
@@ -156,6 +217,22 @@ def _refresh_derived(params):
         motion_type_dim = existing_motion_dim
     params.motion_simulation_type = motion_type_canonical
     params.motion_simulation_dimension = motion_type_dim
+
+    inferred_motion_type, inferred_mode = _SIM_TYPE_TO_MODEL[params.motion_simulation_type]
+    if inferred_motion_type is not None and inferred_motion_type != params.motion_type:
+        raise ValueError(
+            f"motion_simulation_type '{params.motion_simulation_type}' is incompatible with "
+            f"motion_type '{params.motion_type}'."
+        )
+    if inferred_mode is not None:
+        if getattr(params, "motion_state_mode", None) is not None and params.motion_state_mode != inferred_mode:
+            raise ValueError(
+                f"motion_state_mode='{params.motion_state_mode}' conflicts with "
+                f"motion_simulation_type='{params.motion_simulation_type}'."
+            )
+        params.motion_state_mode = inferred_mode
+    elif not hasattr(params, "motion_state_mode"):
+        params.motion_state_mode = None
 
     if motion_type_dim is not None and motion_type_dim != params.data_dimension:
         raise ValueError(
@@ -224,6 +301,7 @@ def load_config(
     sampling_config=None,
     motion_simulation_config=None,
     motion_simulation_type=None,
+    motion_state_mode=None,
     data_dimension=None,
     kspace_sampling_type=None,
     NshotsPerNex=None,
@@ -273,6 +351,8 @@ def load_config(
         cfg["kspace_sampling_type"] = kspace_sampling_type
     if motion_simulation_type is not None:
         cfg["motion_simulation_type"] = motion_simulation_type
+    if motion_state_mode is not None:
+        cfg["motion_state_mode"] = motion_state_mode
     if data_dimension is not None:
         cfg["data_dimension"] = data_dimension
     if NshotsPerNex is not None:
@@ -299,9 +379,14 @@ def load_config(
             "Provide sampling_config or kspace_sampling_type (+ Nex/NshotsPerNex)."
         )
 
-    if data_type in {"from_image", "from_dicom"} and motion_simulation_config is None and motion_simulation_type is None:
+    if (
+        data_type in {"from_image", "from_dicom"}
+        and motion_simulation_config is None
+        and motion_simulation_type is None
+        and motion_state_mode is None
+    ):
         raise ValueError(
-            "motion_simulation_config (or motion_simulation_type override) is required "
+            "motion_simulation_config (or motion_simulation_type/motion_state_mode override) is required "
             "for data_type='from_image'/'from_dicom'."
         )
 
@@ -309,7 +394,15 @@ def load_config(
     if motion_simulation_type_final is None and sampling_from_data:
         motion_simulation_type_final = "as-it-is"
     elif motion_simulation_type_final is None:
-        motion_simulation_type_final = "no-motion-data"
+        # Synthetic modes are derived from motion_type + motion_state_mode.
+        if motion_simulation_config is None and "motion_state_mode" not in cfg:
+            motion_simulation_type_final = "no-motion-data"
+        else:
+            motion_state_mode_final = cfg.get("motion_state_mode", "realistic")
+            motion_simulation_type_final = _simulation_type_from_motion_model(
+                cfg["motion_type"], motion_state_mode_final
+            )
+            cfg["motion_state_mode"] = _normalize_motion_state_mode(motion_state_mode_final)
     cfg["motion_simulation_type"] = motion_simulation_type_final
 
     if "kspace_sampling_type" in cfg:

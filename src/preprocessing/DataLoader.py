@@ -25,6 +25,16 @@ from src.utils.nonrigid_display import to_cartesian_components
 
 
 class DataLoader:
+    @staticmethod
+    def _to_device_recursive(obj, device):
+        if torch.is_tensor(obj):
+            return obj.to(device)
+        if isinstance(obj, list):
+            return [DataLoader._to_device_recursive(x, device) for x in obj]
+        if isinstance(obj, tuple):
+            return tuple(DataLoader._to_device_recursive(x, device) for x in obj)
+        return obj
+
     def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=0):
         self.params = params
         self.sp_device = sp_device
@@ -72,9 +82,22 @@ class DataLoader:
         smaps_replicated = self.smaps.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
         self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
 
+        motion_sim_device = self.t_device
+        if (
+            self.params.motion_type == "rigid"
+            and self.params.motion_state_mode == "realistic"
+        ):
+            motion_sim_device = torch.device("cpu")
+
         motionSimulator = MotionSimulator(
-            self.image_ground_truth, self.smaps, self.ky_idx, self.nex_idx, self.ky_per_motion,
-            params=self.params, sp_device=self.sp_device, t_device=self.t_device,
+            self._to_device_recursive(self.image_ground_truth, motion_sim_device),
+            self._to_device_recursive(self.smaps, motion_sim_device),
+            self._to_device_recursive(self.ky_idx, motion_sim_device),
+            self._to_device_recursive(self.nex_idx, motion_sim_device),
+            self._to_device_recursive(self.ky_per_motion, motion_sim_device),
+            params=self.params,
+            sp_device=self.sp_device,
+            t_device=motion_sim_device,
         )
         
         if self.params.motion_simulation_type == 'as-it-is':
@@ -87,20 +110,26 @@ class DataLoader:
                 motionSimulator._simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth.clone()
             else:      
-                if self.params.motion_simulation_type == 'discrete-rigid':
-                    motionSimulator._simulate_discrete_rigid_motion()
-                elif self.params.motion_simulation_type == 'rigid':
-                    motionSimulator._simulate_realistic_rigid_motion()
-                elif self.params.motion_simulation_type == 'discrete-non-rigid':
-                    motionSimulator._simulate_discrete_non_rigid_motion()
-                elif self.params.motion_simulation_type == 'non-rigid':
-                    motionSimulator._simulate_realistic_non_rigid_motion()
+                if self.params.motion_type == "rigid":
+                    if self.params.motion_state_mode == "per-shot":
+                        motionSimulator._simulate_discrete_rigid_motion()
+                    elif self.params.motion_state_mode == "realistic":
+                        motionSimulator._simulate_realistic_rigid_motion()
+                    else:
+                        raise ValueError("Unknown motion_state_mode for rigid motion.")
+                elif self.params.motion_type == "non-rigid":
+                    if self.params.motion_state_mode == "per-shot":
+                        motionSimulator._simulate_discrete_non_rigid_motion()
+                    elif self.params.motion_state_mode == "realistic":
+                        motionSimulator._simulate_realistic_non_rigid_motion()
+                    else:
+                        raise ValueError("Unknown motion_state_mode for non-rigid motion.")
                 else:
-                    raise ValueError("Unknown motion_simulation_type")
-                self.kspace = motionSimulator._get_corrupted_kspace()
-                self.image_no_moco = motionSimulator._get_corrupted_image()
+                    raise ValueError("Unknown motion_type")
+                self.kspace = motionSimulator._get_corrupted_kspace().to(self.t_device)
+                self.image_no_moco = motionSimulator._get_corrupted_image().to(self.t_device)
                 if hasattr(motionSimulator, "alpha_maps"):
-                    self.alpha_maps_true = motionSimulator.alpha_maps
+                    self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
 
             motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
             tz = getattr(motionSimulator, "tz", None)
@@ -136,7 +165,7 @@ class DataLoader:
                 "alpha_visual_scale": None,
             }
             if (
-                self.params.motion_simulation_type in {"discrete-non-rigid", "non-rigid"}
+                self.params.motion_type == "non-rigid"
                 and hasattr(self, "alpha_maps_true")
                 and self.alpha_maps_true is not None
             ):
@@ -156,12 +185,12 @@ class DataLoader:
         
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             self.binned_indices, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type  # [Nex][Nmotion]
+            Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data")  # [Nex][Nmotion]
         )
 
         self._save_input_data_artifacts()
 
-        if self.params.debug_flag and self.params.motion_simulation_type in ['discrete-non-rigid', 'rigid', 'discrete-rigid']:
+        if self.params.debug_flag and self._has_simulated_motion():
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
 
     def _normalize_kspace_if_enabled(self):
@@ -211,7 +240,7 @@ class DataLoader:
         if (
             hasattr(self, "alpha_maps_true")
             and self.alpha_maps_true is not None
-            and self.params.motion_simulation_type in {"discrete-non-rigid", "non-rigid"}
+            and self.params.motion_type == "non-rigid"
         ):
             alpha = self.alpha_maps_true
             if alpha.ndim == 3 and alpha.shape[0] >= 2:
@@ -239,12 +268,7 @@ class DataLoader:
                 )
 
     def _has_simulated_motion(self):
-        return self.params.motion_simulation_type in {
-            "rigid",
-            "non-rigid",
-            "discrete-rigid",
-            "discrete-non-rigid",
-        }
+        return self.params.motion_simulation_type not in {"no-motion-data", "as-it-is"}
 
     @staticmethod
     def _normalize_real_image(arr):
@@ -496,7 +520,7 @@ class DataLoader:
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
-        if self.params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
+        if getattr(self.params, "motion_state_mode", None) == "per-shot":
             self.params.N_motion_states = self.params.Nshots
         self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
         self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
@@ -544,7 +568,7 @@ class DataLoader:
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
-        if self.params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
+        if getattr(self.params, "motion_state_mode", None) == "per-shot":
             self.params.N_motion_states = self.params.Nshots
         ky_dx = data['idx_ky'][slice_idx]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
@@ -676,7 +700,7 @@ class DataLoader:
         # This consistency check is meaningful only for simulated non-rigid data.
         if self.params.motion_type != "non-rigid":
             return
-        if self.params.motion_simulation_type not in {"discrete-non-rigid", "non-rigid"}:
+        if not self._has_simulated_motion():
             return
         if not hasattr(motionSimulator, "alpha_maps"):
             return

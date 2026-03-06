@@ -11,7 +11,7 @@ use_scaled_motion_update = true
 # Multi-resolution scale factors (relative to full resolution).
 ResolutionLevels = [0.25, 0.5, 1.0]
 # Number of GN iterations for each resolution level.
-GN_iterations_per_level = [14, 6, 6]
+GN_iterations_per_level = [64, 64, 6]
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true

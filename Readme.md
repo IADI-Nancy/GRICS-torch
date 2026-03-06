@@ -111,7 +111,11 @@ Independent random permutation per `nex`, then split into `NshotsPerNex` chunks.
 
 ## Motion Simulation Modes
 
-Configured with `motion_simulation_type` in `config/motion_simulation/*.toml`.
+Configured with:
+- `motion_type`: `"rigid"` or `"non-rigid"`
+- `motion_state_mode`: `"realistic"` or `"per-shot"`
+
+in `config/motion_simulation/*.toml` (now one file per `{2D,3D} x {rigid,non-rigid}`).
 Implemented in `src/preprocessing/MotionSimulator.py`.
 
 ### `as-it-is`
@@ -122,14 +126,14 @@ No synthetic corruption added. Only valid for `real-world`/`raw-data` (already m
 
 Adds no synthetic corruption and replaces the available motion signal with zeros. Use this if you want to reconstruct with the same algorithm but without motion correction.
 
-### `discrete-rigid`
+### `rigid` + `motion_state_mode = "per-shot"`
 
-Shot-wise states:
+Shot-wise rigid states:
 - one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
 - random `(tx, ty, phi)` per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
 
-### `rigid` (realistic rigid)
+### `rigid` + `motion_state_mode = "realistic"`
 
 Continuous rigid curve over full acquisition:
 - random event times over `Ny * Nex` lines
@@ -139,14 +143,14 @@ Continuous rigid curve over full acquisition:
 
 For corruption, simulation uses one global state per acquired line (`Ny * Nex` states).
 
-### `discrete-non-rigid`
+### `non-rigid` + `motion_state_mode = "per-shot"`
 
 Shot-wise non-rigid with fixed spatial basis maps:
 - displacement field maps `alpha_x`, `alpha_y` simulate respiration
 - one random scalar per shot (`S`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
 - displacement at state `m`: `[ux, uy] = [alpha_x, alpha_y] * S[m]`
 
-### `non-rigid` (realistic respiratory-like)
+### `non-rigid` + `motion_state_mode = "realistic"`
 
 Continuous sinusoidal temporal curve:
 - random phase
@@ -165,9 +169,10 @@ Key points:
 - corruption may be line-wise (`Ny * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
 
 Default state-count rules are set in `runtime_config.refresh_derived(...)`:
-- `discrete-rigid` and `discrete-non-rigid`: `N_motion_states = Nshots`
-- `rigid`: `N_motion_states = num_motion_events + 1`
-- `non-rigid`, `as-it-is` and `no-motion-data`: `N_motion_states` stays the reconstruction config value
+- `motion_state_mode = "per-shot"`: `N_motion_states = Nshots`
+- `motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states = num_motion_events + 1`
+- `motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the reconstruction config value
+- `as-it-is` and `no-motion-data`: `N_motion_states` stays the reconstruction config value
 
 ## Outputs
 

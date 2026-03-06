@@ -89,6 +89,45 @@ class MotionSimulator:
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
 
+    def _translation_limits_px(self):
+        """
+        Convert translation and rotation-center amplitudes from mm (config)
+        to pixels/voxels.
+        x/y use FoVxy_mm, z uses FoVz_mm.
+        """
+        fovxy_mm = float(getattr(self.params, "FoVxy_mm", 250.0))
+        fovz_mm = float(getattr(self.params, "FoVz_mm", 200.0))
+        fovxy_mm = max(fovxy_mm, 1e-12)
+        fovz_mm = max(fovz_mm, 1e-12)
+
+        sx = float(self.Nx) / fovxy_mm
+        sy = float(self.Ny) / fovxy_mm
+        sz = float(self.Nz) / fovz_mm
+
+        max_tx_mm = float(getattr(self.params, "max_tx", 0.0))
+        max_ty_mm = float(getattr(self.params, "max_ty", 0.0))
+        max_tx_3d_mm = float(getattr(self.params, "max_tx_3d", max_tx_mm))
+        max_ty_3d_mm = float(getattr(self.params, "max_ty_3d", max_ty_mm))
+        max_tz_3d_mm = float(getattr(self.params, "max_tz_3d", 0.0))
+        max_center_x_mm = float(getattr(self.params, "max_center_x", 0.0))
+        max_center_y_mm = float(getattr(self.params, "max_center_y", 0.0))
+        max_center_x_3d_mm = float(getattr(self.params, "max_center_x_3d", max_center_x_mm))
+        max_center_y_3d_mm = float(getattr(self.params, "max_center_y_3d", max_center_y_mm))
+        max_center_z_3d_mm = float(getattr(self.params, "max_center_z_3d", 0.0))
+
+        return {
+            "max_tx_px": max_tx_mm * sx,
+            "max_ty_px": max_ty_mm * sy,
+            "max_tx_3d_px": max_tx_3d_mm * sx,
+            "max_ty_3d_px": max_ty_3d_mm * sy,
+            "max_tz_3d_px": max_tz_3d_mm * sz,
+            "max_center_x_px": max_center_x_mm * sx,
+            "max_center_y_px": max_center_y_mm * sy,
+            "max_center_x_3d_px": max_center_x_3d_mm * sx,
+            "max_center_y_3d_px": max_center_y_3d_mm * sy,
+            "max_center_z_3d_px": max_center_z_3d_mm * sz,
+        }
+
     # =============================================================================
     # ================================ NO MOTION ==================================
     # =============================================================================
@@ -150,8 +189,9 @@ class MotionSimulator:
         ).values
 
         # 2) Generate random amplitudes for each event
-        A_tx  = self.params.max_tx  * (2 * torch.rand(n_events, device=self.t_device) - 1)
-        A_ty  = self.params.max_ty  * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        lim = self._translation_limits_px()
+        A_tx  = lim["max_tx_px"]  * (2 * torch.rand(n_events, device=self.t_device) - 1)
+        A_ty  = lim["max_ty_px"]  * (2 * torch.rand(n_events, device=self.t_device) - 1)
         A_phi = self.params.max_phi * (2 * torch.rand(n_events, device=self.t_device) - 1) * (torch.pi/180)
 
         # 3) Build independent motion curves
@@ -213,9 +253,10 @@ class MotionSimulator:
             torch.randint(0, n_states, (n_events,), device=self.t_device)
         ).values
 
-        max_tx_3d = float(getattr(self.params, "max_tx_3d", getattr(self.params, "max_tx", 0.0)))
-        max_ty_3d = float(getattr(self.params, "max_ty_3d", getattr(self.params, "max_ty", 0.0)))
-        max_tz_3d = float(getattr(self.params, "max_tz_3d", 0.0))
+        lim = self._translation_limits_px()
+        max_tx_3d = lim["max_tx_3d_px"]
+        max_ty_3d = lim["max_ty_3d_px"]
+        max_tz_3d = lim["max_tz_3d_px"]
         max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0)))
         max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0)))
         max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0)))
@@ -295,9 +336,10 @@ class MotionSimulator:
             # Keep compatibility with existing plotting/debug interfaces.
             self.phi = self.rz
 
-            max_center_x_3d = float(getattr(self.params, "max_center_x_3d", getattr(self.params, "max_center_x", 0.0)))
-            max_center_y_3d = float(getattr(self.params, "max_center_y_3d", getattr(self.params, "max_center_y", 0.0)))
-            max_center_z_3d = float(getattr(self.params, "max_center_z_3d", 0.0))
+            lim = self._translation_limits_px()
+            max_center_x_3d = lim["max_center_x_3d_px"]
+            max_center_y_3d = lim["max_center_y_3d_px"]
+            max_center_z_3d = lim["max_center_z_3d_px"]
             centers = torch.zeros((3, n_states), device=self.t_device)
             centers[0, :] = self.Nx / 2 + max_center_x_3d * torch.ones(n_states, device=self.t_device)
             centers[1, :] = self.Ny / 2 + max_center_y_3d * torch.ones(n_states, device=self.t_device)
@@ -311,9 +353,10 @@ class MotionSimulator:
             alpha[1, :] = self.ty
             alpha[2, :] = self.phi
 
+            lim = self._translation_limits_px()
             centers = torch.zeros((2, n_states), device=self.t_device)
-            centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(n_states, device=self.t_device)
-            centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.randn(n_states, device=self.t_device)
+            centers[0, :] = self.Nx / 2 + lim["max_center_x_px"] * torch.ones(n_states, device=self.t_device)
+            centers[1, :] = self.Ny / 2 + lim["max_center_y_px"] * torch.randn(n_states, device=self.t_device)
 
         self._apply_motion(alpha, centers)
 
@@ -339,6 +382,15 @@ class MotionSimulator:
         self.ty        = torch.empty(Ny_total, device=self.t_device)
         self.phi       = torch.empty(Ny_total, device=self.t_device)
         self.navigator = torch.empty(Ny_total, device=self.t_device)
+        is_3d_rigid_states = all(
+            hasattr(self, name)
+            for name in ("tz_mot_state", "rx_mot_state", "ry_mot_state", "rz_mot_state")
+        )
+        if is_3d_rigid_states:
+            self.tz = torch.empty(Ny_total, device=self.t_device)
+            self.rx = torch.empty(Ny_total, device=self.t_device)
+            self.ry = torch.empty(Ny_total, device=self.t_device)
+            self.rz = torch.empty(Ny_total, device=self.t_device)
 
         ptr = 0  # write pointer (chronological)
 
@@ -351,6 +403,11 @@ class MotionSimulator:
                 self.ty[ptr:ptr+n]        = self.ty_mot_state[shot_idx]
                 self.phi[ptr:ptr+n]       = self.phi_mot_state[shot_idx]
                 self.navigator[ptr:ptr+n] = self.navigator_mot_state[shot_idx]
+                if is_3d_rigid_states:
+                    self.tz[ptr:ptr+n] = self.tz_mot_state[shot_idx]
+                    self.rx[ptr:ptr+n] = self.rx_mot_state[shot_idx]
+                    self.ry[ptr:ptr+n] = self.ry_mot_state[shot_idx]
+                    self.rz[ptr:ptr+n] = self.rz_mot_state[shot_idx]
 
                 ptr += n
 
@@ -365,9 +422,10 @@ class MotionSimulator:
         if self.Nz > 1:
             alpha = torch.zeros((6, Nshots), device=self.t_device)
 
-            max_tx_3d = float(getattr(self.params, "max_tx_3d", getattr(self.params, "max_tx", 0.0)))
-            max_ty_3d = float(getattr(self.params, "max_ty_3d", getattr(self.params, "max_ty", 0.0)))
-            max_tz_3d = float(getattr(self.params, "max_tz_3d", 0.0))
+            lim = self._translation_limits_px()
+            max_tx_3d = lim["max_tx_3d_px"]
+            max_ty_3d = lim["max_ty_3d_px"]
+            max_tz_3d = lim["max_tz_3d_px"]
             max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0)))
             max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0)))
             max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0)))
@@ -389,9 +447,9 @@ class MotionSimulator:
             # Keep legacy plotting outputs populated.
             self.phi_mot_state = self.rz_mot_state
 
-            max_center_x_3d = float(getattr(self.params, "max_center_x_3d", getattr(self.params, "max_center_x", 0.0)))
-            max_center_y_3d = float(getattr(self.params, "max_center_y_3d", getattr(self.params, "max_center_y", 0.0)))
-            max_center_z_3d = float(getattr(self.params, "max_center_z_3d", 0.0))
+            max_center_x_3d = lim["max_center_x_3d_px"]
+            max_center_y_3d = lim["max_center_y_3d_px"]
+            max_center_z_3d = lim["max_center_z_3d_px"]
             centers = torch.zeros((3, Nshots), device=self.t_device)
             centers[0, :] = self.Nx / 2 + max_center_x_3d * torch.ones(Nshots, device=self.t_device)
             centers[1, :] = self.Ny / 2 + max_center_y_3d * torch.ones(Nshots, device=self.t_device)
@@ -412,11 +470,12 @@ class MotionSimulator:
             alpha = torch.zeros((3, Nshots), device=self.t_device)
 
             # Translation X: [-max_tx, +max_tx]
-            self.tx_mot_state = self.params.max_tx * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            lim = self._translation_limits_px()
+            self.tx_mot_state = lim["max_tx_px"] * (2 * torch.rand(Nshots, device=self.t_device) - 1)
             alpha[0, :] = self.tx_mot_state
 
             # Translation Y: [-max_ty, +max_ty]
-            self.ty_mot_state = self.params.max_ty * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+            self.ty_mot_state = lim["max_ty_px"] * (2 * torch.rand(Nshots, device=self.t_device) - 1)
             alpha[1, :] = self.ty_mot_state
 
             # Rotation: [-max_phi, +max_phi] degrees → radians
@@ -425,8 +484,8 @@ class MotionSimulator:
 
             # Centers
             centers = torch.zeros((2, Nshots), device=self.t_device)
-            centers[0, :] = self.Nx / 2 + self.params.max_center_x * torch.ones(Nshots, device=self.t_device)
-            centers[1, :] = self.Ny / 2 + self.params.max_center_y * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
+            centers[0, :] = self.Nx / 2 + lim["max_center_x_px"] * torch.ones(Nshots, device=self.t_device)
+            centers[1, :] = self.Ny / 2 + lim["max_center_y_px"] * torch.ones(Nshots, device=self.t_device) # torch.rand(Nshots, device=self.t_device)
 
             # Stack motion parameters: (Nshots, 3)
             motion_mat = torch.stack([self.tx_mot_state, self.ty_mot_state, self.phi_mot_state], dim=1)  # (Nshots, 3)
@@ -485,16 +544,7 @@ class MotionSimulator:
     # ---------------------------------------------------------------------------
 
     def _create_discrete_non_rigid_alpha_fields(self):
-        spatial_model = self.params.nonrigid_spatial_model
-        if spatial_model == "gaussian":
-            alpha_x, alpha_y, alpha_maps = self._create_gaussian_non_rigid_alpha_fields()
-        elif spatial_model == "respiratory":
-            alpha_x, alpha_y, alpha_maps = self._create_respiratory_non_rigid_alpha_fields()
-        else:
-            raise ValueError(
-                f"Unknown nonrigid_spatial_model: {spatial_model}. "
-                "Supported: 'respiratory', 'gaussian'."
-            )
+        alpha_x, alpha_y, alpha_maps = self._create_respiratory_non_rigid_alpha_fields()
 
         # Keep synthetic motion region consistent with display orientation:
         # if the image is vertically flipped for display, flip motion maps too.
@@ -503,32 +553,6 @@ class MotionSimulator:
             alpha_y = torch.flip(alpha_y, dims=[0])
             alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
 
-        return alpha_x, alpha_y, alpha_maps
-
-    def _create_gaussian_non_rigid_alpha_fields(self):
-        # Legacy Gaussian field kept as an optional fallback.
-        x = torch.arange(1, self.Nx + 1, device=self.t_device, dtype=torch.float64)
-        y = torch.arange(1, self.Ny + 1, device=self.t_device, dtype=torch.float64)
-        X, Y = torch.meshgrid(x, y, indexing='ij')
-
-        mu_xx = self.Nx / 2.0
-        mu_yy = self.Ny / 2.0
-        mu_yx = self.Nx / 2.0
-        mu_xy = self.Ny / 2.0
-
-        # MATLAB uses sigma = N/4.
-        sigma_x = self.Nx / 4.0
-        sigma_y = self.Ny / 4.0
-
-        alpha_x = (
-            torch.exp(- (X - mu_xx) ** 2 / (2 * sigma_x ** 2))
-            * torch.exp(- (Y - mu_xy) ** 2 / (2 * sigma_y ** 2))
-        )
-        alpha_y = (
-            2 * torch.exp(- (X - mu_yx) ** 2 / (2 * sigma_x ** 2))
-            * torch.exp(- (Y - mu_yy) ** 2 / (2 * sigma_y ** 2))
-        )
-        alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
         return alpha_x, alpha_y, alpha_maps
 
     def _create_respiratory_non_rigid_alpha_fields(self):

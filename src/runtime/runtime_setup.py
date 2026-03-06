@@ -96,16 +96,25 @@ def initialize_runtime(params, print_gpu_info=False):
         except Exception:
             cupy_ok = False
 
-        if not (cupy_ok and torch_cuda_ok):
+        if not torch_cuda_ok:
             warnings.warn(
-                "runtime_device='gpu' requested but GPU is unavailable "
-                "(missing CUDA/CuPy/PyTorch CUDA support). Falling back to CPU.",
+                "runtime_device='gpu' requested but PyTorch CUDA is unavailable. Falling back to CPU.",
                 RuntimeWarning,
             )
             runtime_device = "cpu"
 
     use_gpu = runtime_device == "gpu"
-    sp_device = sp.Device(0) if use_gpu else sp.Device(-1)
+    # SigPy/CuPy can stay on CPU even when Torch runs on CUDA.
+    if use_gpu and cupy_ok:
+        sp_device = sp.Device(0)
+    else:
+        sp_device = sp.Device(-1)
+        if use_gpu and not cupy_ok:
+            warnings.warn(
+                "CuPy/SigPy GPU backend is unavailable; using CPU for SigPy parts and CUDA for PyTorch parts.",
+                RuntimeWarning,
+            )
+
     t_device = torch.device("cuda:0" if use_gpu else "cpu")
     params.runtime_device = runtime_device
 

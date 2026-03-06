@@ -9,3 +9,7 @@ Ncoils_SheppLogan = 4
 Nz_SheppLogan = 64
 # Fraction of the image occupied by the phantom object (<=1). Lower adds more margins.
 SheppLoganFillFraction = 1.0
+# In-plane field-of-view in mm (used to convert simulated translation limits from mm to pixels).
+FoVxy_mm = 220.0
+# Through-plane field-of-view in mm (used to convert z-translation limits from mm to voxels).
+FoVz_mm = 160.0

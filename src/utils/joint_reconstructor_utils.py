@@ -63,9 +63,8 @@ def _init_run_logging(params, n_levels, gn_iters_per_level):
     os.makedirs(params.logs_folder, exist_ok=True)
     log_path = os.path.join(params.logs_folder, "joint_reconstruction.log")
     param_items = {}
-    simulation_param_keys = {"motion_simulation_type", "num_motion_events", "max_tx", "max_ty", "max_phi",
-                             "max_center_x", "max_center_y", "seed", "motion_tau", "nonrigid_motion_amplitude",
-                             "displacementfield_size"}
+    simulation_param_keys = {"motion_simulation_type", "motion_state_mode", "num_motion_events", "max_tx", "max_ty", "max_phi",
+                             "max_center_x", "max_center_y", "seed", "motion_tau", "nonrigid_motion_amplitude"}
     for key in dir(params):
         if key.startswith("_"):
             continue

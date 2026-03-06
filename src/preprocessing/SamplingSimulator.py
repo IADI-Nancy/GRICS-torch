@@ -43,7 +43,7 @@ class SamplingSimulator:
                 shot_in_nex = shot
 
                 # ----- ky selection -----
-                if self.params.kspace_sampling_type == 'linear':
+                if self.params.kspace_sampling_type in {'linear', 'from-data'}:
                     start = shot_in_nex * self.Ny // Nshots
                     end   = (shot_in_nex + 1) * self.Ny // Nshots
                     ky = torch.arange(
@@ -155,7 +155,7 @@ class SamplingSimulator:
                             kz_seq = torch.full_like(ky_seq, kz_val)
                             pair_blocks.append(torch.stack([ky_seq, kz_seq], dim=1))
                         pairs = torch.cat(pair_blocks, dim=0)
-                    elif kspace_sampling_type == "linear":
+                    elif kspace_sampling_type in {"linear", "from-data"}:
                         kz_ord = torch.arange(Nz, device=device, dtype=torch.int64)
                         pairs = torch.cartesian_prod(ky, kz_ord)
                     else:

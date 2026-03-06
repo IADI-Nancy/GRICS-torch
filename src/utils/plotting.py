@@ -18,6 +18,9 @@ def show_and_save_image(
     - a single 2D image, or
     - for 3D volumes, a 1x3 panel of central XY/XZ/YZ planes.
     """
+    if img.ndim == 3 and img.shape[-1] == 1:
+        img = img.squeeze(-1)
+
     if img.ndim == 3 and img.shape[-1] not in (3, 4):
         vol = img.detach().cpu()
         if torch.is_complex(vol):
@@ -51,9 +54,6 @@ def show_and_save_image(
             plt.show()
         plt.close(fig)
         return
-
-    if img.ndim == 3 and img.shape[-1] == 1:
-        img = img.squeeze(-1)
 
     np_img = img.detach().cpu().numpy()
     if np.iscomplexobj(np_img):
