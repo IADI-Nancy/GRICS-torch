@@ -4,6 +4,12 @@ This repository currently contains a 2D MRI reconstruction pipeline with joint i
 
 Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
+## License and Citation
+
+This project is distributed under the MIT License. See `LICENSE` for full terms.
+
+Please cite the GRICS paper [1] if you use this code for your research work.
+
 ## Repository layout
 
 - `src/preprocessing/`: data loading, sampling simulation, motion simulation, motion binning

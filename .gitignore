@@ -14,6 +14,8 @@ bart-*
 .jupyter_local/
 .vscode/*
 !.vscode/settings.json
+latex/
+.conda-latex/
 tests/
 data/*
 !data/demo_motion-free_breast_image.png

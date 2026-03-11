@@ -306,6 +306,7 @@ def load_config(
     kspace_sampling_type=None,
     NshotsPerNex=None,
     Nex=None,
+    N_motion_states=None,
     flip_for_display=None,
     overrides=None,
 ):
@@ -359,6 +360,8 @@ def load_config(
         cfg["NshotsPerNex"] = int(NshotsPerNex)
     if Nex is not None:
         cfg["Nex"] = int(Nex)
+    if N_motion_states is not None:
+        cfg["N_motion_states"] = int(N_motion_states)
     if flip_for_display is not None:
         cfg["flip_for_display"] = bool(flip_for_display)
 

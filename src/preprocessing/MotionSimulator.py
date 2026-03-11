@@ -104,11 +104,15 @@ class MotionSimulator:
         sy = float(self.Ny) / fovxy_mm
         sz = float(self.Nz) / fovz_mm
 
-        max_tx_mm = float(getattr(self.params, "max_tx", 0.0))
-        max_ty_mm = float(getattr(self.params, "max_ty", 0.0))
-        max_tx_3d_mm = float(getattr(self.params, "max_tx_3d", max_tx_mm))
-        max_ty_3d_mm = float(getattr(self.params, "max_ty_3d", max_ty_mm))
-        max_tz_3d_mm = float(getattr(self.params, "max_tz_3d", 0.0))
+        rigid_amp_scale = float(getattr(self.params, "rigid_motion_amplitude_scale", 1.0))
+        if rigid_amp_scale < 0:
+            raise ValueError("rigid_motion_amplitude_scale must be >= 0.")
+
+        max_tx_mm = float(getattr(self.params, "max_tx", 0.0)) * rigid_amp_scale
+        max_ty_mm = float(getattr(self.params, "max_ty", 0.0)) * rigid_amp_scale
+        max_tx_3d_mm = float(getattr(self.params, "max_tx_3d", max_tx_mm)) * rigid_amp_scale
+        max_ty_3d_mm = float(getattr(self.params, "max_ty_3d", max_ty_mm)) * rigid_amp_scale
+        max_tz_3d_mm = float(getattr(self.params, "max_tz_3d", 0.0)) * rigid_amp_scale
         max_center_x_mm = float(getattr(self.params, "max_center_x", 0.0))
         max_center_y_mm = float(getattr(self.params, "max_center_y", 0.0))
         max_center_x_3d_mm = float(getattr(self.params, "max_center_x_3d", max_center_x_mm))
@@ -178,21 +182,28 @@ class MotionSimulator:
         # Time axis: one value per k-space line (Ny)
         t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
         n_events = int(getattr(self.params, "num_motion_events", 3))
-        n_events = max(1, n_events)
+        n_events = max(1, min(n_events, self.Ny * self.params.Nex))
         tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
         tau = max(1, tau)
 
-        # 1) Generate random motion event times over the full acquisition.
+        # 1) Generate unique event times over the full acquisition.
+        # Each event represents a bounded state-to-state change.
         total_lines = self.Ny * self.params.Nex
         event_times = torch.sort(
-            torch.randint(0, total_lines, (n_events,), device=self.t_device)
+            torch.randperm(total_lines, device=self.t_device)[:n_events]
         ).values
 
-        # 2) Generate random amplitudes for each event
+        # 2) Generate random bounded state increments for each event
         lim = self._translation_limits_px()
         A_tx  = lim["max_tx_px"]  * (2 * torch.rand(n_events, device=self.t_device) - 1)
         A_ty  = lim["max_ty_px"]  * (2 * torch.rand(n_events, device=self.t_device) - 1)
-        A_phi = self.params.max_phi * (2 * torch.rand(n_events, device=self.t_device) - 1) * (torch.pi/180)
+        rigid_amp_scale = float(getattr(self.params, "rigid_motion_amplitude_scale", 1.0))
+        A_phi = (
+            float(getattr(self.params, "max_phi", 0.0))
+            * rigid_amp_scale
+            * (2 * torch.rand(n_events, device=self.t_device) - 1)
+            * (torch.pi / 180)
+        )
 
         # 3) Build independent motion curves
         tx  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
@@ -212,7 +223,7 @@ class MotionSimulator:
             if t_end < self.Ny*self.params.Nex:
                 f[t_end:] = 1.0
 
-            # Add motion contribution (same logic as tanh version)
+            # Add bounded increment so config amplitudes act as per-state changes.
             tx  += A_tx[i]  * f
             ty  += A_ty[i]  * f
             phi += A_phi[i] * f
@@ -244,22 +255,24 @@ class MotionSimulator:
         n_states = self.Ny * self.params.Nex
         t = torch.arange(n_states, device=self.t_device, dtype=torch.float64)
         n_events = int(getattr(self.params, "num_motion_events", 3))
-        n_events = max(1, n_events)
+        n_events = max(1, min(n_events, n_states))
         tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
         tau = max(1, tau)
 
-        # Random motion event times over the full acquisition.
+        # Random unique event times over the full acquisition.
+        # Each event applies a bounded state-to-state increment.
         event_times = torch.sort(
-            torch.randint(0, n_states, (n_events,), device=self.t_device)
+            torch.randperm(n_states, device=self.t_device)[:n_events]
         ).values
 
         lim = self._translation_limits_px()
         max_tx_3d = lim["max_tx_3d_px"]
         max_ty_3d = lim["max_ty_3d_px"]
         max_tz_3d = lim["max_tz_3d_px"]
-        max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0)))
-        max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0)))
-        max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0)))
+        rigid_amp_scale = float(getattr(self.params, "rigid_motion_amplitude_scale", 1.0))
+        max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0))) * rigid_amp_scale
+        max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0))) * rigid_amp_scale
+        max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0))) * rigid_amp_scale
 
         A_tx = max_tx_3d * (2 * torch.rand(n_events, device=self.t_device) - 1)
         A_ty = max_ty_3d * (2 * torch.rand(n_events, device=self.t_device) - 1)
@@ -426,9 +439,10 @@ class MotionSimulator:
             max_tx_3d = lim["max_tx_3d_px"]
             max_ty_3d = lim["max_ty_3d_px"]
             max_tz_3d = lim["max_tz_3d_px"]
-            max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0)))
-            max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0)))
-            max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0)))
+            rigid_amp_scale = float(getattr(self.params, "rigid_motion_amplitude_scale", 1.0))
+            max_rx_3d = float(getattr(self.params, "max_rx_3d", getattr(self.params, "max_phi", 0.0))) * rigid_amp_scale
+            max_ry_3d = float(getattr(self.params, "max_ry_3d", getattr(self.params, "max_phi", 0.0))) * rigid_amp_scale
+            max_rz_3d = float(getattr(self.params, "max_rz_3d", getattr(self.params, "max_phi", 0.0))) * rigid_amp_scale
 
             self.tx_mot_state = max_tx_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1)
             self.ty_mot_state = max_ty_3d * (2 * torch.rand(Nshots, device=self.t_device) - 1)
@@ -479,7 +493,13 @@ class MotionSimulator:
             alpha[1, :] = self.ty_mot_state
 
             # Rotation: [-max_phi, +max_phi] degrees → radians
-            self.phi_mot_state = self.params.max_phi * (2 * torch.rand(Nshots, device=self.t_device) - 1) * (torch.pi / 180)
+            rigid_amp_scale = float(getattr(self.params, "rigid_motion_amplitude_scale", 1.0))
+            self.phi_mot_state = (
+                float(getattr(self.params, "max_phi", 0.0))
+                * rigid_amp_scale
+                * (2 * torch.rand(Nshots, device=self.t_device) - 1)
+                * (torch.pi / 180)
+            )
             alpha[2, :] = self.phi_mot_state
 
             # Centers

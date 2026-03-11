@@ -18,7 +18,7 @@ cg_early_stopping = true
 # Iteration interval for recomputing the true residual in CG.
 cg_true_residual_interval = 10
 # Allowed consecutive stagnating CG steps.
-cg_max_stag_steps = 8
+cg_max_stag_steps = 12
 # Extra CG steps after the first stopping criterion is met.
 cg_max_more_steps = 6
 # Estimate regularization scaling internally from probes.
@@ -27,14 +27,14 @@ cg_use_reg_scale_proxy = true
 cg_reg_scale_num_probes = 8
 
 # Image reconstruction regularization weight.
-lambda_r = 2.0e-1
+lambda_r = 0.1
 # Maximum CG/GN inner iterations for image update.
 max_iter_recon = 160
 # Convergence tolerance for image update.
 tol_recon = 1.0e-3
 
 # Motion reconstruction regularization weight.
-lambda_m = 2.0e-1
+lambda_m = 0.1
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 128
 # Convergence tolerance for motion update.

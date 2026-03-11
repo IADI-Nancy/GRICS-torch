@@ -8,5 +8,30 @@
     "NUMBA_CACHE_DIR": "/tmp/numba_cache"
   },
   "python-envs.defaultEnvManager": "ms-python.python:conda",
-  "python-envs.defaultPackageManager": "ms-python.python:conda"
+  "python-envs.defaultPackageManager": "ms-python.python:conda",
+  "latex-workshop.latex.tools": [
+    {
+      "name": "tectonic",
+      "command": "${workspaceFolder}/.conda-latex/bin/tectonic",
+      "args": [
+        "-X",
+        "compile",
+        "--synctex",
+        "--keep-logs",
+        "--keep-intermediates",
+        "-o",
+        "%OUTDIR%",
+        "%DOC%"
+      ]
+    }
+  ],
+  "latex-workshop.latex.recipes": [
+    {
+      "name": "tectonic",
+      "tools": [
+        "tectonic"
+      ]
+    }
+  ],
+  "latex-workshop.latex.recipe.default": "first"
 }

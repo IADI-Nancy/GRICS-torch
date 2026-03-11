@@ -2,7 +2,8 @@
 # The rigid-motion amplitude values are taken from:
 # Topolnjak et al. Assessment of Subject Head Motion in Diffusion MRI.
 # doi: 10.1117/12.3006633
-# The extreme values are used.
+# The used values are rigid_motion_amplitude_scale * median values. The extreme values are provided in the code comments for reference,
+# but not used in the current config (a careful selection of motion parameters is required to ensure successful reconstruction)
 #
 # Motion simulation data dimensionality tag for compatibility checks.
 motion_simulation_config_dimension = "3D"
@@ -14,14 +15,17 @@ motion_state_mode = "realistic"
 num_motion_events = 2
 # Transition duration (in lines) for each motion event (inverse to motion speed).
 motion_tau = 10
+# Global scale factor for rigid-motion amplitudes.
+# 1.0 = reference values, 2.0 = double motion, 3.0 = triple motion, etc.
+rigid_motion_amplitude_scale = 2.0
 # Translation limits in mm (converted to voxels using FoVxy_mm/FoVz_mm).
-max_tx_3d = 3.0
-max_ty_3d = 11.0
-max_tz_3d = 13.0
+max_tx_3d = 0.165 # 3.0
+max_ty_3d = 1.867 # 11.0
+max_tz_3d = 0.347 # 13.0
 # Rotation limits in degrees (x, y, z axes).
-max_rx_3d = 6.0 # roll / head tilt
-max_ry_3d = 11.0 # pitch / "yes"
-max_rz_3d = 3.0  # yaw / "no"
+max_rx_3d = 0.219 # 7.6 # roll / head tilt / around AP axis
+max_ry_3d = 0.378 # 11.0 # pitch / "yes" / around RL axis
+max_rz_3d = 0.190 # 3.0  # yaw / "no" / around SI axis
 # Rotation-center offsets in mm (converted using FoVxy_mm/FoVz_mm).
 # Head-like pivot assumption: near the upper cervical spine (posterior/inferior
 # relative to the image center), with small/no left-right offset.
