@@ -33,7 +33,7 @@ max_iter_recon = 96
 tol_recon = 1.0e-3
 
 # Motion reconstruction regularization weight.
-lambda_m = 10.0
+lambda_m = 100.0
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 64
 # Convergence tolerance for motion update.

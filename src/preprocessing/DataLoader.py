@@ -504,15 +504,24 @@ class DataLoader:
         reader = RawDataReader(ismrmrd_file=path_to_ismrm, saec_file=path_to_saec, sensor_type="BELT", device="cuda")
         data = reader._read_data_from_rawdata()
 
-        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
+        kspace_np = data['kspace']
+        is_3d = self.params.data_dimension == "3D"
+        if is_3d:
+            # 3D acquisition: keep all kz partitions for volumetric reconstruction.
+            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)
+        else:
+            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
         if getattr(self.params, "motion_state_mode", None) == "per-shot":
             self.params.N_motion_states = self.params.Nshots
-        self.ky_idx = torch.from_numpy(data['idx_ky'][slice_idx]).to(self.t_device, dtype=torch.int64)
-        self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device)
-        motion_data = data['motion_data'][slice_idx, :]
+        # For 3D, ky/nex/motion indices are the same across all kz partitions;
+        # use partition 0 as the representative ordering.
+        z_sel = 0 if is_3d else slice_idx
+        self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
+        self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
+        motion_data = data['motion_data'][z_sel, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         y_limits = compute_motion_y_limits(motion_data)
         (
@@ -552,16 +561,24 @@ class DataLoader:
             data['idx_nex'] = f['idx_nex'][:]
             data['kspace'] = f['kspace'][:]
 
-        self.kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
+        kspace_np = data['kspace']
+        is_3d = self.params.data_dimension == "3D"
+        if is_3d:
+            # 3D acquisition: keep all kz partitions for volumetric reconstruction.
+            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)
+        else:
+            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
         if getattr(self.params, "motion_state_mode", None) == "per-shot":
             self.params.N_motion_states = self.params.Nshots
-        ky_dx = data['idx_ky'][slice_idx]
+        # For 3D, ky/nex/motion indices are shared across kz partitions.
+        z_sel = 0 if is_3d else slice_idx
+        ky_dx = data['idx_ky'][z_sel]
         self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
-        self.nex_idx = torch.zeros_like(self.ky_idx, device=self.t_device) # TODO Add multiple Nex
-        motion_data = data['motion_data'][slice_idx, :]
+        self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
+        motion_data = data['motion_data'][z_sel, :]
         motion_data = torch.from_numpy(motion_data).to(self.t_device)
         y_limits = compute_motion_y_limits(motion_data)
         (
@@ -606,6 +623,13 @@ class DataLoader:
 
         Ncha, _, Nx, Ny, Nz = kspace.shape
 
+        # For measured data, calibrate maps from all repeats to avoid unstable
+        # Nex-specific map estimates that can look noise-like in recon outputs.
+        if self.params.data_type in {"real-world", "raw-data"} and kspace.shape[1] > 1:
+            kspace_calib = torch.mean(kspace, dim=1)
+        else:
+            kspace_calib = kspace[:, 0]
+
         # Bound calibration settings by actual data size to avoid oversized
         # calibration matrices and excessive memory usage.
         if Nz > 1:
@@ -622,7 +646,7 @@ class DataLoader:
 
                 try:
                     # Use complex64 for calibration to reduce temporary GPU memory.
-                    kspace_cp = cp.asarray(kspace[:, 0, :, :, :].contiguous(), dtype=cp.complex64)
+                    kspace_cp = cp.asarray(kspace_calib[:, :, :, :].contiguous(), dtype=cp.complex64)
                     maps_cp = spmri.app.EspiritCalib(
                         kspace_cp,
                         calib_width=calib_width_eff,
@@ -640,7 +664,7 @@ class DataLoader:
                     cp.get_default_pinned_memory_pool().free_all_blocks()
                     torch.cuda.empty_cache()
 
-                    kspace_np = kspace[:, 0, :, :, :].detach().cpu().numpy().astype(np.complex64, copy=False)
+                    kspace_np = kspace_calib[:, :, :, :].detach().cpu().numpy().astype(np.complex64, copy=False)
                     maps_np = spmri.app.EspiritCalib(
                         kspace_np,
                         calib_width=calib_width_eff,
@@ -658,7 +682,7 @@ class DataLoader:
 
             # ---- CPU path ----
             else:
-                kspace_np = kspace[:, 0, :, :, :].cpu().numpy().astype(np.complex64, copy=False)
+                kspace_np = kspace_calib[:, :, :, :].cpu().numpy().astype(np.complex64, copy=False)
                 maps_np = spmri.app.EspiritCalib(
                     kspace_np,
                     calib_width=calib_width_eff,
@@ -679,7 +703,7 @@ class DataLoader:
             if use_gpu:
                 import cupy as cp
 
-                kspace_cp = cp.asarray(kspace[:, 0, :, :, z].contiguous(), dtype=cp.complex64)
+                kspace_cp = cp.asarray(kspace_calib[:, :, :, z].contiguous(), dtype=cp.complex64)
                 maps_cp = spmri.app.EspiritCalib(
                     kspace_cp,
                     calib_width=calib_width_eff,
@@ -691,7 +715,7 @@ class DataLoader:
                 maps_cp = cp.ascontiguousarray(maps_cp)
                 maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
             else:
-                kspace_np = kspace[:, 0, :, :, z].cpu().numpy().astype(np.complex64, copy=False)
+                kspace_np = kspace_calib[:, :, :, z].cpu().numpy().astype(np.complex64, copy=False)
                 maps_np = spmri.app.EspiritCalib(
                     kspace_np,
                     calib_width=calib_width_eff,

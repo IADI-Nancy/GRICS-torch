@@ -207,10 +207,17 @@ def _refresh_derived(params):
     # Infer/normalize global data dimension.
     data_dim_raw = getattr(params, "data_dimension", None)
     inferred_dim = None
+    recon_dim = _normalize_data_dimension(getattr(params, "reconstruction_dimension", None))
     if hasattr(params, "Nz_SheppLogan"):
         inferred_dim = "3D" if int(params.Nz_SheppLogan) > 1 else "2D"
     if data_dim_raw is None:
-        params.data_dimension = inferred_dim if inferred_dim is not None else "2D"
+        # Prefer explicit/inferred dimensions from loaded configs before fallback.
+        if inferred_dim is not None:
+            params.data_dimension = inferred_dim
+        elif recon_dim is not None:
+            params.data_dimension = recon_dim
+        else:
+            params.data_dimension = "2D"
     else:
         params.data_dimension = _normalize_data_dimension(data_dim_raw)
 
