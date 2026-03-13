@@ -1,10 +1,7 @@
 import os
 import torch
 
-from src.utils.plotting import (
-    save_alpha_component_map, save_nonrigid_quiver_with_contours, save_residual_subplots,
-)
-from src.utils.nonrigid_display import to_cartesian_components
+from src.utils.plotting import save_nonrigid_alpha_plots, save_residual_subplots
 
 
 def _format_cg_info(cg_info):
@@ -126,33 +123,11 @@ def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, 
         return
 
     alpha = Data_res["MotionModel"]
-    if alpha.ndim != 3 or alpha.shape[0] < 2:
+    if alpha.ndim not in (3, 4) or alpha.shape[0] < 2:
         return
 
-    os.makedirs(debug_folder, exist_ok=True)
-
-    alpha_x = alpha[0].detach().cpu()
-    alpha_y = alpha[1].detach().cpu()
-    alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
-
-    if torch.is_complex(alpha_x) or torch.is_complex(alpha_y):
-        components = (("alpha_x_real", alpha_x_cart.real), ("alpha_y_real", alpha_y_cart.real),
-                      ("alpha_x_imag", alpha_x_cart.imag), ("alpha_y_imag", alpha_y_cart.imag))
-        alpha_x_for_quiver = alpha_x.real
-        alpha_y_for_quiver = alpha_y.real
-    else:
-        components = (("alpha_x", alpha_x_cart), ("alpha_y", alpha_y_cart))
-        alpha_x_for_quiver = alpha_x
-        alpha_y_for_quiver = alpha_y
-
-    for comp_name, comp in components:
-        save_alpha_component_map(comp, f"{comp_name} level {level_idx}",
-                                 os.path.join(debug_folder, f"{comp_name}_level{level_idx}.png"),
-                                 flip_vertical=flip_for_display)
-
-    save_nonrigid_quiver_with_contours(
-        alpha_x_for_quiver, alpha_y_for_quiver, Data_res["ReconstructedImage"][0],
-        f"motion field level {level_idx}",
-        os.path.join(debug_folder, f"motion_quiver_level{level_idx}.png"),
+    save_nonrigid_alpha_plots(
+        alpha, Data_res["ReconstructedImage"][0],
+        f"level{level_idx}", debug_folder,
         flip_vertical=flip_for_display,
     )

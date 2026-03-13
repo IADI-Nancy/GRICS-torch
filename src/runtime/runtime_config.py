@@ -40,7 +40,11 @@ _NONRIGID_MOTION_KEYS = {
     "nonrigid_diaphragm_level",
     "nonrigid_diaphragm_sharpness",
     "nonrigid_lateral_sigma",
+    "nonrigid_lateral_sigma_lr",
+    "nonrigid_lateral_sigma_ap",
     "nonrigid_ap_fraction",
+    "nonrigid_lr_fraction",
+    "nonrigid_anterior_bias",
     "nonrigid_inferior_gain",
     "nonrigid_top_decay",
 }

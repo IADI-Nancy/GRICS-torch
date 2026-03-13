@@ -300,9 +300,14 @@ class JointReconstructor:
         x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=residual.device)
 
         if self.params.motion_type == "non-rigid":
+            reg_shape = (
+                (self.Nalpha, Data_res["Nx"], Data_res["Ny"], int(Data_res.get("Nz", 1)))
+                if int(Data_res.get("Nz", 1)) > 1
+                else (self.Nalpha, Data_res["Nx"], Data_res["Ny"])
+            )
             solver = ConjugateGradientSolver(
                 J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov_gradient",
-                regularization_shape=(self.Nalpha, Data_res["Nx"], Data_res["Ny"]), verbose=self.params.verbose,
+                regularization_shape=reg_shape, verbose=self.params.verbose,
                 early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
                 max_stag_steps=self.params.cg_max_stag_steps, max_more_steps=self.params.cg_max_more_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=self.params.cg_reg_scale_num_probes,

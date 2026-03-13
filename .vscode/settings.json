@@ -1,4 +1,5 @@
 {
+  "python.defaultInterpreterPath": "/opt/conda/envs/environment_grics/bin/python",
   "python.envFile": "${workspaceFolder}/.env",
   "terminal.integrated.env.linux": {
     "JUPYTER_CONFIG_DIR": "${workspaceFolder}/.jupyter_local/config",

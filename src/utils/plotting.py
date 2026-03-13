@@ -161,6 +161,163 @@ def save_nonrigid_quiver_with_contours(
     plt.close(fig)
 
 
+_ORIENT_LABELS = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
+
+
+def _extract_3d_central_slices(vol):
+    """Return 3 central 2D slices from a 3D tensor (Nx, Ny, Nz)."""
+    ix = vol.shape[0] // 2
+    iy = vol.shape[1] // 2
+    iz = vol.shape[2] // 2
+    return [vol[:, :, iz], vol[:, iy, :], vol[ix, :, :]]
+
+
+def save_alpha_component_map_3d(comp_3d, title, out_path, flip_vertical=True, abs_max=None):
+    """Save a 1×3 panel of central axial/coronal/sagittal slices for one alpha component."""
+    comp_3d = comp_3d.detach().cpu()
+
+    vmax = float(abs_max) if abs_max is not None else torch.max(torch.abs(comp_3d)).item()
+    if vmax <= 0:
+        vmax = 1e-12
+    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+
+    planes = _extract_3d_central_slices(comp_3d)
+    if flip_vertical:
+        planes = [torch.flip(p, dims=[0]) for p in planes]
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    for j in range(3):
+        ax = axes[j]
+        im = ax.imshow(planes[j].numpy(), cmap="bwr", norm=norm, origin="upper")
+        ax.set_title(f"{title} | {_ORIENT_LABELS[j]}")
+        ax.axis("off")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+
+
+def save_nonrigid_quiver_with_contours_3d(
+    alpha_axis0_3d,
+    alpha_axis1_3d,
+    image_3d,
+    title,
+    out_path,
+    flip_vertical=True,
+    amp_vmax=None,
+):
+    """Save a 1×3 panel of central-slice quiver+contour plots for 3D non-rigid motion."""
+    alpha_axis0_3d = alpha_axis0_3d.detach().cpu()
+    alpha_axis1_3d = alpha_axis1_3d.detach().cpu()
+    img = image_3d.detach().cpu()
+    if img.is_complex():
+        img = img.abs()
+
+    a0_slices = _extract_3d_central_slices(alpha_axis0_3d)
+    a1_slices = _extract_3d_central_slices(alpha_axis1_3d)
+    img_slices = _extract_3d_central_slices(img)
+
+    if flip_vertical:
+        a0_slices = [torch.flip(p, dims=[0]) for p in a0_slices]
+        a1_slices = [torch.flip(p, dims=[0]) for p in a1_slices]
+        img_slices = [torch.flip(p, dims=[0]) for p in img_slices]
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    for j in range(3):
+        ax = axes[j]
+        a0, a1, im_s = a0_slices[j], a1_slices[j], img_slices[j]
+        nx, ny = a0.shape
+        step = max(1, min(nx, ny) // 32)
+        yy, xx = torch.meshgrid(torch.arange(nx), torch.arange(ny), indexing="ij")
+        xx_s = xx[::step, ::step].numpy()
+        yy_s = yy[::step, ::step].numpy()
+        ux = (-a1[::step, ::step]).numpy()
+        uy = (a0[::step, ::step]).numpy()
+        amp = torch.sqrt(a0 * a0 + a1 * a1)[::step, ::step].numpy()
+        img_np = im_s.numpy()
+
+        ax.set_facecolor("white")
+        qnorm = None
+        if amp_vmax is not None:
+            qnorm = Normalize(vmin=0.0, vmax=float(amp_vmax))
+        q = ax.quiver(xx_s, yy_s, ux, uy, amp, cmap="cividis_r", norm=qnorm,
+                       angles="xy", scale_units="xy", scale=None)
+        ax.contour(torch.arange(ny).numpy(), torch.arange(nx).numpy(), img_np,
+                   levels=8, colors="k", linewidths=0.7, alpha=0.8)
+        ax.set_aspect("equal")
+        ax.set_xlim(-0.5, ny - 0.5)
+        ax.set_ylim(nx - 0.5, -0.5)
+        ax.set_title(f"{title} | {_ORIENT_LABELS[j]}")
+        fig.colorbar(q, ax=ax, label="|u|")
+
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+
+
+def save_nonrigid_alpha_plots(
+    alpha_maps, image, base_name, folder, flip_vertical=True,
+    abs_max_x=None, abs_max_y=None, amp_max=None,
+):
+    """
+    Unified save for non-rigid alpha maps.
+    2D (ndim==3): one figure per component + quiver.
+    3D (ndim==4): 1×3 panel per component + quiver (axial/coronal/sagittal).
+    """
+    from src.utils.nonrigid_display import to_cartesian_components, split_nonrigid_alpha_components
+
+    os.makedirs(folder, exist_ok=True)
+    alpha_x, alpha_y, alpha_z = split_nonrigid_alpha_components(alpha_maps)
+
+    alpha_axis0 = alpha_x.real if torch.is_complex(alpha_x) else alpha_x
+    alpha_axis1 = alpha_y.real if torch.is_complex(alpha_y) else alpha_y
+    alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_axis0, alpha_axis1)
+
+    is_3d = alpha_maps.ndim == 4
+
+    if is_3d:
+        save_alpha_component_map_3d(
+            alpha_x_cart, f"{base_name}_alpha_x",
+            os.path.join(folder, f"{base_name}_alpha_x.png"),
+            flip_vertical=flip_vertical, abs_max=abs_max_x,
+        )
+        save_alpha_component_map_3d(
+            alpha_y_cart, f"{base_name}_alpha_y",
+            os.path.join(folder, f"{base_name}_alpha_y.png"),
+            flip_vertical=flip_vertical, abs_max=abs_max_y,
+        )
+        if alpha_z is not None:
+            save_alpha_component_map_3d(
+                alpha_z, f"{base_name}_alpha_z",
+                os.path.join(folder, f"{base_name}_alpha_z.png"),
+                flip_vertical=flip_vertical,
+            )
+        save_nonrigid_quiver_with_contours_3d(
+            alpha_axis0, alpha_axis1, image,
+            f"{base_name}_quiver",
+            os.path.join(folder, f"{base_name}_quiver.png"),
+            flip_vertical=flip_vertical, amp_vmax=amp_max,
+        )
+    else:
+        save_alpha_component_map(
+            alpha_x_cart, f"{base_name}_alpha_x",
+            os.path.join(folder, f"{base_name}_alpha_x.png"),
+            flip_vertical=flip_vertical, abs_max=abs_max_x,
+        )
+        save_alpha_component_map(
+            alpha_y_cart, f"{base_name}_alpha_y",
+            os.path.join(folder, f"{base_name}_alpha_y.png"),
+            flip_vertical=flip_vertical, abs_max=abs_max_y,
+        )
+        save_nonrigid_quiver_with_contours(
+            alpha_axis0, alpha_axis1, image,
+            f"{base_name}_quiver",
+            os.path.join(folder, f"{base_name}_quiver.png"),
+            flip_vertical=flip_vertical, amp_vmax=amp_max,
+        )
+
+
 def _add_mesh(ax):
     ax.minorticks_on()
     ax.grid(which="major", linestyle="-", linewidth=0.6, alpha=0.45)

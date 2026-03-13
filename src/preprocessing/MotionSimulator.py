@@ -7,9 +7,13 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.utils.plotting import (
-    save_alpha_component_map, save_nonrigid_quiver_with_contours, save_motion_debug_plots,
+    save_motion_debug_plots, save_nonrigid_alpha_plots,
 )
-from src.utils.nonrigid_display import to_cartesian_components
+from src.utils.nonrigid_display import (
+    to_cartesian_components,
+    flip_nonrigid_alpha_for_display,
+    split_nonrigid_alpha_components,
+)
 
 class MotionSimulator:
     def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, params, sp_device=None, t_device=None):
@@ -564,42 +568,76 @@ class MotionSimulator:
     # ---------------------------------------------------------------------------
 
     def _create_discrete_non_rigid_alpha_fields(self):
-        alpha_x, alpha_y, alpha_maps = self._create_respiratory_non_rigid_alpha_fields()
-
-        # Keep synthetic motion region consistent with display orientation:
-        # if the image is vertically flipped for display, flip motion maps too.
-        if self.params.flip_for_display:
-            alpha_x = torch.flip(alpha_x, dims=[0])
-            alpha_y = torch.flip(alpha_y, dims=[0])
-            alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
-
-        return alpha_x, alpha_y, alpha_maps
+        _, _, alpha_maps = self._create_respiratory_non_rigid_alpha_fields()
+        alpha_maps = flip_nonrigid_alpha_for_display(alpha_maps, self.params.flip_for_display)
+        return alpha_maps
 
     def _create_respiratory_non_rigid_alpha_fields(self):
-        # Respiration-like 2D field:
-        # - dominant superior-inferior displacement near inferior (diaphragm-like) region
-        # - weaker left-right component with opposite direction across the midline
+        # Respiration-like non-rigid field with 2D and 3D support.
+        # Axis convention used by MotionOperator:
+        # - alpha[0] -> displacement along axis 0 (SI-like)
+        # - alpha[1] -> displacement along axis 1 (LR-like)
+        # - alpha[2] -> displacement along axis 2 (AP-like, 3D only)
         x = torch.linspace(-1.0, 1.0, self.Nx, device=self.t_device, dtype=torch.float64)
         y = torch.linspace(-1.0, 1.0, self.Ny, device=self.t_device, dtype=torch.float64)
-        SI, LR = torch.meshgrid(x, y, indexing="ij")
 
         diaphragm_level = float(self.params.nonrigid_diaphragm_level)
         diaphragm_sharpness = float(self.params.nonrigid_diaphragm_sharpness)
-        lateral_sigma = float(self.params.nonrigid_lateral_sigma)
-        ap_fraction = float(self.params.nonrigid_ap_fraction)
         inferior_gain = float(self.params.nonrigid_inferior_gain)
         top_decay = float(self.params.nonrigid_top_decay)
 
-        # Smooth mask that activates motion predominantly in the upper anatomy.
-        region_mask = torch.sigmoid((-SI - diaphragm_level) * diaphragm_sharpness)
-        # Concentrate motion near the central body region laterally.
-        lateral_envelope = torch.exp(-0.5 * (LR / max(lateral_sigma, 1e-6)) ** 2)
+        # Per-axis envelope sigmas (fall back to legacy single sigma).
+        _legacy_sigma = float(getattr(self.params, "nonrigid_lateral_sigma", 0.35))
+        sigma_lr = max(float(getattr(self.params, "nonrigid_lateral_sigma_lr",
+                                     _legacy_sigma)), 1e-6)
+        sigma_ap = max(float(getattr(self.params, "nonrigid_lateral_sigma_ap",
+                                     _legacy_sigma)), 1e-6)
 
-        # Convention in this codebase:
-        # alpha[0] -> Ux -> displacement along axis 0 (rows, SI-like direction)
-        # alpha[1] -> Uy -> displacement along axis 1 (cols, LR-like direction)
-        # We keep SI in alpha_x and use a negative sign so simulated respiratory
-        # motion direction is inverted (as requested) without changing display logic.
+        # Per-axis displacement fractions relative to SI.
+        _legacy_frac = float(getattr(self.params, "nonrigid_ap_fraction", 0.2))
+        lr_fraction = float(getattr(self.params, "nonrigid_lr_fraction", _legacy_frac))
+        ap_fraction = float(getattr(self.params, "nonrigid_ap_fraction", _legacy_frac))
+
+        # Anterior bias: 0 = symmetric, 1 = fully anterior (supine table).
+        anterior_bias = float(getattr(self.params, "nonrigid_anterior_bias", 0.0))
+
+        if self.Nz > 1:
+            z = torch.linspace(-1.0, 1.0, self.Nz, device=self.t_device, dtype=torch.float64)
+            SI, LR, AP = torch.meshgrid(x, y, z, indexing="ij")
+
+            region_mask = torch.sigmoid((-SI - diaphragm_level) * diaphragm_sharpness)
+            lateral_envelope = torch.exp(
+                -0.5 * ((LR / sigma_lr) ** 2 + (AP / sigma_ap) ** 2)
+            )
+
+            # Suppress posterior motion (AP < 0 in supine = posterior / table side).
+            # anterior_weight ranges from (1 - bias) at AP=-1 to 1.0 at AP=+1.
+            anterior_weight = 1.0 - anterior_bias * 0.5 * (1.0 - AP)
+
+            top_coord = torch.clamp(-SI, min=0.0)
+            top_taper = torch.clamp(1.0 - top_decay * top_coord, min=0.05)
+            region_gain = top_taper * (1.0 + inferior_gain * torch.clamp(-SI, min=0.0))
+
+            si_profile = region_mask * lateral_envelope * region_gain * anterior_weight
+            si_profile = si_profile / torch.clamp(torch.max(torch.abs(si_profile)), min=1e-12)
+            alpha_x = -si_profile
+
+            lr_profile = -LR * region_mask * lateral_envelope * anterior_weight
+            lr_profile = lr_profile / torch.clamp(torch.max(torch.abs(lr_profile)), min=1e-12)
+            alpha_y = lr_fraction * lr_profile
+
+            ap_profile = -AP * region_mask * lateral_envelope * anterior_weight
+            ap_profile = ap_profile / torch.clamp(torch.max(torch.abs(ap_profile)), min=1e-12)
+            alpha_z = ap_fraction * ap_profile
+
+            alpha_maps = torch.stack([alpha_x, alpha_y, alpha_z], dim=0)
+            return alpha_x, alpha_y, alpha_maps
+
+        SI, LR = torch.meshgrid(x, y, indexing="ij")
+
+        region_mask = torch.sigmoid((-SI - diaphragm_level) * diaphragm_sharpness)
+        lateral_envelope = torch.exp(-0.5 * (LR / sigma_lr) ** 2)
+
         top_coord = torch.clamp(-SI, min=0.0)
         top_taper = torch.clamp(1.0 - top_decay * top_coord, min=0.05)
         region_gain = top_taper * (1.0 + inferior_gain * torch.clamp(-SI, min=0.0))
@@ -607,10 +645,9 @@ class MotionSimulator:
         si_profile = si_profile / torch.clamp(torch.max(torch.abs(si_profile)), min=1e-12)
         alpha_x = -si_profile
 
-        # Weaker LR displacement: opposite directions on left/right sides.
         lr_profile = -LR * region_mask * lateral_envelope
         lr_profile = lr_profile / torch.clamp(torch.max(torch.abs(lr_profile)), min=1e-12)
-        alpha_y = ap_fraction * lr_profile
+        alpha_y = lr_fraction * lr_profile
 
         alpha_maps = torch.stack([alpha_x, alpha_y], dim=0)
         return alpha_x, alpha_y, alpha_maps
@@ -629,8 +666,13 @@ class MotionSimulator:
         )
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
-        # Total number of motion states across all Nex acquisitions.
-        Nshots = sum(len(shot_list) for shot_list in ky_per_mot_state_idx)
+        # Number of shot states per Nex (shared state index across Nex).
+        if len(ky_per_mot_state_idx) == 0:
+            raise ValueError("ky_per_mot_state_idx cannot be empty.")
+        Nshots = len(ky_per_mot_state_idx[0])
+        for ky_list in ky_per_mot_state_idx:
+            if len(ky_list) != Nshots:
+                raise ValueError("All Nex entries must have the same number of shot states.")
 
         # MATLAB-equivalent random motion vectors:
         # XTranslationVector = 4 * randn(1,Nshots)
@@ -642,33 +684,15 @@ class MotionSimulator:
         # For non-rigid motion_type_flag==2, MATLAB uses S = XTranslationVector.
         S = tx_vec
 
-        alpha_x, alpha_y, alpha_maps = self._create_discrete_non_rigid_alpha_fields()
+        alpha_maps = self._create_discrete_non_rigid_alpha_fields()
         self.alpha_maps = alpha_maps
 
         if self.params.debug_flag:
             print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
-            os.makedirs(self.params.debug_folder, exist_ok=True)
-            flip_for_display = self.params.flip_for_display
-            alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x, alpha_y)
-            save_alpha_component_map(
-                alpha_x_cart,
-                "simulated_alpha_x",
-                os.path.join(self.params.debug_folder, "simulated_alpha_x.png"),
-                flip_vertical=flip_for_display,
-            )
-            save_alpha_component_map(
-                alpha_y_cart,
-                "simulated_alpha_y",
-                os.path.join(self.params.debug_folder, "simulated_alpha_y.png"),
-                flip_vertical=flip_for_display,
-            )
-            save_nonrigid_quiver_with_contours(
-                alpha_x,
-                alpha_y,
-                self.image[0],
-                "simulated_motion_quiver",
-                os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
-                flip_vertical=flip_for_display,
+            save_nonrigid_alpha_plots(
+                alpha_maps, self.image[0],
+                "simulated", self.params.debug_folder,
+                flip_vertical=self.params.flip_for_display,
             )
 
         self._apply_motion(alpha_maps, centers=None, motion_signal=S, motion_type='non-rigid')
@@ -717,7 +741,7 @@ class MotionSimulator:
         self.sampling_idx = self._build_sampling_per_line_global_states()
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
-        alpha_x, alpha_y, alpha_maps = self._create_discrete_non_rigid_alpha_fields()
+        alpha_maps = self._create_discrete_non_rigid_alpha_fields()
         amp = float(self.params.nonrigid_motion_amplitude)
         alpha_maps = alpha_maps * amp
         self.alpha_maps = alpha_maps
@@ -732,28 +756,10 @@ class MotionSimulator:
         self.phi = torch.zeros_like(self.navigator)
 
         if self.params.debug_flag:
-            os.makedirs(self.params.debug_folder, exist_ok=True)
-            flip_for_display = self.params.flip_for_display
-            alpha_x_cart, alpha_y_cart = to_cartesian_components(alpha_x * amp, alpha_y * amp)
-            save_alpha_component_map(
-                alpha_x_cart,
-                "simulated_alpha_x",
-                os.path.join(self.params.debug_folder, "simulated_alpha_x.png"),
-                flip_vertical=flip_for_display,
-            )
-            save_alpha_component_map(
-                alpha_y_cart,
-                "simulated_alpha_y",
-                os.path.join(self.params.debug_folder, "simulated_alpha_y.png"),
-                flip_vertical=flip_for_display,
-            )
-            save_nonrigid_quiver_with_contours(
-                alpha_x * amp,
-                alpha_y * amp,
-                self.image[0],
-                "simulated_motion_quiver",
-                os.path.join(self.params.debug_folder, "simulated_motion_quiver.png"),
-                flip_vertical=flip_for_display,
+            save_nonrigid_alpha_plots(
+                alpha_maps, self.image[0],
+                "simulated", self.params.debug_folder,
+                flip_vertical=self.params.flip_for_display,
             )
 
     

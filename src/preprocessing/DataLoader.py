@@ -18,8 +18,8 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.utils.plotting import (
-    show_and_save_image, save_alpha_component_map, compute_motion_y_limits,
-    save_nonrigid_quiver_with_contours,
+    show_and_save_image, compute_motion_y_limits,
+    save_nonrigid_alpha_plots,
 )
 from src.utils.nonrigid_display import to_cartesian_components
 
@@ -170,9 +170,10 @@ class DataLoader:
                 and self.alpha_maps_true is not None
             ):
                 alpha = self.alpha_maps_true
-                if alpha.ndim == 3 and alpha.shape[0] >= 2:
+                if alpha.ndim >= 3 and alpha.shape[0] >= 2:
                     alpha_axis0 = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
                     alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
+                    # For 3D volumes, compute scale over the full volume.
                     alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
                     amp_max = float(torch.max(torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)).item())
                     alpha_abs_max_x = float(torch.max(torch.abs(alpha_x)).item())
@@ -241,31 +242,18 @@ class DataLoader:
             hasattr(self, "alpha_maps_true")
             and self.alpha_maps_true is not None
             and self.params.motion_type == "non-rigid"
+            and self.alpha_maps_true.ndim >= 3
+            and self.alpha_maps_true.shape[0] >= 2
         ):
-            alpha = self.alpha_maps_true
-            if alpha.ndim == 3 and alpha.shape[0] >= 2:
-                alpha_axis0 = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
-                alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
-                alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
-                scale = (self.motion_plot_context or {}).get("alpha_visual_scale", None)
-                alpha_abs_max_x = None if scale is None else scale.get("alpha_abs_max_x")
-                alpha_abs_max_y = None if scale is None else scale.get("alpha_abs_max_y")
-                amp_max = None if scale is None else scale.get("amp_max")
-                save_alpha_component_map(
-                    alpha_x, "simulated_alpha_x_input",
-                    os.path.join(folder, "simulated_alpha_x_input.png"),
-                    flip_vertical=flip_for_display, abs_max=alpha_abs_max_x,
-                )
-                save_alpha_component_map(
-                    alpha_y, "simulated_alpha_y_input",
-                    os.path.join(folder, "simulated_alpha_y_input.png"),
-                    flip_vertical=flip_for_display, abs_max=alpha_abs_max_y,
-                )
-                save_nonrigid_quiver_with_contours(
-                    alpha_axis0, alpha_axis1, self.image_ground_truth[0], "simulated_motion_quiver_input",
-                    os.path.join(folder, "simulated_motion_quiver_input.png"),
-                    flip_vertical=flip_for_display, amp_vmax=amp_max,
-                )
+            scale = (self.motion_plot_context or {}).get("alpha_visual_scale", None)
+            save_nonrigid_alpha_plots(
+                self.alpha_maps_true, self.image_ground_truth[0],
+                "simulated_input", folder,
+                flip_vertical=flip_for_display,
+                abs_max_x=None if scale is None else scale.get("alpha_abs_max_x"),
+                abs_max_y=None if scale is None else scale.get("alpha_abs_max_y"),
+                amp_max=None if scale is None else scale.get("amp_max"),
+            )
 
     def _has_simulated_motion(self):
         return self.params.motion_simulation_type not in {"no-motion-data", "as-it-is"}
@@ -604,10 +592,10 @@ class DataLoader:
         )
 
     def _calc_espirit_maps(self):
-        acs=self.params.acs
-        kernel_width=self.params.kernel_width
+        acs = int(self.params.acs)
+        kernel_width = int(self.params.kernel_width)
         espirit_max_iter = self.params.espirit_max_iter
-        sp_device=self.sp_device
+        sp_device = self.sp_device
         kspace = self.kspace
         device = kspace.device             # torch device of input
         
@@ -618,36 +606,63 @@ class DataLoader:
 
         Ncha, _, Nx, Ny, Nz = kspace.shape
 
+        # Bound calibration settings by actual data size to avoid oversized
+        # calibration matrices and excessive memory usage.
+        if Nz > 1:
+            calib_width_eff = max(1, min(acs, Nx, Ny, Nz))
+        else:
+            calib_width_eff = max(1, min(acs, Nx, Ny))
+        kernel_width_eff = max(1, min(kernel_width, calib_width_eff))
+
         # 3D calibration for volumetric data, 2D calibration for single-slice data.
         if Nz > 1:
             # ---- GPU path ----
             if use_gpu:
                 import cupy as cp
 
-                kspace_cp = cp.asarray(kspace[:, 0, :, :, :].contiguous())
-                maps_cp = spmri.app.EspiritCalib(
-                    kspace_cp,
-                    calib_width=acs,
-                    kernel_width=kernel_width,
-                    max_iter=espirit_max_iter,
-                    device=sp_device,
-                ).run()
-                maps_cp = maps_cp.astype(cp.complex128, copy=False)
-                maps_cp = cp.ascontiguousarray(maps_cp)
-                maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
-                espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1])
+                try:
+                    # Use complex64 for calibration to reduce temporary GPU memory.
+                    kspace_cp = cp.asarray(kspace[:, 0, :, :, :].contiguous(), dtype=cp.complex64)
+                    maps_cp = spmri.app.EspiritCalib(
+                        kspace_cp,
+                        calib_width=calib_width_eff,
+                        kernel_width=kernel_width_eff,
+                        max_iter=espirit_max_iter,
+                        device=sp_device,
+                    ).run()
+                    maps_cp = maps_cp.astype(cp.complex64, copy=False)
+                    maps_cp = cp.ascontiguousarray(maps_cp)
+                    maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
+                    espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
+                except cp.cuda.memory.OutOfMemoryError:
+                    # Fallback to CPU calibration when GPU memory is insufficient.
+                    cp.get_default_memory_pool().free_all_blocks()
+                    cp.get_default_pinned_memory_pool().free_all_blocks()
+                    torch.cuda.empty_cache()
 
-                cp.get_default_memory_pool().free_all_blocks()
-                cp.get_default_pinned_memory_pool().free_all_blocks()
-                torch.cuda.empty_cache()
+                    kspace_np = kspace[:, 0, :, :, :].detach().cpu().numpy().astype(np.complex64, copy=False)
+                    maps_np = spmri.app.EspiritCalib(
+                        kspace_np,
+                        calib_width=calib_width_eff,
+                        kernel_width=kernel_width_eff,
+                        max_iter=espirit_max_iter,
+                        device=sp.Device(-1),
+                    ).run()
+                    maps_np = maps_np.astype(np.complex128, copy=False)
+                    maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
+                    espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
+                finally:
+                    cp.get_default_memory_pool().free_all_blocks()
+                    cp.get_default_pinned_memory_pool().free_all_blocks()
+                    torch.cuda.empty_cache()
 
             # ---- CPU path ----
             else:
-                kspace_np = kspace[:, 0, :, :, :].cpu().numpy()
+                kspace_np = kspace[:, 0, :, :, :].cpu().numpy().astype(np.complex64, copy=False)
                 maps_np = spmri.app.EspiritCalib(
                     kspace_np,
-                    calib_width=acs,
-                    kernel_width=kernel_width,
+                    calib_width=calib_width_eff,
+                    kernel_width=kernel_width_eff,
                     max_iter=espirit_max_iter,
                     device=sp_device,
                 ).run()
@@ -664,23 +679,23 @@ class DataLoader:
             if use_gpu:
                 import cupy as cp
 
-                kspace_cp = cp.asarray(kspace[:, 0, :, :, z].contiguous())
+                kspace_cp = cp.asarray(kspace[:, 0, :, :, z].contiguous(), dtype=cp.complex64)
                 maps_cp = spmri.app.EspiritCalib(
                     kspace_cp,
-                    calib_width=acs,
-                    kernel_width=kernel_width,
+                    calib_width=calib_width_eff,
+                    kernel_width=kernel_width_eff,
                     max_iter=espirit_max_iter,
                     device=sp_device,
                 ).run()
-                maps_cp = maps_cp.astype(cp.complex128, copy=False)
+                maps_cp = maps_cp.astype(cp.complex64, copy=False)
                 maps_cp = cp.ascontiguousarray(maps_cp)
                 maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
             else:
-                kspace_np = kspace[:, 0, :, :, z].cpu().numpy()
+                kspace_np = kspace[:, 0, :, :, z].cpu().numpy().astype(np.complex64, copy=False)
                 maps_np = spmri.app.EspiritCalib(
                     kspace_np,
-                    calib_width=acs,
-                    kernel_width=kernel_width,
+                    calib_width=calib_width_eff,
+                    kernel_width=kernel_width_eff,
                     max_iter=espirit_max_iter,
                     device=sp_device,
                 ).run()
@@ -712,17 +727,18 @@ class DataLoader:
             # Use exactly the signal/sampling that are fed to GN.
             signal_true = self.motion_signal.to(self.t_device)
             sampling_true = self.sampling_idx
-            nsamples_true = self.Nx * self.Ny
+            nsamples_true = self.Nx * self.Ny * self.Nz
 
             motion_op_true = MotionOperator(
-                self.Nx, self.Ny, alpha_true, self.params.motion_type, motion_signal=signal_true
+                self.Nx, self.Ny, alpha_true, self.params.motion_type,
+                motion_signal=signal_true, Nz=self.Nz,
             )
 
             encoding_true = EncodingOperator(
                 self.smaps, nsamples_true, sampling_true, self.params.Nex, motion_op_true
             )
 
-            kspace_vec = self.kspace[..., 0].reshape(self.Ncha, self.params.Nex, nsamples_true).flatten()
+            kspace_vec = self.kspace.reshape(self.Ncha, self.params.Nex, nsamples_true).flatten()
             b = encoding_true.adjoint(kspace_vec)
             x0 = torch.zeros_like(b)
             solver = ConjugateGradientSolver(
@@ -732,8 +748,11 @@ class DataLoader:
                 reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
             )
             img_vec = solver._solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
-            img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
-            img_ref = self.image_ground_truth[..., 0]
+            if self.Nz > 1:
+                img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny, self.Nz)
+            else:
+                img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
+            img_ref = self.image_ground_truth
 
             num = torch.linalg.norm((img_back - img_ref).flatten())
             den = torch.linalg.norm(img_ref.flatten()) + 1e-12
