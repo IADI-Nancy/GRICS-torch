@@ -93,6 +93,7 @@ class SamplingSimulator:
         Nx, Ny,
         Nz=1,
         kspace_sampling_type="linear",
+        binned_kz_indices=None,  # [Nex][Nmotion] (optional, for 3D realworld)
     ):
         Nex = len(binned_ky_indices)
         Nmotion = len(binned_ky_indices[0])
@@ -122,53 +123,62 @@ class SamplingSimulator:
                 )
 
                 if Nz > 1:
-                    # Build (ky, kz) acquisition order, then expand over kx.
-                    if kspace_sampling_type == "random":
-                        kz_ord = torch.arange(Nz, device=device, dtype=torch.int64)
-                        pairs = torch.cartesian_prod(ky, kz_ord)
-                        perm = torch.randperm(pairs.shape[0], device=device, dtype=torch.int64)
-                        pairs = pairs[perm]
-                    elif kspace_sampling_type == "interleaved":
-                        n_ky = int(ky.numel())
-                        stride_y = max(1, min(Nmotion, n_ky))
-                        offset_y0 = (nex + ms) % stride_y
-                        ky_parts = []
-                        for t in range(stride_y):
-                            offset = (offset_y0 + t) % stride_y
-                            ky_parts.append(ky[offset::stride_y])
-                        ky_ord = torch.cat(ky_parts, dim=0)
-
-                        stride_z = max(1, min(Nmotion, Nz))
-                        offset_z0 = (nex + ms) % stride_z
-                        kz_parts = []
-                        for t in range(stride_z):
-                            offset = (offset_z0 + t) % stride_z
-                            kz_parts.append(
-                                torch.arange(offset, Nz, stride_z, device=device, dtype=torch.int64)
-                            )
-                        kz_ord = torch.cat(kz_parts, dim=0)
-
-                        # Serpentine traversal to interleave both ky and kz directions.
-                        pair_blocks = []
-                        for i_kz, kz_val in enumerate(kz_ord):
-                            ky_seq = ky_ord if (i_kz % 2 == 0) else torch.flip(ky_ord, dims=[0])
-                            kz_seq = torch.full_like(ky_seq, kz_val)
-                            pair_blocks.append(torch.stack([ky_seq, kz_seq], dim=1))
-                        pairs = torch.cat(pair_blocks, dim=0)
-                    elif kspace_sampling_type in {"linear", "from-data"}:
-                        kz_ord = torch.arange(Nz, device=device, dtype=torch.int64)
-                        pairs = torch.cartesian_prod(ky, kz_ord)
+                    # When actual (ky, kz) pairs are provided (realworld 3D),
+                    # use them directly — no cartesian product needed.
+                    if binned_kz_indices is not None:
+                        kz = binned_kz_indices[nex][ms].to(torch.int64)
+                        samp = (
+                            (ky[:, None] + Ny * kx[None, :]) * Nz
+                            + kz[:, None]
+                        ).reshape(-1)
                     else:
-                        raise ValueError(
-                            f"Unknown kspace_sampling_type: {kspace_sampling_type}"
-                        )
+                        # Build (ky, kz) acquisition order, then expand over kx.
+                        if kspace_sampling_type == "random":
+                            kz_ord = torch.arange(Nz, device=device, dtype=torch.int64)
+                            pairs = torch.cartesian_prod(ky, kz_ord)
+                            perm = torch.randperm(pairs.shape[0], device=device, dtype=torch.int64)
+                            pairs = pairs[perm]
+                        elif kspace_sampling_type == "interleaved":
+                            n_ky = int(ky.numel())
+                            stride_y = max(1, min(Nmotion, n_ky))
+                            offset_y0 = (nex + ms) % stride_y
+                            ky_parts = []
+                            for t in range(stride_y):
+                                offset = (offset_y0 + t) % stride_y
+                                ky_parts.append(ky[offset::stride_y])
+                            ky_ord = torch.cat(ky_parts, dim=0)
 
-                    ky_pairs = pairs[:, 0]
-                    kz_pairs = pairs[:, 1]
-                    samp = (
-                        (ky_pairs[:, None] + Ny * kx[None, :]) * Nz
-                        + kz_pairs[:, None]
-                    ).reshape(-1)
+                            stride_z = max(1, min(Nmotion, Nz))
+                            offset_z0 = (nex + ms) % stride_z
+                            kz_parts = []
+                            for t in range(stride_z):
+                                offset = (offset_z0 + t) % stride_z
+                                kz_parts.append(
+                                    torch.arange(offset, Nz, stride_z, device=device, dtype=torch.int64)
+                                )
+                            kz_ord = torch.cat(kz_parts, dim=0)
+
+                            # Serpentine traversal to interleave both ky and kz directions.
+                            pair_blocks = []
+                            for i_kz, kz_val in enumerate(kz_ord):
+                                ky_seq = ky_ord if (i_kz % 2 == 0) else torch.flip(ky_ord, dims=[0])
+                                kz_seq = torch.full_like(ky_seq, kz_val)
+                                pair_blocks.append(torch.stack([ky_seq, kz_seq], dim=1))
+                            pairs = torch.cat(pair_blocks, dim=0)
+                        elif kspace_sampling_type in {"linear", "from-data"}:
+                            kz_ord = torch.arange(Nz, device=device, dtype=torch.int64)
+                            pairs = torch.cartesian_prod(ky, kz_ord)
+                        else:
+                            raise ValueError(
+                                f"Unknown kspace_sampling_type: {kspace_sampling_type}"
+                            )
+
+                        ky_pairs = pairs[:, 0]
+                        kz_pairs = pairs[:, 1]
+                        samp = (
+                            (ky_pairs[:, None] + Ny * kx[None, :]) * Nz
+                            + kz_pairs[:, None]
+                        ).reshape(-1)
                 else:
                     samp = samp_xy.reshape(-1)
 

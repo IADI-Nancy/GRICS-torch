@@ -186,7 +186,8 @@ class DataLoader:
         
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             self.binned_indices, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data")  # [Nex][Nmotion]
+            Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data"),
+            binned_kz_indices=getattr(self, 'binned_kz_indices', None),  # [Nex][Nmotion]
         )
 
         self._save_input_data_artifacts()
@@ -516,13 +517,22 @@ class DataLoader:
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
         if getattr(self.params, "motion_state_mode", None) == "per-shot":
             self.params.N_motion_states = self.params.Nshots
-        # For 3D, ky/nex/motion indices are the same across all kz partitions;
-        # use partition 0 as the representative ordering.
-        z_sel = 0 if is_3d else slice_idx
-        self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
-        self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
-        motion_data = data['motion_data'][z_sel, :]
-        motion_data = torch.from_numpy(motion_data).to(self.t_device)
+        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
+
+        if is_3d:
+            # 3D: use ALL (ky, kz) acquisitions for global respiratory binning
+            # so each readout is assigned to its actual respiratory state.
+            motion_data = torch.from_numpy(data['motion_data'].reshape(-1)).to(self.t_device)
+            self.ky_idx = torch.from_numpy(data['idx_ky'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+            kz_all = torch.from_numpy(data['idx_kz'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+            self.nex_idx = torch.from_numpy(data['idx_nex'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+        else:
+            z_sel = slice_idx
+            motion_data = torch.from_numpy(data['motion_data'][z_sel, :]).to(self.t_device)
+            self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
+            kz_all = None
+            self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
+
         y_limits = compute_motion_y_limits(motion_data)
         (
             self.ky_per_motion,
@@ -534,6 +544,18 @@ class DataLoader:
             motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params,
             y_limits=y_limits, return_debug_data=True
         )
+
+        # For 3D: build per-bin kz indices using the same cluster labels.
+        self.binned_kz_indices = None
+        if is_3d and kz_all is not None:
+            Nbins = self.params.N_motion_states
+            nex_flat = self.nex_idx_chronological
+            labels = self.motion_labels
+            self.binned_kz_indices = [
+                [kz_all[(nex_flat == nex) & (labels == b)] for b in range(Nbins)]
+                for nex in range(self.params.Nex)
+            ]
+
         self.motion_plot_context = {
             "motion_curve": motion_data,
             "labels": self.motion_labels,
@@ -544,7 +566,6 @@ class DataLoader:
             "y_limits": y_limits,
         }
         self.binned_indices = self.ky_per_motion
-        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
@@ -573,13 +594,22 @@ class DataLoader:
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
         if getattr(self.params, "motion_state_mode", None) == "per-shot":
             self.params.N_motion_states = self.params.Nshots
-        # For 3D, ky/nex/motion indices are shared across kz partitions.
-        z_sel = 0 if is_3d else slice_idx
-        ky_dx = data['idx_ky'][z_sel]
-        self.ky_idx = torch.from_numpy(ky_dx).to(self.t_device, dtype=torch.int64)
-        self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
-        motion_data = data['motion_data'][z_sel, :]
-        motion_data = torch.from_numpy(motion_data).to(self.t_device)
+        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
+
+        if is_3d:
+            # 3D: use ALL (ky, kz) acquisitions for global respiratory binning
+            # so each readout is assigned to its actual respiratory state.
+            motion_data = torch.from_numpy(data['motion_data'].reshape(-1)).to(self.t_device)
+            self.ky_idx = torch.from_numpy(data['idx_ky'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+            kz_all = torch.from_numpy(data['idx_kz'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+            self.nex_idx = torch.from_numpy(data['idx_nex'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+        else:
+            z_sel = slice_idx
+            motion_data = torch.from_numpy(data['motion_data'][z_sel, :]).to(self.t_device)
+            self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
+            kz_all = None
+            self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
+
         y_limits = compute_motion_y_limits(motion_data)
         (
             self.ky_per_motion,
@@ -591,6 +621,18 @@ class DataLoader:
             motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params,
             y_limits=y_limits, return_debug_data=True
         )
+
+        # For 3D: build per-bin kz indices using the same cluster labels.
+        self.binned_kz_indices = None
+        if is_3d and kz_all is not None:
+            Nbins = self.params.N_motion_states
+            nex_flat = self.nex_idx_chronological
+            labels = self.motion_labels
+            self.binned_kz_indices = [
+                [kz_all[(nex_flat == nex) & (labels == b)] for b in range(Nbins)]
+                for nex in range(self.params.Nex)
+            ]
+
         self.motion_plot_context = {
             "motion_curve": motion_data,
             "labels": self.motion_labels,
@@ -601,7 +643,6 @@ class DataLoader:
             "y_limits": y_limits,
         }
         self.binned_indices = self.ky_per_motion
-        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,

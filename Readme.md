@@ -1,6 +1,6 @@
 # GRICS-torch: GRICS MRI motion-corrected reconstruction in PyTorch
 
-This repository currently contains a 2D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
+This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
 
 Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
@@ -37,6 +37,26 @@ Main config groups:
 
 Important consistency rule:
 - `GN_iterations_per_level` must match `ResolutionLevels` length exactly.
+
+## 3D and Real-World Capabilities
+
+- Full 3D support across loading, simulation, operators, and reconstruction:
+	- Volumetric FFT/sampling paths in preprocessing and encoding/reconstruction.
+	- Dedicated 3D configs: `config/shepp_logan_3d.toml`, `config/motion_simulation/rigid_3d.toml`, `config/motion_simulation/nonrigid_3d.toml`, and 3D reconstruction configs.
+- Real-world and raw-data 3D consistency:
+	- `DataLoader` keeps all kz partitions for 3D instead of single-partition slicing.
+	- 3D motion binning uses all acquired `(ky, kz)` readouts (global across partitions), not only one representative kz partition.
+	- Sampling construction for 3D real-world data can use true binned `(ky, kz)` pairs instead of a synthetic cartesian product.
+- Raw-data reading behavior:
+	- `RawDataReader` maps Nex from repetition and filters non-imaging acquisitions.
+	- Duplicate acquisition-cell overwrite prevention during k-space fill.
+	- Conversion utility writes real-world-compatible H5 datasets (`kspace`, `motion_data`, `idx_ky`, `idx_kz`, `idx_nex`, plus `nex_values`/`nex_source` metadata).
+- ESPIRiT and runtime behavior:
+	- For measured data with multiple repeats, map calibration uses averaged Nex for stable maps.
+	- Runtime derives dimension-aware behavior (`2D`/`3D`) and display orientation defaults through config refresh.
+- Diagnostics and tests:
+	- Synchronization diagnostics are available (respiratory curve vs MRI acquisition-order overlays and ky/kz visualizations).
+	- 3D smoke tests and real-world test flows are included, including high/fast reconstruction config variants.
 
 ## Data Types
 
@@ -75,10 +95,15 @@ Loaded via `DataLoader.load_realworld_data(...)` from HDF5 with datasets:
 - `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
 - `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
 - `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
-- `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`) (read from file; not used in current 2D reconstruction path)
+- `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`) (used by the 3D real-world path)
 - `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 
-The slice index should be specified as an input argument of the DataLoader (0 is the default slice index). No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
+The slice index should be specified as an input argument of the DataLoader (0 is the default slice index).
+
+- For 2D, one selected slice/partition is loaded.
+- For 3D, all kz partitions are kept and used in the volumetric path.
+
+No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
 
 ### `raw-data`
 
@@ -87,6 +112,8 @@ Loaded from raw scanner and physiological files using `RawDataReader`:
 - physiological data file in SAEC [2, 3] format (`saec_file`)
 
 The reader will convert these files to the format corresponding to the 'real-world' mode.
+
+For 3D acquisitions, the converted output preserves kz-resolved acquisition ordering so that motion binning and sampling can use real `(ky, kz)` timing-consistent readouts.
 
 
 ## Sampling Modes (synthetic acquisition)
