@@ -1,6 +1,6 @@
 # GRICS-torch: GRICS MRI motion-corrected reconstruction in PyTorch
 
-This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
+This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS is an algorithm based on modeling of MRI acquisition and motion, and do not use any AI priors. However, it requires a data associated with the displacement (e.g. respiratoiry bellow indications, navigators, PilotTone amplitude variation or other similar data). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
 
 Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
@@ -8,7 +8,9 @@ Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr)
 
 This project is distributed under the MIT License. See `LICENSE` for full terms.
 
-Please cite the GRICS paper [1] if you use this code for your research work.
+Please cite the GRICS paper if you use this code for your research work.
+
+Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine: An Official Journal of the International Society for Magnetic Resonance in Medicine, 60(1), 146-157.
 
 ## Repository layout
 
@@ -37,26 +39,6 @@ Main config groups:
 
 Important consistency rule:
 - `GN_iterations_per_level` must match `ResolutionLevels` length exactly.
-
-## 3D and Real-World Capabilities
-
-- Full 3D support across loading, simulation, operators, and reconstruction:
-	- Volumetric FFT/sampling paths in preprocessing and encoding/reconstruction.
-	- Dedicated 3D configs: `config/shepp_logan_3d.toml`, `config/motion_simulation/rigid_3d.toml`, `config/motion_simulation/nonrigid_3d.toml`, and 3D reconstruction configs.
-- Real-world and raw-data 3D consistency:
-	- `DataLoader` keeps all kz partitions for 3D instead of single-partition slicing.
-	- 3D motion binning uses all acquired `(ky, kz)` readouts (global across partitions), not only one representative kz partition.
-	- Sampling construction for 3D real-world data can use true binned `(ky, kz)` pairs instead of a synthetic cartesian product.
-- Raw-data reading behavior:
-	- `RawDataReader` maps Nex from repetition and filters non-imaging acquisitions.
-	- Duplicate acquisition-cell overwrite prevention during k-space fill.
-	- Conversion utility writes real-world-compatible H5 datasets (`kspace`, `motion_data`, `idx_ky`, `idx_kz`, `idx_nex`, plus `nex_values`/`nex_source` metadata).
-- ESPIRiT and runtime behavior:
-	- For measured data with multiple repeats, map calibration uses averaged Nex for stable maps.
-	- Runtime derives dimension-aware behavior (`2D`/`3D`) and display orientation defaults through config refresh.
-- Diagnostics and tests:
-	- Synchronization diagnostics are available (respiratory curve vs MRI acquisition-order overlays and ky/kz visualizations).
-	- 3D smoke tests and real-world test flows are included, including high/fast reconstruction config variants.
 
 ## Data Types
 

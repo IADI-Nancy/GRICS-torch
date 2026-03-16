@@ -85,104 +85,108 @@ class RawDataReader:
     def _extract_mri_info(self):
 
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
+        try:
+            header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
+            enc = header.encoding[0]
+            limits = enc.encodingLimits
+            acq_sys = getattr(header, "acquisitionSystemInformation", None)
 
-        header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
-        enc = header.encoding[0]
-        limits = enc.encodingLimits
-        acq_sys = getattr(header, "acquisitionSystemInformation", None)
+            N_SLI = self._encoding_limit_size(limits.slice)
+            # Use repetition as Nex source for these 3D raw datasets.
+            Nex = self._encoding_limit_size(limits.repetition)
+            Nex = max(1, Nex)
 
-        N_SLI = self._encoding_limit_size(limits.slice)
-        # Use repetition as Nex source for these 3D raw datasets.
-        Nex = self._encoding_limit_size(limits.repetition)
-        Nex = max(1, Nex)
+            Nz = self._encoding_limit_size(limits.kspace_encoding_step_2)
+            Rz = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_2")
+            Nz = self._expanded_matrix_size(Nz, Rz)
 
-        Nz = self._encoding_limit_size(limits.kspace_encoding_step_2)
-        Rz = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_2")
-        Nz = self._expanded_matrix_size(Nz, Rz)
+            Ny = self._encoding_limit_size(limits.kspace_encoding_step_1)
+            Ry = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_1")
+            Ny = self._expanded_matrix_size(Ny, Ry)
 
-        Ny = self._encoding_limit_size(limits.kspace_encoding_step_1)
-        Ry = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_1")
-        Ny = self._expanded_matrix_size(Ny, Ry)
+            use_kz_as_volume_axis = Nz > 1
+            z_size = Nz if use_kz_as_volume_axis else N_SLI
 
-        use_kz_as_volume_axis = Nz > 1
-        z_size = Nz if use_kz_as_volume_axis else N_SLI
+            ncha_header = None
+            if acq_sys is not None and getattr(acq_sys, "receiverChannels", None) is not None:
+                ncha_header = int(acq_sys.receiverChannels)
 
-        ncha_header = None
-        if acq_sys is not None and getattr(acq_sys, "receiverChannels", None) is not None:
-            ncha_header = int(acq_sys.receiverChannels)
+            kspace = None
+            filled = None
+            nex_values_seen = set()
+            timestamps = []
+            z_indices = []
+            idx_ky = []
+            idx_kz = []
+            idx_nex = []
 
-        kspace = None
-        filled = None
-        nex_values_seen = set()
-        timestamps = []
-        z_indices = []
-        idx_ky = []
-        idx_kz = []
-        idx_nex = []
+            num_acq = dset.number_of_acquisitions()
+            for i in range(num_acq):
+                acq = dset.read_acquisition(i)
+                if _is_noise(acq) or _is_non_imaging(acq):
+                    continue
 
-        num_acq = dset.number_of_acquisitions()
-        for i in range(num_acq):
-            acq = dset.read_acquisition(i)
-            if _is_noise(acq) or _is_non_imaging(acq):
-                continue
+                ncha, nsamp = acq.data.shape
+                ky = int(acq.idx.kspace_encode_step_1)
+                kz = int(acq.idx.kspace_encode_step_2)
+                rep = int(acq.idx.repetition)
+                sli = int(acq.idx.slice)
+                ts = float(acq.acquisition_time_stamp)
 
-            ncha, nsamp = acq.data.shape
-            ky = int(acq.idx.kspace_encode_step_1)
-            kz = int(acq.idx.kspace_encode_step_2)
-            rep = int(acq.idx.repetition)
-            sli = int(acq.idx.slice)
-            ts = float(acq.acquisition_time_stamp)
+                nex = rep
+                z = kz if use_kz_as_volume_axis else sli
 
-            nex = rep
-            z = kz if use_kz_as_volume_axis else sli
+                acq_data = torch.from_numpy(acq.data).to(self.device)
+                if ncha_header is not None and acq_data.shape[0] != ncha_header:
+                    continue
 
-            acq_data = torch.from_numpy(acq.data).to(self.device)
-            if ncha_header is not None and acq_data.shape[0] != ncha_header:
-                continue
+                if kspace is None:
+                    ncha_use = ncha_header if ncha_header is not None else int(acq_data.shape[0])
+                    kspace = torch.zeros(
+                        (ncha_use, Nex, nsamp, Ny, z_size),
+                        dtype=torch.complex128,
+                        device=self.device,
+                    )
+                    filled = torch.zeros((Nex, Ny, z_size), dtype=torch.bool, device=self.device)
 
-            if kspace is None:
-                ncha_use = ncha_header if ncha_header is not None else int(acq_data.shape[0])
-                kspace = torch.zeros(
-                    (ncha_use, Nex, nsamp, Ny, z_size),
-                    dtype=torch.complex128,
-                    device=self.device,
-                )
-                filled = torch.zeros((Nex, Ny, z_size), dtype=torch.bool, device=self.device)
+                if acq_data.shape[0] != kspace.shape[0] or acq_data.shape[1] != kspace.shape[2]:
+                    continue
 
-            if acq_data.shape[0] != kspace.shape[0] or acq_data.shape[1] != kspace.shape[2]:
-                continue
+                # Keep first valid sample per (nex, ky, kz/slice) to avoid silent overwrite corruption.
+                if filled[nex, ky, z]:
+                    continue
 
-            # Keep first valid sample per (nex, ky, kz/slice) to avoid silent overwrite corruption.
-            if filled[nex, ky, z]:
-                continue
+                timestamps.append(ts)
+                z_indices.append(z)
+                idx_ky.append(ky)
+                idx_kz.append(kz)
+                idx_nex.append(nex)
+                nex_values_seen.add(nex)
+                kspace[:, nex, :, ky, z] = acq_data
+                filled[nex, ky, z] = True
 
-            timestamps.append(ts)
-            z_indices.append(z)
-            idx_ky.append(ky)
-            idx_kz.append(kz)
-            idx_nex.append(nex)
-            nex_values_seen.add(nex)
-            kspace[:, nex, :, ky, z] = acq_data
-            filled[nex, ky, z] = True
+            if kspace is None or len(timestamps) == 0:
+                raise ValueError("No acquisitions were mapped into the output tensor.")
 
-        if kspace is None or len(timestamps) == 0:
-            raise ValueError("No acquisitions were mapped into the output tensor.")
+            timestamps = torch.tensor(timestamps, device=self.device)
+            timestamps = (timestamps - timestamps[-1]) * 2.5e-3
 
-        timestamps = torch.tensor(timestamps, device=self.device)
-        timestamps = (timestamps - timestamps[-1]) * 2.5e-3
+            nex_values = torch.tensor(sorted(nex_values_seen), device=self.device, dtype=torch.int64)
 
-        nex_values = torch.tensor(sorted(nex_values_seen), device=self.device, dtype=torch.int64)
-
-        return (
-            kspace,
-            timestamps,
-            torch.tensor(z_indices, device=self.device),
-            torch.tensor(idx_ky, device=self.device),
-            torch.tensor(idx_kz, device=self.device),
-            torch.tensor(idx_nex, device=self.device),
-            "repetition",
-            nex_values,
-        )
+            return (
+                kspace,
+                timestamps,
+                torch.tensor(z_indices, device=self.device),
+                torch.tensor(idx_ky, device=self.device),
+                torch.tensor(idx_kz, device=self.device),
+                torch.tensor(idx_nex, device=self.device),
+                "repetition",
+                nex_values,
+            )
+        finally:
+            close = getattr(dset, "close", None)
+            if callable(close):
+                close()
 
 
     def _interp1d_torch(self, x, y, x_new):

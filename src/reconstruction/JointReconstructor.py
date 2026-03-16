@@ -365,6 +365,26 @@ class JointReconstructor:
                     Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"]), device=self.device)
         return Data_res
 
+    @staticmethod
+    def _strip_level_runtime_state(data):
+        if data is None:
+            return None
+        for key in ("MotionOperator", "E", "J"):
+            data.pop(key, None)
+        return data
+
+    @staticmethod
+    def _make_next_level_initializer(data):
+        if data is None:
+            return None
+        return {
+            "Nx": data["Nx"],
+            "Ny": data["Ny"],
+            "Nz": data.get("Nz", 1),
+            "ReconstructedImage": data["ReconstructedImage"],
+            "MotionModel": data["MotionModel"],
+        }
+
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss–Newton joint reconstruction
     # ----------------------------------------------------------------------
@@ -387,6 +407,7 @@ class JointReconstructor:
                 self._upsample_data(Data_prev, Data_res)
             level_init_time = time.perf_counter() - level_t0 # Compute setup time for this level.
             s_res = Data_res["KspaceData"].flatten()
+            s_res_norm = torch.linalg.norm(s_res).item()
 
             # Log level header and initialization timing.
             _append_run_log(
@@ -431,6 +452,8 @@ class JointReconstructor:
 
                     # Skip residual/motion step for the very last GN step of the final resolution level.
                     if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
+                        Data_res.pop("E", None)
+                        Data_res.pop("MotionOperator", None)
                         if pbar is not None:
                             pbar.update(1) # Advance progress bar for this completed iteration.
                         break
@@ -440,7 +463,7 @@ class JointReconstructor:
                     y = Data_res["E"].forward(x) # Predict k-space from current image and motion estimate.
                     residual = s_res - y # Compute data residual in k-space.
                     res_norm = torch.linalg.norm(residual).item() # Residual L2 norm.
-                    rel_res = res_norm / (torch.linalg.norm(s_res).item() + 1e-12) # Relative residual
+                    rel_res = res_norm / (s_res_norm + 1e-12) # Relative residual
                     residual_recon_norms.append(rel_res)
                     if pbar is not None:
                         pbar.set_postfix(recon=f"{rel_res:.2e}") # Show residual value in progress bar.
@@ -452,6 +475,9 @@ class JointReconstructor:
                             "    Relative residual increased - restoring best solution at this level.",)
                         if pbar is not None:
                             pbar.update(1) # Advance progress bar for this iteration before exiting.
+                        del x
+                        del y
+                        del residual
                         break
 
                     # Residual improved: store current image/motion as level-best.
@@ -470,6 +496,9 @@ class JointReconstructor:
                     motion_update = self._solve_motion(Data_res, residual)
                     mot_elapsed = time.perf_counter() - t_mot
                     Data_res["MotionModel"] += motion_update.real
+                    Data_res.pop("J", None)
+                    Data_res.pop("E", None)
+                    Data_res.pop("MotionOperator", None)
 
                     # 6) Compute and log motion update norms.
                     motion_update_norm = torch.linalg.norm(motion_update.flatten()).item() # Motion update L2 norm.
@@ -490,6 +519,11 @@ class JointReconstructor:
                     # Advance progress bar after completing both image and motion steps.
                     if pbar is not None:
                         pbar.update(1)
+
+                    del x
+                    del y
+                    del residual
+                    del motion_update
 
             # ------------------------------- SAVE DEBUG OUTPUTS AND LOGS -------------------------
             if self.params.debug_flag:
@@ -520,8 +554,11 @@ class JointReconstructor:
             _append_run_log(run_log, \
                 f"    Total time of resolution level {idx_res}: {level_elapsed:.6f} s\n",)
             
-            # Keep current level data as previous-level initializer for next scale.
-            Data_prev = Data_res
+            # Keep only the tensors needed to initialize the next level.
+            self._strip_level_runtime_state(Data_res)
+            Data_prev = self._make_next_level_initializer(Data_res)
+            del Data_res
+            del s_res
 
         _append_run_log(
             run_log,
@@ -529,12 +566,12 @@ class JointReconstructor:
         )
         _save_run_residual_plots(self.params.logs_folder, run_log)
 
-        # If no valid best was tracked in the last level, fallback to Data_res (the last solution)
+        # If no valid best was tracked in the last level, fallback to the last level initializer.
         if best_image is None or best_motion is None:
-            if "Data_res" not in locals() or "ReconstructedImage" not in Data_res or "MotionModel" not in Data_res:
+            if "Data_prev" not in locals() or "ReconstructedImage" not in Data_prev or "MotionModel" not in Data_prev:
                 raise RuntimeError("Reconstruction did not produce a valid image/motion solution.")
-            best_image = Data_res["ReconstructedImage"].clone()
-            best_motion = Data_res["MotionModel"].clone()
+            best_image = Data_prev["ReconstructedImage"].clone()
+            best_motion = Data_prev["MotionModel"].clone()
 
         # Rescale reconstructed image back to original k-space magnitude scale.
         best_image_unscaled = best_image * self.kspace_scale

@@ -73,14 +73,17 @@ class DataLoader:
 
         self._normalize_kspace_if_enabled()
         
-        # Keep a copy of motion-free k-space before any simulated corruption.
-        self.kspace_nomotion = self.kspace.clone()
+        # Keep a handle to the motion-free k-space before any simulated corruption.
+        # This avoids an eager full-volume clone in the common case where the source tensor is not modified in-place.
+        self.kspace_nomotion = self.kspace
 
         # Calculate ESPIRiT maps and input image
         self.smaps = self._calc_espirit_maps()
-        self.img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
+        img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
         smaps_replicated = self.smaps.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
-        self.image_ground_truth = torch.sum(self.img_cplx*smaps_replicated.conj(), dim=0).to(self.t_device)
+        self.image_ground_truth = torch.sum(img_cplx * smaps_replicated.conj(), dim=0).to(self.t_device)
+        del img_cplx
+        del smaps_replicated
 
         motion_sim_device = self.t_device
         if (
@@ -102,13 +105,13 @@ class DataLoader:
         
         if self.params.motion_simulation_type == 'as-it-is':
             if self.params.data_type in ['real-world', 'raw-data']:
-                self.image_no_moco = self.image_ground_truth.clone()
+                self.image_no_moco = self.image_ground_truth
             else:
                 raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
         else:
             if self.params.motion_simulation_type == 'no-motion-data':
                 motionSimulator._simulate_no_motion()
-                self.image_no_moco = self.image_ground_truth.clone()
+                self.image_no_moco = self.image_ground_truth
             else:      
                 if self.params.motion_type == "rigid":
                     if self.params.motion_state_mode == "per-shot":
@@ -194,6 +197,8 @@ class DataLoader:
 
         if self.params.debug_flag and self._has_simulated_motion():
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
+
+        del motionSimulator
 
     def _normalize_kspace_if_enabled(self):
         if not self.params.normalize_kspace:
@@ -300,7 +305,7 @@ class DataLoader:
             smaps_2d[c] = profile * phase
 
         smaps = smaps_2d.unsqueeze(-1).expand(Ncoils, Nx, Ny, Nz)
-        self.smaps_generated = smaps.clone()
+        self.smaps_generated = smaps
         return smaps
 
     def _build_synthetic_kspace_from_reference_image(self, image_2d):
@@ -451,7 +456,7 @@ class DataLoader:
             phantom_np_2d = self._build_shepp_logan_2d(N, fill_fraction)
             phantom_2d = torch.tensor(phantom_np_2d, dtype=torch.float64, device=self.t_device)
             phantom = phantom_2d.unsqueeze(-1).expand(N, N, Nz)  # (Nx, Ny, Nz)
-        self.phantom_generated = phantom.clone()
+        self.phantom_generated = phantom
 
         # 2. Create coil sensitivity maps (Ncoils, Nx, Ny, Nz)
         X, Y, Z = torch.meshgrid(
@@ -484,7 +489,7 @@ class DataLoader:
                 if random_phase else 1.0
             )
             smaps[c] = profile * phase
-        self.smaps_generated = smaps.clone()
+        self.smaps_generated = smaps
 
         # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
         phantom_for_coils = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
