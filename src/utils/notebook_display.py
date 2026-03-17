@@ -75,7 +75,29 @@ def _display_image_row(image_paths, subtitles, title=None, figsize=None):
     plt.show()
 
 
-def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_notebook_flag=None):
+def _display_log_images(logs_folder, has_ground_truth=True):
+    recon_logs = sorted(Path(logs_folder).glob("recon_residual.png"))
+    motion_logs = sorted(Path(logs_folder).glob("motion_residual.png"))
+    figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
+    if motion_logs:
+        _display_image_row([str(motion_logs[-1])], [""], title=None, figsize=figsize)
+    if recon_logs:
+        _display_image_row([str(recon_logs[-1])], [""], title=None, figsize=figsize)
+
+
+def display_run_panels(
+    params,
+    motion_type,
+    has_ground_truth=None,
+    jupyter_notebook_flag=None,
+    alpha_sim=None,
+    alpha_rec=None,
+    image_sim=None,
+    image_rec=None,
+    image_uncorrected=None,
+    image_corrected=None,
+    image_gt=None,
+):
     if jupyter_notebook_flag is None:
         jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
     if not jupyter_notebook_flag:
@@ -87,39 +109,35 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
     input_folder = Path(params.input_data_folder)
     results_folder = Path(params.results_folder)
 
-    recon_logs = sorted(logs_folder.glob("recon_residual.png"))
-    motion_logs = sorted(logs_folder.glob("motion_residual.png"))
-    logs_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
-    if motion_logs:
-        _display_image_row(
-            [str(motion_logs[-1])],
-            [""],
-            title=None,
-            figsize=logs_figsize,
-        )
-    if recon_logs:
-        _display_image_row(
-            [str(recon_logs[-1])],
-            [""],
-            title=None,
-            figsize=logs_figsize,
-        )
+    _display_log_images(logs_folder, has_ground_truth=has_ground_truth)
 
-    image_paths = [
-        _first_existing_path(input_folder / "image_corrupted.png", input_folder / "input_distorted.png"),
-        _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex1.png"),
-    ]
-    subtitles = ["Corrupted", "Corrected"]
-    images_figsize = None
-    if has_ground_truth:
-        image_paths.append(
-            _first_existing_path(input_folder / "image_ground_truth.png", input_folder / "input_ground_truth.png")
+    images_figsize = (13.0, 4.8) if has_ground_truth else (10.0, 4.8)
+    use_3d_matrix = (
+        image_uncorrected is not None
+        and image_corrected is not None
+        and image_gt is not None
+        and getattr(image_uncorrected, "ndim", None) == 3
+        and getattr(image_corrected, "ndim", None) == 3
+        and getattr(image_gt, "ndim", None) == 3
+    )
+    if use_3d_matrix:
+        display_3d_image_matrix(
+            image_uncorrected=image_uncorrected,
+            image_corrected=image_corrected,
+            image_gt=image_gt,
         )
-        subtitles.append("Ground truth")
-        images_figsize = (13.0, 4.8)
     else:
-        images_figsize = (10.0, 4.8)
-    _display_image_row(image_paths, subtitles, title="Images", figsize=images_figsize)
+        image_paths = [
+            _first_existing_path(input_folder / "image_corrupted.png", input_folder / "input_distorted.png"),
+            _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex1.png"),
+        ]
+        subtitles = ["Corrupted", "Corrected"]
+        if has_ground_truth:
+            image_paths.append(
+                _first_existing_path(input_folder / "image_ground_truth.png", input_folder / "input_ground_truth.png")
+            )
+            subtitles.append("Ground truth")
+        _display_image_row(image_paths, subtitles, title="Images", figsize=images_figsize)
 
     if motion_type == "rigid":
         _display_image_row(
@@ -132,14 +150,36 @@ def display_run_panels(params, motion_type, has_ground_truth=None, jupyter_noteb
             figsize=(images_figsize[0], 3.4),
         )
     elif motion_type == "non-rigid":
-        _display_image_row(
-            [
-                str(input_folder / "simulated_motion_quiver_input.png"),
-                str(results_folder / "final_motion_quiver.png"),
-            ],
-            ["", ""],
-            title="Non-rigid motion model",
-        )
+        if (
+            alpha_sim is not None
+            and alpha_rec is not None
+            and image_sim is not None
+            and image_rec is not None
+            and getattr(alpha_sim, "ndim", None) == 4
+            and getattr(alpha_rec, "ndim", None) == 4
+        ):
+            _display_3d_nonrigid_motion_comparison(
+                alpha_sim=alpha_sim,
+                alpha_rec=alpha_rec,
+                image_sim=image_sim,
+                image_rec=image_rec,
+                flip_vertical=bool(getattr(params, "flip_for_display", False)),
+            )
+        else:
+            _display_image_row(
+                [
+                    _first_existing_path(
+                        input_folder / "simulated_input_quiver.png",
+                        input_folder / "simulated_motion_quiver_input.png",
+                    ),
+                    _first_existing_path(
+                        results_folder / "final_quiver.png",
+                        results_folder / "final_motion_quiver.png",
+                    ),
+                ],
+                ["", ""],
+                title="Non-rigid motion model",
+            )
 
 
 def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_notebook_flag=None):
@@ -215,14 +255,8 @@ def display_logs_and_motion_same_as_2d(params):
     input_folder = Path(params.input_data_folder)
     results_folder = Path(params.results_folder)
 
-    recon_logs = sorted(logs_folder.glob("recon_residual.png"))
-    motion_logs = sorted(logs_folder.glob("motion_residual.png"))
-    logs_figsize = (13.0, 4.8)
+    _display_log_images(logs_folder, has_ground_truth=True)
 
-    if motion_logs:
-        _display_image_row([str(motion_logs[-1])], [""], title=None, figsize=logs_figsize)
-    if recon_logs:
-        _display_image_row([str(recon_logs[-1])], [""], title=None, figsize=logs_figsize)
 
     _display_image_row(
         [
@@ -233,3 +267,57 @@ def display_logs_and_motion_same_as_2d(params):
         title="Rigid Motion",
         figsize=(13.0, 3.4),
     )
+
+
+def _prepare_quiver_planes_3d(alpha_maps, image, flip_vertical=True):
+    alpha_axis0 = alpha_maps[0].real if torch.is_complex(alpha_maps[0]) else alpha_maps[0]
+    alpha_axis1 = alpha_maps[1].real if torch.is_complex(alpha_maps[1]) else alpha_maps[1]
+    img = torch.abs(image) if torch.is_complex(image) else image
+
+    a0_planes = _central_planes_3d(alpha_axis0.detach().cpu())
+    a1_planes = _central_planes_3d(alpha_axis1.detach().cpu())
+    img_planes = _central_planes_3d(img.detach().cpu())
+
+    if flip_vertical:
+        a0_planes = [torch.flip(p, dims=[0]) for p in a0_planes]
+        a1_planes = [torch.flip(p, dims=[0]) for p in a1_planes]
+        img_planes = [torch.flip(p, dims=[0]) for p in img_planes]
+
+    return a0_planes, a1_planes, img_planes
+
+
+def _display_3d_nonrigid_motion_comparison(alpha_sim, alpha_rec, image_sim, image_rec, flip_vertical=True):
+    sim_a0, sim_a1, sim_img = _prepare_quiver_planes_3d(alpha_sim, image_sim, flip_vertical=flip_vertical)
+    rec_a0, rec_a1, rec_img = _prepare_quiver_planes_3d(alpha_rec, image_rec, flip_vertical=flip_vertical)
+
+    row_titles = ["Axial", "Coronal", "Sagittal"]
+    col_titles = ["Simulated", "Reconstructed"]
+    fig, axes = plt.subplots(3, 2, figsize=(10, 14), gridspec_kw={"wspace": 0.05, "hspace": 0.12})
+
+    for row, (a0_s, a1_s, img_s, a0_r, a1_r, img_r) in enumerate(zip(sim_a0, sim_a1, sim_img, rec_a0, rec_a1, rec_img)):
+        for col, (a0, a1, img) in enumerate(((a0_s, a1_s, img_s), (a0_r, a1_r, img_r))):
+            ax = axes[row, col]
+            nx, ny = a0.shape
+            step = max(1, min(nx, ny) // 24)
+            yy, xx = torch.meshgrid(torch.arange(nx), torch.arange(ny), indexing="ij")
+            xx_s = xx[::step, ::step].numpy()
+            yy_s = yy[::step, ::step].numpy()
+            ux = (-a1[::step, ::step]).numpy()
+            uy = (a0[::step, ::step]).numpy()
+            amp = torch.sqrt(a0 * a0 + a1 * a1)[::step, ::step].numpy()
+
+            ax.set_facecolor("white")
+            q = ax.quiver(xx_s, yy_s, ux, uy, amp, cmap="cividis_r", angles="xy", scale_units="xy", scale=None)
+            ax.contour(torch.arange(ny).numpy(), torch.arange(nx).numpy(), img.numpy(), levels=8, colors="k", linewidths=0.7, alpha=0.8)
+            ax.set_aspect("equal")
+            ax.set_xlim(-0.5, ny - 0.5)
+            ax.set_ylim(nx - 0.5, -0.5)
+            ax.axis("off")
+            if row == 0:
+                ax.set_title(col_titles[col], fontsize=11, pad=8)
+            if col == 0:
+                ax.text(-0.08, 0.5, row_titles[row], rotation=90, va="center", ha="center", transform=ax.transAxes, fontsize=10)
+            fig.colorbar(q, ax=ax, fraction=0.046, pad=0.02, label="|u|")
+
+    fig.suptitle("Non-rigid motion model", fontsize=12, y=0.995)
+    plt.show()

@@ -10,17 +10,27 @@ This project is distributed under the MIT License. See `LICENSE` for full terms.
 
 Please cite the GRICS paper if you use this code for your research work.
 
-Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine: An Official Journal of the International Society for Magnetic Resonance in Medicine, 60(1), 146-157.
+```bibtex
+@article{odille2008grics,
+  title = {Generalized reconstruction by inversion of coupled systems (GRICS) applied to free-breathing MRI},
+  author = {Odille, F. and Vuissoz, P. A. and Marie, P. Y. and Felblinger, J.},
+  journal = {Magnetic Resonance in Medicine},
+  volume = {60},
+  number = {1},
+  pages = {146--157},
+  year = {2008}
+}
+```
 
 ## Repository layout
 
 - `src/preprocessing/`: data loading, sampling simulation, motion simulation, motion binning
-- `src/reconstruction/`: encoding/motion operators, Jacobian, CG solver, joint reconstructor
+- `src/reconstruction/`: joint reconstructor, encoding/motion operators, CG solver, etc.
 - `src/runtime/`: config loading and runtime initialization
 - `src/utils/`: plotting, diagnostics, notebook display helpers
 - `config/`: TOML configs for reconstruction, sampling, motion simulation, and general runtime
 
-\+ five demos. Attention: the reconstruction parameters were adjusted to make the reconstruction work for these concrete examples; however, if the random seed or other conditions change, the reconstruction parameters may require an adjustment.
+\+ four demos. Attention: random initialization was used, therefore the simulated and reconstruction data may look differently and require an adjustment of the reconstruction parameters.
 
 ## Environment Setup
 
@@ -80,10 +90,8 @@ Loaded via `DataLoader.load_realworld_data(...)` from HDF5 with datasets:
 - `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`) (used by the 3D real-world path)
 - `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 
-The slice index should be specified as an input argument of the DataLoader (0 is the default slice index).
-
-- For 2D, one selected slice/partition is loaded.
-- For 3D, all kz partitions are kept and used in the volumetric path.
+For 2D `real-world` and `raw-data`, the `slice_idx` argument of `DataLoader` selects the slice/partition to load (default: `0` if omitted).
+For synthetic data and for all 3D data, do not provide `slice_idx`; the loader raises an error if it is set.
 
 No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
 
@@ -199,6 +207,10 @@ Each run writes into folders from `config/general.toml`:
 - `results/`: final reconstructed outputs
 
 By default, these folders are cleaned before each run (`clean_output_folders_before_run = true`).
+
+## Disclosure
+
+Parts of this code and its documentation were developed with the assistance of AI tools (e.g., ChatGPT, Codex, Claude, Copilot). All content has been reviewed and validated by a human.
 
 ## References
 

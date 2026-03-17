@@ -28,7 +28,7 @@ def _is_non_imaging(acq):
 
 class RawDataReader:
 
-    def __init__(self, ismrmrd_file, saec_file, sensor_type='BELT', device="cuda"):
+    def __init__(self, ismrmrd_file, saec_file, sensor_type='BELT', device="cpu"):
         self.ismrmrd_file = ismrmrd_file
         self.saec_file = saec_file
         self.sensor_type = sensor_type
@@ -53,7 +53,8 @@ class RawDataReader:
 
     @staticmethod
     def _expanded_matrix_size(n_lines, accel):
-        return int(2 * math.ceil((float(accel) * float(n_lines)) / 2.0))
+        acquired_lines = math.ceil(float(n_lines) / float(accel))
+        return int(2 * math.ceil((float(accel) * float(acquired_lines)) / 2.0))
 
     def _remove_oversampling(self, kspace: torch.Tensor):
 
@@ -82,37 +83,40 @@ class RawDataReader:
         return kspace_cropped
 
 
-    def _extract_mri_info(self):
+    def _extract_mri_data(self):
 
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
         try:
             header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
             enc = header.encoding[0]
             limits = enc.encodingLimits
-            acq_sys = getattr(header, "acquisitionSystemInformation", None)
 
             N_SLI = self._encoding_limit_size(limits.slice)
             # Use repetition as Nex source for these 3D raw datasets.
             Nex = self._encoding_limit_size(limits.repetition)
             Nex = max(1, Nex)
 
-            Nz = self._encoding_limit_size(limits.kspace_encoding_step_2)
-            Rz = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_2")
-            Nz = self._expanded_matrix_size(Nz, Rz)
+            Nz_native = self._encoding_limit_size(limits.kspace_encoding_step_2)
 
             Ny = self._encoding_limit_size(limits.kspace_encoding_step_1)
             Ry = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_1")
             Ny = self._expanded_matrix_size(Ny, Ry)
 
-            use_kz_as_volume_axis = Nz > 1
-            z_size = Nz if use_kz_as_volume_axis else N_SLI
-
-            ncha_header = None
-            if acq_sys is not None and getattr(acq_sys, "receiverChannels", None) is not None:
-                ncha_header = int(acq_sys.receiverChannels)
+            # Heuristic: multi-slice acquisitions are treated as 2D stacks,
+            # while slab acquisitions (typically one encoded slice with kz partitions)
+            # use kspace_encode_step_2 as the volume axis.
+            use_kz_as_volume_axis = (N_SLI <= 1) and (Nz_native > 1)
+            if use_kz_as_volume_axis:
+                Rz = self._accel_factor_or_one(
+                    getattr(enc, "parallelImaging", None), "kspace_encoding_step_2"
+                )
+                Nz = self._expanded_matrix_size(Nz_native, Rz)
+                z_size = Nz
+            else:
+                Nz = 1
+                z_size = N_SLI
 
             kspace = None
-            filled = None
             nex_values_seen = set()
             timestamps = []
             z_indices = []
@@ -126,7 +130,6 @@ class RawDataReader:
                 if _is_noise(acq) or _is_non_imaging(acq):
                     continue
 
-                ncha, nsamp = acq.data.shape
                 ky = int(acq.idx.kspace_encode_step_1)
                 kz = int(acq.idx.kspace_encode_step_2)
                 rep = int(acq.idx.repetition)
@@ -134,27 +137,20 @@ class RawDataReader:
                 ts = float(acq.acquisition_time_stamp)
 
                 nex = rep
-                z = kz if use_kz_as_volume_axis else sli
+                if use_kz_as_volume_axis:
+                    z = kz
+                else:
+                    z = sli
 
                 acq_data = torch.from_numpy(acq.data).to(self.device)
-                if ncha_header is not None and acq_data.shape[0] != ncha_header:
-                    continue
 
                 if kspace is None:
-                    ncha_use = ncha_header if ncha_header is not None else int(acq_data.shape[0])
+                    ncha, nsamp = acq.data.shape
                     kspace = torch.zeros(
-                        (ncha_use, Nex, nsamp, Ny, z_size),
+                        (ncha, Nex, nsamp, Ny, z_size),
                         dtype=torch.complex128,
                         device=self.device,
                     )
-                    filled = torch.zeros((Nex, Ny, z_size), dtype=torch.bool, device=self.device)
-
-                if acq_data.shape[0] != kspace.shape[0] or acq_data.shape[1] != kspace.shape[2]:
-                    continue
-
-                # Keep first valid sample per (nex, ky, kz/slice) to avoid silent overwrite corruption.
-                if filled[nex, ky, z]:
-                    continue
 
                 timestamps.append(ts)
                 z_indices.append(z)
@@ -163,7 +159,6 @@ class RawDataReader:
                 idx_nex.append(nex)
                 nex_values_seen.add(nex)
                 kspace[:, nex, :, ky, z] = acq_data
-                filled[nex, ky, z] = True
 
             if kspace is None or len(timestamps) == 0:
                 raise ValueError("No acquisitions were mapped into the output tensor.")
@@ -184,9 +179,7 @@ class RawDataReader:
                 nex_values,
             )
         finally:
-            close = getattr(dset, "close", None)
-            if callable(close):
-                close()
+            dset.close()
 
 
     def _interp1d_torch(self, x, y, x_new):
@@ -260,7 +253,7 @@ class RawDataReader:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    def _read_motion_and_kspace(self, slice_idx=None):
+    def _read_motion_and_kspace(self):
 
         time_saec, resp = RespiratoryDataReader._read_and_process_data(
             self.saec_file, self.sensor_type)
@@ -269,7 +262,7 @@ class RawDataReader:
         resp = torch.tensor(resp, device=self.device)
 
         kspace, time_kspace, z_indices, idx_ky, idx_kz, idx_nex, nex_source, nex_values = \
-            self._extract_mri_info()
+            self._extract_mri_data()
 
         respiratory_interpolated = self._interp1d_torch(
             time_saec, resp, time_kspace)
@@ -279,18 +272,6 @@ class RawDataReader:
                 respiratory_interpolated, z_indices, idx_ky, idx_kz, idx_nex)
 
         kspace = self._remove_oversampling(kspace)
-
-        if slice_idx is not None:
-            n_slices = int(kspace.shape[-1])
-            if slice_idx < 0 or slice_idx >= n_slices:
-                raise ValueError(
-                    f"slice_idx={slice_idx} is out of range for {n_slices} slices."
-                )
-            kspace = kspace[..., [slice_idx]]
-            motion_data = motion_data[[slice_idx], :]
-            line_idx_y = line_idx_y[[slice_idx], :]
-            line_idx_z = line_idx_z[[slice_idx], :]
-            line_idx_nex = line_idx_nex[[slice_idx], :]
 
         return {
             "kspace": kspace.detach().cpu().numpy(),
@@ -305,7 +286,22 @@ class RawDataReader:
 
     def _read_data_from_rawdata(self, h5filename=None, slice_idx=None):
 
-        data = self._read_motion_and_kspace(slice_idx=slice_idx)
+        data = self._read_motion_and_kspace()
+
+        if slice_idx is not None:
+            n_slices = int(data["kspace"].shape[-1])
+            if slice_idx < 0 or slice_idx >= n_slices:
+                raise ValueError(
+                    f"slice_idx={slice_idx} is out of range for {n_slices} slices."
+                )
+            data = {
+                **data,
+                "kspace": data["kspace"][..., [slice_idx]],
+                "motion_data": data["motion_data"][[slice_idx], :],
+                "idx_ky": data["idx_ky"][[slice_idx], :],
+                "idx_kz": data["idx_kz"][[slice_idx], :],
+                "idx_nex": data["idx_nex"][[slice_idx], :],
+            }
 
         if h5filename is None:
             base = os.path.splitext(os.path.basename(self.ismrmrd_file))[0]
@@ -326,3 +322,6 @@ class RawDataReader:
         data['realworld_h5_path'] = h5filename
 
         return data
+
+    def read_data_from_rawdata(self, h5filename=None, slice_idx=None):
+        return self._read_data_from_rawdata(h5filename=h5filename, slice_idx=slice_idx)

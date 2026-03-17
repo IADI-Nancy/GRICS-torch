@@ -688,7 +688,6 @@ class MotionSimulator:
         self.alpha_maps = alpha_maps
 
         if self.params.debug_flag:
-            print("Visualizing non-rigid alpha fields (alpha_x, alpha_y)...")
             save_nonrigid_alpha_plots(
                 alpha_maps, self.image[0],
                 "simulated", self.params.debug_folder,

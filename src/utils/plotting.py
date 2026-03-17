@@ -5,6 +5,108 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize, TwoSlopeNorm
 
 
+_ORIENT_LABELS = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
+
+
+def _ensure_output_dir(path):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+
+def _as_magnitude_cpu(tensor):
+    out = tensor.detach().cpu()
+    if torch.is_complex(out):
+        out = torch.abs(out)
+    return out
+
+
+def _prepare_display_image(img):
+    out = _as_magnitude_cpu(img)
+    if out.ndim == 3 and out.shape[-1] == 1:
+        out = out.squeeze(-1)
+    return out
+
+
+def _extract_3d_central_slices(vol):
+    ix = vol.shape[0] // 2
+    iy = vol.shape[1] // 2
+    iz = vol.shape[2] // 2
+    return [vol[:, :, iz], vol[:, iy, :], vol[ix, :, :]]
+
+
+def _flip_vertical(items, flip_vertical):
+    if not flip_vertical:
+        return items
+    return [torch.flip(item, dims=[0]) for item in items]
+
+
+def _robust_vrange(tensors, p_low=2.0, p_high=98.0):
+    vals = torch.cat([tensor.reshape(-1) for tensor in tensors]).numpy()
+    return np.percentile(vals, p_low), np.percentile(vals, p_high)
+
+
+def _component_norm(comp, abs_max=None):
+    vmax = float(abs_max) if abs_max is not None else torch.max(torch.abs(comp)).item()
+    if vmax <= 0:
+        vmax = 1e-12
+    return TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+
+
+def _quiver_step(nx, ny, divisor=32):
+    return max(1, min(nx, ny) // divisor)
+
+
+def _quiver_fields(alpha_axis0, alpha_axis1, divisor=32):
+    nx, ny = alpha_axis0.shape
+    step = _quiver_step(nx, ny, divisor=divisor)
+    yy, xx = torch.meshgrid(torch.arange(nx), torch.arange(ny), indexing="ij")
+    return (
+        xx[::step, ::step].numpy(),
+        yy[::step, ::step].numpy(),
+        (-alpha_axis1[::step, ::step]).numpy(),
+        (alpha_axis0[::step, ::step]).numpy(),
+        torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)[::step, ::step].numpy(),
+    )
+
+
+def _save_or_show(fig, out_path, should_display=False):
+    _ensure_output_dir(out_path)
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
+    if should_display:
+        plt.show()
+    plt.close(fig)
+
+
+def _plot_component_panels(planes, titles, out_path, abs_max=None, cmap="bwr", figsize=None):
+    comp = torch.cat([plane.reshape(-1) for plane in planes])
+    norm = _component_norm(comp, abs_max=abs_max)
+    figsize = figsize or ((5, 5) if len(planes) == 1 else (12, 4))
+    fig, axes = plt.subplots(1, len(planes), figsize=figsize)
+    if len(planes) == 1:
+        axes = [axes]
+    for ax, plane, title in zip(axes, planes, titles):
+        im = ax.imshow(plane.numpy(), cmap=cmap, norm=norm, origin="upper")
+        ax.set_title(title)
+        ax.axis("off")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    _save_or_show(fig, out_path)
+
+
+def _plot_quiver_panel(ax, alpha_axis0, alpha_axis1, img, title, amp_vmax=None, divisor=32):
+    xx, yy, ux, uy, amp = _quiver_fields(alpha_axis0, alpha_axis1, divisor=divisor)
+    img_np = img.numpy()
+
+    ax.set_facecolor("white")
+    norm = Normalize(vmin=0.0, vmax=float(amp_vmax)) if amp_vmax is not None else None
+    q = ax.quiver(xx, yy, ux, uy, amp, cmap="cividis_r", norm=norm, angles="xy", scale_units="xy", scale=None)
+    nx, ny = alpha_axis0.shape
+    ax.contour(torch.arange(ny).numpy(), torch.arange(nx).numpy(), img_np, levels=8, colors="k", linewidths=0.7, alpha=0.8)
+    ax.set_aspect("equal")
+    ax.set_xlim(-0.5, ny - 0.5)
+    ax.set_ylim(nx - 0.5, -0.5)
+    ax.set_title(title)
+    return q
+
+
 def show_and_save_image(
     img: torch.Tensor,
     image_name: str,
@@ -18,85 +120,38 @@ def show_and_save_image(
     - a single 2D image, or
     - for 3D volumes, a 1x3 panel of central XY/XZ/YZ planes.
     """
-    if img.ndim == 3 and img.shape[-1] == 1:
-        img = img.squeeze(-1)
+    should_display = jupyter_notebook_flag if jupyter_display is None else bool(jupyter_display)
+    out_path = os.path.join(folder, image_name + ".png")
+    img_disp = _prepare_display_image(img)
 
-    if img.ndim == 3 and img.shape[-1] not in (3, 4):
-        vol = img.detach().cpu()
-        if torch.is_complex(vol):
-            vol = torch.abs(vol)
-
-        ix = vol.shape[0] // 2
-        iy = vol.shape[1] // 2
-        iz = vol.shape[2] // 2
-        planes = [vol[:, :, iz], vol[:, iy, :], vol[ix, :, :]]
-        titles = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
-
-        if flip_for_display:
-            planes = [torch.flipud(p) for p in planes]
-
-        all_vals = torch.cat([p.reshape(-1) for p in planes]).numpy()
-        vmin = np.percentile(all_vals, 2)
-        vmax = np.percentile(all_vals, 98)
-
+    if img_disp.ndim == 3 and img_disp.shape[-1] not in (3, 4):
+        planes = _flip_vertical(_extract_3d_central_slices(img_disp), flip_for_display)
+        vmin, vmax = _robust_vrange(planes)
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        for j in range(3):
-            ax = axes[j]
-            im = ax.imshow(planes[j].numpy(), vmin=vmin, vmax=vmax, cmap="gray")
-            ax.set_title(f"{image_name} | {titles[j]}")
+        for ax, plane, title in zip(axes, planes, _ORIENT_LABELS):
+            im = ax.imshow(plane.numpy(), vmin=vmin, vmax=vmax, cmap="gray")
+            ax.set_title(f"{image_name} | {title}")
             ax.axis("off")
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-        os.makedirs(folder, exist_ok=True)
-        fig.savefig(os.path.join(folder, image_name + ".png"), bbox_inches="tight", pad_inches=0)
-        should_display = jupyter_notebook_flag if jupyter_display is None else bool(jupyter_display)
-        if should_display:
-            plt.show()
-        plt.close(fig)
+        _save_or_show(fig, out_path, should_display=should_display)
         return
 
-    np_img = img.detach().cpu().numpy()
-    if np.iscomplexobj(np_img):
-        np_img = np.abs(np_img)
-
+    np_img = img_disp.numpy()
     if flip_for_display:
         np_img = np.flipud(np_img)
-
-    vmin = np.percentile(np_img, 2)
-    vmax = np.percentile(np_img, 98)
-
-    plt.figure(figsize=(5, 5))
-    im = plt.imshow(np_img, vmin=vmin, vmax=vmax, cmap="gray")
-    plt.colorbar(im, fraction=0.046, pad=0.04)
-    plt.axis("off")
-    plt.title(image_name)
-
-    os.makedirs(folder, exist_ok=True)
-    plt.savefig(os.path.join(folder, image_name + ".png"), bbox_inches="tight", pad_inches=0)
-    should_display = jupyter_notebook_flag if jupyter_display is None else bool(jupyter_display)
-    if should_display:
-        plt.show()
-    plt.close()
+    vmin, vmax = np.percentile(np_img, 2), np.percentile(np_img, 98)
+    fig, ax = plt.subplots(figsize=(5, 5))
+    im = ax.imshow(np_img, vmin=vmin, vmax=vmax, cmap="gray")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.axis("off")
+    ax.set_title(image_name)
+    _save_or_show(fig, out_path, should_display=should_display)
 
 
 def save_alpha_component_map(comp, title, out_path, flip_vertical=True, abs_max=None):
-    comp = comp.detach().cpu()
-    if flip_vertical:
-        comp = torch.flip(comp, dims=[0])
-
-    vmax = float(abs_max) if abs_max is not None else torch.max(torch.abs(comp)).item()
-    if vmax <= 0:
-        vmax = 1e-12
-    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
-
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    plt.figure(figsize=(5, 5))
-    plt.imshow(comp.numpy(), cmap="bwr", norm=norm, origin="upper")
-    plt.colorbar()
-    plt.axis("off")
-    plt.title(title)
-    plt.savefig(out_path, bbox_inches="tight", pad_inches=0)
-    plt.close()
+    comp = _as_magnitude_cpu(comp) if torch.is_complex(comp) else comp.detach().cpu()
+    planes = _flip_vertical([comp], flip_vertical)
+    _plot_component_panels(planes, [title], out_path, abs_max=abs_max, figsize=(5, 5))
 
 
 def save_nonrigid_quiver_with_contours(
@@ -110,91 +165,22 @@ def save_nonrigid_quiver_with_contours(
 ):
     alpha_axis0 = alpha_axis0.detach().cpu()
     alpha_axis1 = alpha_axis1.detach().cpu()
-    img = image.detach().cpu()
-
-    if img.ndim == 3 and img.shape[-1] == 1:
-        img = img.squeeze(-1)
-    elif img.ndim != 2:
+    img = _prepare_display_image(image)
+    if img.ndim != 2:
         img = img[..., 0]
-    if img.is_complex():
-        img = img.abs()
+    alpha_axis0, alpha_axis1, img = _flip_vertical([alpha_axis0, alpha_axis1, img], flip_vertical)
 
-    if flip_vertical:
-        alpha_axis0 = torch.flip(alpha_axis0, dims=[0])
-        alpha_axis1 = torch.flip(alpha_axis1, dims=[0])
-        img = torch.flip(img, dims=[0])
-
-    nx, ny = alpha_axis0.shape
-    step = max(1, min(nx, ny) // 32)
-    yy, xx = torch.meshgrid(torch.arange(nx), torch.arange(ny), indexing="ij")
-    xx = xx[::step, ::step].numpy()
-    yy = yy[::step, ::step].numpy()
-    ux = (-alpha_axis1[::step, ::step]).numpy()
-    uy = (alpha_axis0[::step, ::step]).numpy()
-    amp = torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)[::step, ::step].numpy()
-    img_np = img.numpy()
-
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.set_facecolor("white")
-    norm = None
-    if amp_vmax is not None:
-        norm = Normalize(vmin=0.0, vmax=float(amp_vmax))
-    q = ax.quiver(
-        xx, yy, ux, uy, amp, cmap="cividis_r", norm=norm, angles="xy", scale_units="xy", scale=None
-    )
-    ax.contour(
-        torch.arange(ny).cpu().numpy(),
-        torch.arange(nx).cpu().numpy(),
-        img_np,
-        levels=8,
-        colors="k",
-        linewidths=0.7,
-        alpha=0.8,
-    )
-    ax.set_aspect("equal")
-    ax.set_xlim(-0.5, ny - 0.5)
-    ax.set_ylim(nx - 0.5, -0.5)
-    ax.set_title(title)
+    q = _plot_quiver_panel(ax, alpha_axis0, alpha_axis1, img, title, amp_vmax=amp_vmax)
     fig.colorbar(q, ax=ax, label="|u|")
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
-
-
-_ORIENT_LABELS = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
-
-
-def _extract_3d_central_slices(vol):
-    """Return 3 central 2D slices from a 3D tensor (Nx, Ny, Nz)."""
-    ix = vol.shape[0] // 2
-    iy = vol.shape[1] // 2
-    iz = vol.shape[2] // 2
-    return [vol[:, :, iz], vol[:, iy, :], vol[ix, :, :]]
+    _save_or_show(fig, out_path)
 
 
 def save_alpha_component_map_3d(comp_3d, title, out_path, flip_vertical=True, abs_max=None):
-    """Save a 1×3 panel of central axial/coronal/sagittal slices for one alpha component."""
     comp_3d = comp_3d.detach().cpu()
-
-    vmax = float(abs_max) if abs_max is not None else torch.max(torch.abs(comp_3d)).item()
-    if vmax <= 0:
-        vmax = 1e-12
-    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
-
-    planes = _extract_3d_central_slices(comp_3d)
-    if flip_vertical:
-        planes = [torch.flip(p, dims=[0]) for p in planes]
-
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-    for j in range(3):
-        ax = axes[j]
-        im = ax.imshow(planes[j].numpy(), cmap="bwr", norm=norm, origin="upper")
-        ax.set_title(f"{title} | {_ORIENT_LABELS[j]}")
-        ax.axis("off")
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
+    planes = _flip_vertical(_extract_3d_central_slices(comp_3d), flip_vertical)
+    titles = [f"{title} | {label}" for label in _ORIENT_LABELS]
+    _plot_component_panels(planes, titles, out_path, abs_max=abs_max, figsize=(12, 4))
 
 
 def save_nonrigid_quiver_with_contours_3d(
@@ -206,54 +192,22 @@ def save_nonrigid_quiver_with_contours_3d(
     flip_vertical=True,
     amp_vmax=None,
 ):
-    """Save a 1×3 panel of central-slice quiver+contour plots for 3D non-rigid motion."""
     alpha_axis0_3d = alpha_axis0_3d.detach().cpu()
     alpha_axis1_3d = alpha_axis1_3d.detach().cpu()
-    img = image_3d.detach().cpu()
-    if img.is_complex():
-        img = img.abs()
+    img = _prepare_display_image(image_3d)
 
     a0_slices = _extract_3d_central_slices(alpha_axis0_3d)
     a1_slices = _extract_3d_central_slices(alpha_axis1_3d)
     img_slices = _extract_3d_central_slices(img)
+    a0_slices = _flip_vertical(a0_slices, flip_vertical)
+    a1_slices = _flip_vertical(a1_slices, flip_vertical)
+    img_slices = _flip_vertical(img_slices, flip_vertical)
 
-    if flip_vertical:
-        a0_slices = [torch.flip(p, dims=[0]) for p in a0_slices]
-        a1_slices = [torch.flip(p, dims=[0]) for p in a1_slices]
-        img_slices = [torch.flip(p, dims=[0]) for p in img_slices]
-
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-    for j in range(3):
-        ax = axes[j]
-        a0, a1, im_s = a0_slices[j], a1_slices[j], img_slices[j]
-        nx, ny = a0.shape
-        step = max(1, min(nx, ny) // 32)
-        yy, xx = torch.meshgrid(torch.arange(nx), torch.arange(ny), indexing="ij")
-        xx_s = xx[::step, ::step].numpy()
-        yy_s = yy[::step, ::step].numpy()
-        ux = (-a1[::step, ::step]).numpy()
-        uy = (a0[::step, ::step]).numpy()
-        amp = torch.sqrt(a0 * a0 + a1 * a1)[::step, ::step].numpy()
-        img_np = im_s.numpy()
-
-        ax.set_facecolor("white")
-        qnorm = None
-        if amp_vmax is not None:
-            qnorm = Normalize(vmin=0.0, vmax=float(amp_vmax))
-        q = ax.quiver(xx_s, yy_s, ux, uy, amp, cmap="cividis_r", norm=qnorm,
-                       angles="xy", scale_units="xy", scale=None)
-        ax.contour(torch.arange(ny).numpy(), torch.arange(nx).numpy(), img_np,
-                   levels=8, colors="k", linewidths=0.7, alpha=0.8)
-        ax.set_aspect("equal")
-        ax.set_xlim(-0.5, ny - 0.5)
-        ax.set_ylim(nx - 0.5, -0.5)
-        ax.set_title(f"{title} | {_ORIENT_LABELS[j]}")
+    for ax, a0, a1, img_slice, label in zip(axes, a0_slices, a1_slices, img_slices, _ORIENT_LABELS):
+        q = _plot_quiver_panel(ax, a0, a1, img_slice, f"{title} | {label}", amp_vmax=amp_vmax)
         fig.colorbar(q, ax=ax, label="|u|")
-
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
+    _save_or_show(fig, out_path)
 
 
 def save_nonrigid_alpha_plots(

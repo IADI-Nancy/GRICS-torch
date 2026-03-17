@@ -25,17 +25,29 @@ from src.utils.nonrigid_display import to_cartesian_components
 
 
 class DataLoader:
-    @staticmethod
-    def _to_device_recursive(obj, device):
-        if torch.is_tensor(obj):
-            return obj.to(device)
-        if isinstance(obj, list):
-            return [DataLoader._to_device_recursive(x, device) for x in obj]
-        if isinstance(obj, tuple):
-            return tuple(DataLoader._to_device_recursive(x, device) for x in obj)
-        return obj
+    def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None):
+        self._init_runtime_state(
+            params=params,
+            sp_device=sp_device,
+            t_device=t_device,
+            filename=filename,
+            slice_idx=slice_idx,
+        )
+        self._validate_inputs()
+        self._load_source_data()
+        self._normalize_kspace_if_enabled()
+        self._compute_reference_image_data()
+        motionSimulator = self._apply_or_import_motion()
+        self._build_sampling_indices()
 
-    def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=0):
+        self._save_input_data_artifacts()
+
+        if self.params.debug_flag and self._has_simulated_motion():
+            self._debug_check_true_motion_image_reconstruction(motionSimulator)
+
+        del motionSimulator
+
+    def _init_runtime_state(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None):
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
@@ -44,25 +56,19 @@ class DataLoader:
         self.slice_idx = slice_idx
         self.motion_plot_context = None
 
+    def _validate_inputs(self):
         if self.params.data_type != "shepp-logan" and self.filename is None:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
-        
+
+        self._validate_slice_idx()
+
+    def _load_source_data(self):
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self._generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
-            if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
-                path_to_ismrm, path_to_saec = self.filename
-            elif isinstance(self.filename, dict):
-                path_to_ismrm = self.filename.get("ismrmrd_file")
-                path_to_saec = self.filename.get("saec_file")
-            else:
-                raise ValueError(
-                    "For data_type='raw-data', filename must be a 2-item tuple/list "
-                    "(ismrmrd_file, saec_file) or a dict with keys "
-                    "'ismrmrd_file' and 'saec_file'."
-                )
+            path_to_ismrm, path_to_saec = self._resolve_rawdata_filenames()
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
             self._load_from_image(self.filename)
@@ -71,8 +77,7 @@ class DataLoader:
         else:
             raise ValueError("Unknown data_type")
 
-        self._normalize_kspace_if_enabled()
-        
+    def _compute_reference_image_data(self):
         # Keep a handle to the motion-free k-space before any simulated corruption.
         # This avoids an eager full-volume clone in the common case where the source tensor is not modified in-place.
         self.kspace_nomotion = self.kspace
@@ -85,6 +90,7 @@ class DataLoader:
         del img_cplx
         del smaps_replicated
 
+    def _apply_or_import_motion(self):
         motion_sim_device = self.t_device
         if (
             self.params.motion_type == "rigid"
@@ -92,12 +98,29 @@ class DataLoader:
         ):
             motion_sim_device = torch.device("cpu")
 
+        image_ground_truth = self.image_ground_truth.to(motion_sim_device)
+        smaps = self.smaps.to(motion_sim_device)
+        if torch.is_tensor(self.ky_idx):
+            ky_idx = self.ky_idx.to(motion_sim_device)
+        else:
+            ky_idx = [ky.to(motion_sim_device) for ky in self.ky_idx]
+
+        if torch.is_tensor(self.nex_idx):
+            nex_idx = self.nex_idx.to(motion_sim_device)
+        else:
+            nex_idx = [nex.to(motion_sim_device) for nex in self.nex_idx]
+
+        ky_per_motion = [
+            [ky.to(motion_sim_device) for ky in ky_per_nex]
+            for ky_per_nex in self.ky_per_motion
+        ]
+
         motionSimulator = MotionSimulator(
-            self._to_device_recursive(self.image_ground_truth, motion_sim_device),
-            self._to_device_recursive(self.smaps, motion_sim_device),
-            self._to_device_recursive(self.ky_idx, motion_sim_device),
-            self._to_device_recursive(self.nex_idx, motion_sim_device),
-            self._to_device_recursive(self.ky_per_motion, motion_sim_device),
+            image_ground_truth,
+            smaps,
+            ky_idx,
+            nex_idx,
+            ky_per_motion,
             params=self.params,
             sp_device=self.sp_device,
             t_device=motion_sim_device,
@@ -186,19 +209,15 @@ class DataLoader:
                         "alpha_abs_max_y": max(alpha_abs_max_y, 1e-12),
                         "amp_max": max(amp_max, 1e-12),
                     }
-        
+
+        return motionSimulator
+
+    def _build_sampling_indices(self):
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             self.binned_indices, self.t_device, self.Nx, self.Ny,
             Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data"),
             binned_kz_indices=getattr(self, 'binned_kz_indices', None),  # [Nex][Nmotion]
         )
-
-        self._save_input_data_artifacts()
-
-        if self.params.debug_flag and self._has_simulated_motion():
-            self._debug_check_true_motion_image_reconstruction(motionSimulator)
-
-        del motionSimulator
 
     def _normalize_kspace_if_enabled(self):
         if not self.params.normalize_kspace:
@@ -506,8 +525,39 @@ class DataLoader:
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
         self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator._build_ky_and_nex()
 
-    def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=0):
-        reader = RawDataReader(ismrmrd_file=path_to_ismrm, saec_file=path_to_saec, sensor_type="BELT", device="cuda")
+    def _validate_slice_idx(self):
+        is_3d = getattr(self.params, "data_dimension", None) == "3D"
+        supports_slice_idx = self.params.data_type in {"real-world", "raw-data"}
+
+        if self.slice_idx is not None and not supports_slice_idx:
+            raise ValueError(
+                "slice_idx is only supported for 2D real-world or raw-data inputs. "
+                f"Do not provide slice_idx when data_type='{self.params.data_type}'."
+            )
+
+        if is_3d and self.slice_idx is not None:
+            raise ValueError(
+                "slice_idx is only supported for 2D real-world or raw-data inputs. "
+                "Do not provide slice_idx when data_dimension='3D'."
+            )
+
+        if supports_slice_idx and not is_3d and self.slice_idx is None:
+            self.slice_idx = 0
+
+    def _resolve_rawdata_filenames(self):
+        if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
+            return self.filename
+        if isinstance(self.filename, dict):
+            return self.filename.get("ismrmrd_file"), self.filename.get("saec_file")
+
+        raise ValueError(
+            "For data_type='raw-data', filename must be a 2-item tuple/list "
+            "(ismrmrd_file, saec_file) or a dict with keys "
+            "'ismrmrd_file' and 'saec_file'."
+        )
+
+    def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=None):
+        reader = RawDataReader(ismrmrd_file=path_to_ismrm, saec_file=path_to_saec, sensor_type="BELT", device="cpu")
         data = reader._read_data_from_rawdata()
 
         kspace_np = data['kspace']
@@ -578,7 +628,7 @@ class DataLoader:
         )
         
 
-    def _load_realworld_data(self, path_to_data, slice_idx=0):
+    def _load_realworld_data(self, path_to_data, slice_idx=None):
         data = {}
         with h5py.File(path_to_data, 'r') as f:
             data['motion_data'] = f['motion_data'][:]
@@ -824,11 +874,11 @@ class DataLoader:
                 img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
             img_ref = self.image_ground_truth
 
-            num = torch.linalg.norm((img_back - img_ref).flatten())
-            den = torch.linalg.norm(img_ref.flatten()) + 1e-12
-            rel_err = (num / den).item()
+            if tuple(img_back.shape) == tuple(img_ref.shape):
+                num = torch.linalg.norm((img_back - img_ref).flatten())
+                den = torch.linalg.norm(img_ref.flatten()) + 1e-12
+                _ = (num / den).item()
 
-            print(f"[DEBUG] GN-input consistency check (true alpha, clustered signal/sampling): rel_err={rel_err:.6e}")
             show_and_save_image(
                 img_back[0], "gn_input_consistency_recovered_image", self.params.debug_folder,
                 flip_for_display=self.params.flip_for_display,
