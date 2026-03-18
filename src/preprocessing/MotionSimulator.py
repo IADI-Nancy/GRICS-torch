@@ -72,9 +72,40 @@ class MotionSimulator:
 
         return sampling
 
+    def _globalize_per_shot_states(self, ky_per_mot_state_idx):
+        """
+        Convert a per-Nex shot layout [Nex][NshotsPerNex] into a global shot-state
+        layout [Nex][NshotsTotal], where each total shot has its own unique motion
+        state and all other states are empty for that Nex.
+        """
+        if len(ky_per_mot_state_idx) == 0:
+            raise ValueError("ky_per_mot_state_idx cannot be empty.")
+
+        first_nonempty = None
+        for ky_list in ky_per_mot_state_idx:
+            if len(ky_list) > 0:
+                first_nonempty = ky_list[0]
+                break
+        if first_nonempty is None:
+            raise ValueError("ky_per_mot_state_idx must contain at least one shot.")
+
+        total_shots = sum(len(ky_list) for ky_list in ky_per_mot_state_idx)
+        empty = lambda: torch.empty(0, dtype=first_nonempty.dtype, device=self.t_device)
+
+        global_layout = []
+        offset = 0
+        for ky_list in ky_per_mot_state_idx:
+            row = [empty() for _ in range(total_shots)]
+            for local_shot_idx, ky in enumerate(ky_list):
+                row[offset + local_shot_idx] = ky
+            global_layout.append(row)
+            offset += len(ky_list)
+
+        return global_layout
+
     def _apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
         if motion_type is None:
-            motion_type = self.params.motion_type
+            motion_type = self.params.simulated_motion_type
 
         self.MotionOperator = MotionOperator(
             self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz
@@ -415,7 +446,7 @@ class MotionSimulator:
             for shot_idx, ky in enumerate(ky_list):  # loop over shot index within Nex
                 n = ky.numel()
 
-                # EncodingOperator consumes motion states by shot index shared across Nex.
+                # Motion states are indexed globally across the full acquisition.
                 self.tx[ptr:ptr+n]        = self.tx_mot_state[shot_idx]
                 self.ty[ptr:ptr+n]        = self.ty_mot_state[shot_idx]
                 self.phi[ptr:ptr+n]       = self.phi_mot_state[shot_idx]
@@ -432,9 +463,6 @@ class MotionSimulator:
         if len(ky_per_mot_state_idx) == 0:
             raise ValueError("ky_per_mot_state_idx cannot be empty.")
         Nshots = len(ky_per_mot_state_idx[0])
-        for ky_list in ky_per_mot_state_idx:
-            if len(ky_list) != Nshots:
-                raise ValueError("All Nex entries must have the same number of shot states.")
 
         if self.Nz > 1:
             alpha = torch.zeros((6, Nshots), device=self.t_device)
@@ -539,7 +567,7 @@ class MotionSimulator:
 
     def _simulate_discrete_rigid_motion(self):
         # Each shot is its own motion state
-        ky_per_mot_state_idx = self.ky_per_motion_state
+        ky_per_mot_state_idx = self._globalize_per_shot_states(self.ky_per_motion_state)
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
@@ -659,20 +687,17 @@ class MotionSimulator:
     def _simulate_discrete_non_rigid_motion(self):
         print("Simulating non-rigid motion fields...")
 
-        ky_per_mot_state_idx = self.ky_per_motion_state
+        ky_per_mot_state_idx = self._globalize_per_shot_states(self.ky_per_motion_state)
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
             Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
         )
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
-        # Number of shot states per Nex (shared state index across Nex).
+        # One unique motion state per total shot across the acquisition.
         if len(ky_per_mot_state_idx) == 0:
             raise ValueError("ky_per_mot_state_idx cannot be empty.")
         Nshots = len(ky_per_mot_state_idx[0])
-        for ky_list in ky_per_mot_state_idx:
-            if len(ky_list) != Nshots:
-                raise ValueError("All Nex entries must have the same number of shot states.")
 
         # MATLAB-equivalent random motion vectors:
         # XTranslationVector = 4 * randn(1,Nshots)

@@ -13,7 +13,7 @@ initial_data_folder = "initial_data/"
 debug_flag = true
 # Preferred compute device: "gpu" or "cpu".
 runtime_device = "gpu"
-# Random seed for reproducibility.
+# Random seed for reproducibility. Remove this line to disable seeding.
 seed = 1
 # Print logs.
 verbose = true

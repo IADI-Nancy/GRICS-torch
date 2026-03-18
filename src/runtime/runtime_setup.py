@@ -81,7 +81,7 @@ def initialize_runtime(params, print_gpu_info=False):
     if params.clean_output_folders_before_run:
         _clean_run_output_folders(params)
 
-    runtime_device = str(getattr(params, "runtime_device", "gpu")).lower()
+    runtime_device = str(getattr(params, "runtime_device", "cpu")).lower()
     if runtime_device not in {"cpu", "gpu"}:
         raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
 
@@ -125,11 +125,13 @@ def initialize_runtime(params, print_gpu_info=False):
             print(f"Total GPU memory: {total_mem:.2f} GB")
 
     if params.debug_flag:
-        torch.manual_seed(params.seed)
         torch.use_deterministic_algorithms(True, warn_only=True)
+        if hasattr(params, "seed") and params.seed is not None:
+            torch.manual_seed(params.seed)
         if use_gpu and torch.cuda.is_available():
-            torch.cuda.manual_seed(params.seed)
-            torch.cuda.manual_seed_all(params.seed)
+            if hasattr(params, "seed") and params.seed is not None:
+                torch.cuda.manual_seed(params.seed)
+                torch.cuda.manual_seed_all(params.seed)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 

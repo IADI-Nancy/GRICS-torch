@@ -60,7 +60,7 @@ def _init_run_logging(params, n_levels, gn_iters_per_level):
     os.makedirs(params.logs_folder, exist_ok=True)
     log_path = os.path.join(params.logs_folder, "joint_reconstruction.log")
     param_items = {}
-    simulation_param_keys = {"motion_simulation_type", "motion_state_mode", "num_motion_events", "max_tx", "max_ty", "max_phi",
+    simulation_param_keys = {"motion_simulation_type", "motion_state_mode", "simulated_motion_type", "motion_type", "num_motion_events", "max_tx", "max_ty", "max_phi",
                              "max_center_x", "max_center_y", "seed", "motion_tau", "nonrigid_motion_amplitude"}
     for key in dir(params):
         if key.startswith("_"):
@@ -74,7 +74,8 @@ def _init_run_logging(params, n_levels, gn_iters_per_level):
 
     with open(log_path, "w") as f:
         f.write("Joint reconstruction run\n")
-        f.write(f"Motion type: {params.motion_type}\n")
+        f.write(f"Reconstruction motion type: {params.reconstruction_motion_type}\n")
+        f.write(f"Simulated motion type: {params.simulated_motion_type}\n")
         f.write(f"GN iterations per level: {gn_iters_per_level}\n\n")
         f.write("Parameters (excluding simulation parameters):\n")
         for key in sorted(param_items.keys()):

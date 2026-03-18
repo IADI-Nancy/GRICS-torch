@@ -35,7 +35,7 @@ class JointReconstructor:
         self.Ncoils = Ncoils
         self.Nz_full = int(Nz_full)
         self.device = KspaceData.device
-        if self.params.motion_type == "rigid":
+        if self.params.reconstruction_motion_type == "rigid":
             self.Nalpha = 6 if self.Nz_full > 1 else 3
         else:
             self.Nalpha = 3 if self.Nz_full > 1 else 2
@@ -221,7 +221,7 @@ class JointReconstructor:
         Data_res["ReconstructedImage"] = img_res
 
         mot_prev = Data_prev["MotionModel"]
-        if self.params.motion_type == "rigid":
+        if self.params.reconstruction_motion_type == "rigid":
             Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_motion_states), device=self.device)
             Data_res["MotionModel"][0,:] = mot_prev[0,:] * Data_res["Nx"] / Data_prev["Nx"]  # scale translations
             Data_res["MotionModel"][1,:] = mot_prev[1,:] * Data_res["Ny"] / Data_prev["Ny"]  # scale translations
@@ -246,12 +246,15 @@ class JointReconstructor:
     def _build_motion_operator(self, Data_res):
         Nx, Ny = Data_res["Nx"], Data_res["Ny"]
         alpha = Data_res["MotionModel"]
-        if self.params.motion_type == "rigid":
-            motionOperator = MotionOperator(Nx, Ny, alpha, self.params.motion_type, Nz=Data_res.get("Nz", 1))
+        if self.params.reconstruction_motion_type == "rigid":
+            motionOperator = MotionOperator(
+                Nx, Ny, alpha, self.params.reconstruction_motion_type, Nz=Data_res.get("Nz", 1)
+            )
         else:
             motion_signal = self.motion_signal
             motionOperator = MotionOperator(
-                Nx, Ny, alpha, self.params.motion_type, motion_signal=motion_signal.to(dtype=alpha.dtype), Nz=Data_res.get("Nz", 1)
+                Nx, Ny, alpha, self.params.reconstruction_motion_type,
+                motion_signal=motion_signal.to(dtype=alpha.dtype), Nz=Data_res.get("Nz", 1)
             )
         return motionOperator
 
@@ -289,7 +292,7 @@ class JointReconstructor:
         return img
 
     def _n_motion_params(self, Data_res):
-        if self.params.motion_type == "rigid":
+        if self.params.reconstruction_motion_type == "rigid":
             return self.Nalpha * self.params.N_motion_states
         return self.Nalpha * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
@@ -299,7 +302,7 @@ class JointReconstructor:
         b_data = J.adjoint(residual)
         x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=residual.device)
 
-        if self.params.motion_type == "non-rigid":
+        if self.params.reconstruction_motion_type == "non-rigid":
             reg_shape = (
                 (self.Nalpha, Data_res["Nx"], Data_res["Ny"], int(Data_res.get("Nz", 1)))
                 if int(Data_res.get("Nz", 1)) > 1
@@ -329,7 +332,7 @@ class JointReconstructor:
             mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_motion, tol=self.params.tol_motion)
         self._last_motion_cg_info = solver.last_info
 
-        if self.params.motion_type == "rigid":
+        if self.params.reconstruction_motion_type == "rigid":
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_motion_states)
         else:
             if int(Data_res.get("Nz", 1)) > 1:
@@ -354,9 +357,9 @@ class JointReconstructor:
             else:
                 Data_res["ReconstructedImage"] = torch.zeros((self.params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=self.device)
             
-            if self.params.motion_type == "rigid":
+            if self.params.reconstruction_motion_type == "rigid":
                 Data_res["MotionModel"] = torch.zeros((self.Nalpha, self.params.N_motion_states), device=self.device)
-            elif self.params.motion_type == "non-rigid":
+            elif self.params.reconstruction_motion_type == "non-rigid":
                 if int(Data_res.get("Nz", 1)) > 1:
                     Data_res["MotionModel"] = torch.zeros(
                         (self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]), device=self.device
@@ -542,7 +545,7 @@ class JointReconstructor:
                 _save_nonrigid_motion_debug(
                     Data_res,
                     idx_res + 1,
-                    self.params.motion_type,
+                    self.params.reconstruction_motion_type,
                     self.params.debug_folder,
                     self.params.flip_for_display,
                 )
@@ -601,10 +604,10 @@ class JointReconstructor:
                     flip_for_display=self.params.flip_for_display,
                 )
 
-        if self.params.motion_type == "rigid":
+        if self.params.reconstruction_motion_type == "rigid":
             save_final_rigid_motion_plots(best_motion, self.motion_plot_context, self.params.results_folder,
                                           self.params.N_motion_states, self.params.ResolutionLevels, self.params.data_type)
-        elif self.params.motion_type == "non-rigid":
+        elif self.params.reconstruction_motion_type == "non-rigid":
             save_final_nonrigid_alpha_maps(best_motion, best_image_unscaled[0], self.params.results_folder,
                                            flip_for_display=self.params.flip_for_display, motion_plot_context=self.motion_plot_context)
 

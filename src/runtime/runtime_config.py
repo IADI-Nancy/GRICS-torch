@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import tomllib
+import warnings
 import torch
 
 
@@ -21,6 +22,24 @@ def _load_toml_flat(path):
         data = tomllib.load(f)
     flat = _flatten(data)
     return {key.split(".")[-1]: value for key, value in flat.items()}
+
+
+def _rename_cfg_key(cfg, source_key, target_key):
+    if source_key not in cfg:
+        return
+    source_value = cfg.pop(source_key)
+    if target_key in cfg and cfg[target_key] != source_value:
+        raise ValueError(
+            f"Config provides conflicting values for '{source_key}' and '{target_key}'."
+        )
+    cfg[target_key] = source_value
+
+
+def _normalize_positive_int(value, name):
+    value = int(value)
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1.")
+    return value
 
 
 _RIGID_MOTION_KEYS = {
@@ -50,32 +69,15 @@ _NONRIGID_MOTION_KEYS = {
 }
 
 _CODE_DEFAULTS = {
-    "seed": 1,
     "use_scaled_motion_update": False,
     "espirit_max_iter": 100,
     "cg_true_residual_interval": 10,
-    "nonrigid_resp_cycles_min": 2.0,
-    "nonrigid_resp_cycles_max": 5.0,
     "jupyter_notebook_flag": False,
-    "runtime_device": "gpu",
 }
 
+_MOTION_TYPES = {"rigid", "non-rigid"}
 
-_MOTION_TYPE_ALIASES = {
-    "rigid": "rigid",
-    "non-rigid": "non-rigid",
-    "non_rigid": "non-rigid",
-    "nonrigid": "non-rigid",
-}
-
-_MOTION_STATE_MODE_ALIASES = {
-    "realistic": "realistic",
-    "per-shot": "per-shot",
-    "per_shot": "per-shot",
-    "discrete": "per-shot",
-    "shotwise": "per-shot",
-    "shot-wise": "per-shot",
-}
+_MOTION_STATE_MODES = {"realistic", "per-shot"}
 
 _SIM_TYPE_TO_MODEL = {
     "rigid": ("rigid", "realistic"),
@@ -87,38 +89,20 @@ _SIM_TYPE_TO_MODEL = {
 }
 
 
+_MOTION_SIM_TYPES = {
+    "as-it-is",
+    "no-motion-data",
+    "rigid",
+    "discrete-rigid",
+    "non-rigid",
+    "discrete-non-rigid",
+}
+
+_PER_SHOT_SIM_TYPES = {"discrete-rigid", "discrete-non-rigid"}
+
 def _drop_keys(cfg, keys):
     for key in keys:
         cfg.pop(key, None)
-
-
-_MOTION_SIM_ALIASES = {
-    # Dimension-agnostic legacy names.
-    "as-it-is": ("as-it-is", None),
-    "as_it_is": ("as-it-is", None),
-    "no-motion-data": ("no-motion-data", None),
-    "no_motion_data": ("no-motion-data", None),
-    "rigid": ("rigid", None),
-    "discrete-rigid": ("discrete-rigid", None),
-    "discrete_rigid": ("discrete-rigid", None),
-    "non-rigid": ("non-rigid", None),
-    "non_rigid": ("non-rigid", None),
-    "discrete-non-rigid": ("discrete-non-rigid", None),
-    "discrete_non_rigid": ("discrete-non-rigid", None),
-    # New explicit names.
-    "rigid_2d": ("rigid", "2D"),
-    "rigid_3d": ("rigid", "3D"),
-    "discrete_rigid_2d": ("discrete-rigid", "2D"),
-    "discrete_rigid_3d": ("discrete-rigid", "3D"),
-    "nonrigid_2d": ("non-rigid", "2D"),
-    "nonrigid_3d": ("non-rigid", "3D"),
-    "discrete_nonrigid_2d": ("discrete-non-rigid", "2D"),
-    "discrete_nonrigid_3d": ("discrete-non-rigid", "3D"),
-    "no_motion_data_2d": ("no-motion-data", "2D"),
-    "no_motion_data_3d": ("no-motion-data", "3D"),
-    "as_it_is_2d": ("as-it-is", "2D"),
-    "as_it_is_3d": ("as-it-is", "3D"),
-}
 
 
 def _normalize_data_dimension(dim):
@@ -132,27 +116,27 @@ def _normalize_data_dimension(dim):
     raise ValueError("data_dimension must be '2D' or '3D'.")
 
 
-def _parse_motion_simulation_type(raw_type):
+def _normalize_motion_simulation_type(raw_type):
     key = str(raw_type).strip().lower()
-    if key not in _MOTION_SIM_ALIASES:
+    if key not in _MOTION_SIM_TYPES:
         raise ValueError(f"Unsupported motion_simulation_type: {raw_type}")
-    return _MOTION_SIM_ALIASES[key]
+    return key
 
 
 def _normalize_motion_type(raw_motion_type):
     key = str(raw_motion_type).strip().lower()
-    if key not in _MOTION_TYPE_ALIASES:
+    if key not in _MOTION_TYPES:
         raise ValueError(f"Unsupported motion_type: {raw_motion_type}")
-    return _MOTION_TYPE_ALIASES[key]
+    return key
 
 
 def _normalize_motion_state_mode(raw_mode):
     key = str(raw_mode).strip().lower()
-    if key not in _MOTION_STATE_MODE_ALIASES:
+    if key not in _MOTION_STATE_MODES:
         raise ValueError(
             f"Unsupported motion_state_mode: {raw_mode}. Supported: 'realistic', 'per-shot'."
         )
-    return _MOTION_STATE_MODE_ALIASES[key]
+    return key
 
 
 def _simulation_type_from_motion_model(motion_type, motion_state_mode):
@@ -175,7 +159,11 @@ def _refresh_derived(params):
     if not hasattr(params, "jupyter_notebook_flag"):
         params.jupyter_notebook_flag = False
     if not hasattr(params, "runtime_device"):
-        params.runtime_device = "gpu"
+        warnings.warn(
+            "runtime_device not specified; defaulting to 'cpu'.",
+            RuntimeWarning,
+        )
+        params.runtime_device = "cpu"
     params.runtime_device = str(params.runtime_device).lower()
     if params.runtime_device not in {"cpu", "gpu"}:
         raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
@@ -192,11 +180,20 @@ def _refresh_derived(params):
 
     has_sampling_sim = hasattr(params, "NshotsPerNex") and hasattr(params, "Nex")
     if has_sampling_sim:
+        params.NshotsPerNex = _normalize_positive_int(params.NshotsPerNex, "NshotsPerNex")
+        params.Nex = _normalize_positive_int(params.Nex, "Nex")
         params.Nshots = int(params.NshotsPerNex) * int(params.Nex)
     elif not hasattr(params, "Nshots"):
         params.Nshots = 1
 
-    params.motion_type = _normalize_motion_type(params.motion_type)
+    if not hasattr(params, "reconstruction_motion_type"):
+        raise ValueError("reconstruction_motion_type must be provided.")
+    params.reconstruction_motion_type = _normalize_motion_type(params.reconstruction_motion_type)
+
+    if hasattr(params, "simulated_motion_type") and params.simulated_motion_type is not None:
+        params.simulated_motion_type = _normalize_motion_type(params.simulated_motion_type)
+    else:
+        params.simulated_motion_type = None
 
     if hasattr(params, "motion_state_mode"):
         params.motion_state_mode = _normalize_motion_state_mode(params.motion_state_mode)
@@ -221,20 +218,19 @@ def _refresh_derived(params):
     else:
         params.data_dimension = _normalize_data_dimension(data_dim_raw)
 
-    # Canonicalize motion simulation type and track optional type-implied dimension.
-    motion_type_canonical, motion_type_dim = _parse_motion_simulation_type(params.motion_simulation_type)
-    existing_motion_dim = _normalize_data_dimension(getattr(params, "motion_simulation_dimension", None))
-    if existing_motion_dim is not None:
-        motion_type_dim = existing_motion_dim
-    params.motion_simulation_type = motion_type_canonical
-    params.motion_simulation_dimension = motion_type_dim
+    params.motion_simulation_type = _normalize_motion_simulation_type(params.motion_simulation_type)
 
     inferred_motion_type, inferred_mode = _SIM_TYPE_TO_MODEL[params.motion_simulation_type]
-    if inferred_motion_type is not None and inferred_motion_type != params.motion_type:
-        raise ValueError(
-            f"motion_simulation_type '{params.motion_simulation_type}' is incompatible with "
-            f"motion_type '{params.motion_type}'."
-        )
+    if inferred_motion_type is not None:
+        if (
+            params.simulated_motion_type is not None
+            and inferred_motion_type != params.simulated_motion_type
+        ):
+            raise ValueError(
+                f"motion_simulation_type '{params.motion_simulation_type}' is incompatible with "
+                f"simulated_motion_type '{params.simulated_motion_type}'."
+            )
+        params.simulated_motion_type = inferred_motion_type
     if inferred_mode is not None:
         if getattr(params, "motion_state_mode", None) is not None and params.motion_state_mode != inferred_mode:
             raise ValueError(
@@ -242,16 +238,28 @@ def _refresh_derived(params):
                 f"motion_simulation_type='{params.motion_simulation_type}'."
             )
         params.motion_state_mode = inferred_mode
-    elif not hasattr(params, "motion_state_mode"):
+    else:
+        params.simulated_motion_type = None
+        if (
+            params.motion_simulation_type == "as-it-is"
+            and getattr(params, "motion_state_mode", None) is not None
+        ):
+            raise ValueError(
+                "motion_state_mode must not be set when motion_simulation_type='as-it-is'."
+            )
         params.motion_state_mode = None
 
-    if motion_type_dim is not None and motion_type_dim != params.data_dimension:
-        raise ValueError(
-            f"motion_simulation_type implies {motion_type_dim}, but data_dimension is {params.data_dimension}."
-        )
+    if params.motion_simulation_type == "non-rigid":
+        if not hasattr(params, "nonrigid_resp_cycles_min"):
+            raise ValueError(
+                "nonrigid_resp_cycles_min must be specified for realistic non-rigid motion simulation."
+            )
+        if not hasattr(params, "nonrigid_resp_cycles_max"):
+            raise ValueError(
+                "nonrigid_resp_cycles_max must be specified for realistic non-rigid motion simulation."
+            )
 
     # Optional explicit dimension tags from config files.
-    recon_dim = _normalize_data_dimension(getattr(params, "reconstruction_dimension", None))
     motion_cfg_dim = _normalize_data_dimension(getattr(params, "motion_simulation_config_dimension", None))
     if recon_dim is not None and recon_dim != params.data_dimension:
         raise ValueError(
@@ -271,25 +279,19 @@ def _refresh_derived(params):
                 f"but data_dimension is {params.data_dimension}."
             )
 
-    manual_states = int(params.N_motion_states)
-    if manual_states < 1:
-        raise ValueError("N_motion_states must be >= 1.")
-    params.N_motion_states = manual_states
-
-    if params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
-        # Per-shot simulations always use one reconstruction state per shot.
-        params.N_motion_states = params.Nshots
-    elif params.motion_simulation_type in ["rigid", "non-rigid", "no-motion-data", "as-it-is"]:
-        # For all non-per-shot modes, keep the manual reconstruction bin count.
-        params.N_motion_states = manual_states
+    manual_states = _normalize_positive_int(params.N_motion_states, "N_motion_states")
+    params.N_motion_states = params.Nshots if params.motion_simulation_type in _PER_SHOT_SIM_TYPES else manual_states
 
     if not hasattr(params, "Nex"):
         params.Nex = 1
 
-    os.makedirs(params.debug_folder, exist_ok=True)
-    os.makedirs(params.logs_folder, exist_ok=True)
-    os.makedirs(params.results_folder, exist_ok=True)
-    os.makedirs(params.initial_data_folder, exist_ok=True)
+    for folder in (
+        params.debug_folder,
+        params.logs_folder,
+        params.results_folder,
+        params.initial_data_folder,
+    ):
+        os.makedirs(folder, exist_ok=True)
 
     return params
 
@@ -297,7 +299,8 @@ def _refresh_derived(params):
 def load_config(
     *,
     data_type,
-    motion_type=None,
+    reconstruction_motion_type=None,
+    simulated_motion_type=None,
     reconstruction_config,
     shepp_logan_config=None,
     from_image_config=None,
@@ -327,7 +330,9 @@ def load_config(
     cfg.update(_load_toml_flat(general_path))
     cfg["data_type"] = data_type
 
-    cfg.update(_load_toml_flat(reconstruction_config))
+    reconstruction_cfg = _load_toml_flat(reconstruction_config)
+    _rename_cfg_key(reconstruction_cfg, "motion_type", "reconstruction_motion_type")
+    cfg.update(reconstruction_cfg)
 
     if data_type == "shepp-logan":
         if not shepp_logan_config:
@@ -347,10 +352,14 @@ def load_config(
     if sampling_config:
         cfg.update(_load_toml_flat(sampling_config))
     if motion_simulation_config:
-        cfg.update(_load_toml_flat(motion_simulation_config))
+        motion_cfg = _load_toml_flat(motion_simulation_config)
+        _rename_cfg_key(motion_cfg, "motion_type", "simulated_motion_type")
+        cfg.update(motion_cfg)
 
-    if motion_type is not None:
-        cfg["motion_type"] = motion_type
+    if reconstruction_motion_type is not None:
+        cfg["reconstruction_motion_type"] = reconstruction_motion_type
+    if simulated_motion_type is not None:
+        cfg["simulated_motion_type"] = simulated_motion_type
     if kspace_sampling_type is not None:
         cfg["kspace_sampling_type"] = kspace_sampling_type
     if motion_simulation_type is not None:
@@ -368,9 +377,10 @@ def load_config(
     if flip_for_display is not None:
         cfg["flip_for_display"] = bool(flip_for_display)
 
-    if not hasattr(SimpleNamespace(**cfg), "motion_type"):
+    if "reconstruction_motion_type" not in cfg:
         raise ValueError(
-            "motion_type must be provided either in reconstruction config or as load_config argument."
+            "reconstruction_motion_type must be provided either in reconstruction config "
+            "or as a load_config argument."
         )
 
     if "kspace_sampling_type" in cfg:
@@ -400,14 +410,19 @@ def load_config(
     if motion_simulation_type_final is None and sampling_from_data:
         motion_simulation_type_final = "as-it-is"
     elif motion_simulation_type_final is None:
-        # Synthetic modes are derived from motion_type + motion_state_mode.
+        # Synthetic modes are derived from simulated_motion_type + motion_state_mode.
         if motion_simulation_config is None and "motion_state_mode" not in cfg:
             motion_simulation_type_final = "no-motion-data"
         else:
             motion_state_mode_final = cfg.get("motion_state_mode", "realistic")
-            motion_simulation_type_final = _simulation_type_from_motion_model(
-                cfg["motion_type"], motion_state_mode_final
+            simulated_motion_type_final = cfg.get(
+                "simulated_motion_type",
+                cfg["reconstruction_motion_type"],
             )
+            motion_simulation_type_final = _simulation_type_from_motion_model(
+                simulated_motion_type_final, motion_state_mode_final
+            )
+            cfg["simulated_motion_type"] = _normalize_motion_type(simulated_motion_type_final)
             cfg["motion_state_mode"] = _normalize_motion_state_mode(motion_state_mode_final)
     cfg["motion_simulation_type"] = motion_simulation_type_final
 
@@ -417,9 +432,7 @@ def load_config(
                 "NshotsPerNex and Nex are required when kspace_sampling_type is specified."
             )
 
-    motion_type_canonical, motion_type_dim = _parse_motion_simulation_type(cfg["motion_simulation_type"])
-    cfg["motion_simulation_type"] = motion_type_canonical
-    cfg["motion_simulation_dimension"] = motion_type_dim
+    cfg["motion_simulation_type"] = _normalize_motion_simulation_type(cfg["motion_simulation_type"])
 
     if cfg["motion_simulation_type"] in {"as-it-is", "no-motion-data"}:
         _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)

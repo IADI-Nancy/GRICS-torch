@@ -46,6 +46,15 @@ class MotionBinner:
 
         Nbins = params.N_motion_states
         Nex = params.Nex
+        num_motion_samples = int(motion_curve.numel())
+
+        if num_motion_samples < 1:
+            raise ValueError("motion_curve must contain at least one sample.")
+        if Nbins > num_motion_samples:
+            raise ValueError(
+                f"N_motion_states ({Nbins}) cannot exceed the number of available motion samples "
+                f"({num_motion_samples})."
+            )
 
         # ---- K-means clustering (global, across all Nex) ----
         labels, centers = _kmeans_torch(motion_curve.unsqueeze(1), Nbins)

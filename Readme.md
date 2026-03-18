@@ -132,8 +132,11 @@ Independent random permutation per `nex`, then split into `NshotsPerNex` chunks.
 ## Motion Simulation Modes
 
 Configured with:
-- `motion_type`: `"rigid"` or `"non-rigid"`
+- `simulated_motion_type`: `"rigid"` or `"non-rigid"`
 - `motion_state_mode`: `"realistic"` or `"per-shot"`
+
+Reconstruction uses a separate parameter:
+- `reconstruction_motion_type`: `"rigid"` or `"non-rigid"`
 
 in `config/motion_simulation/*.toml` (now one file per `{2D,3D} x {rigid,non-rigid}`).
 Implemented in `src/preprocessing/MotionSimulator.py`.
@@ -141,6 +144,7 @@ Implemented in `src/preprocessing/MotionSimulator.py`.
 ### `as-it-is`
 
 No synthetic corruption added. Only valid for `real-world`/`raw-data` (already motion-corrupted).
+`motion_state_mode` must not be set for this mode.
 
 ### `no-motion-data`
 
@@ -191,11 +195,11 @@ Key points:
 
 State-count rules are set in `runtime_config.refresh_derived(...)`:
 - `motion_state_mode = "per-shot"`: `N_motion_states = Nshots`
-- `motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
-- `motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
+- `simulated_motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
+- `simulated_motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
 - `as-it-is` and `no-motion-data`: `N_motion_states` stays the manual reconstruction value
 
-For loaded `real-world` / `raw-data`, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
+For loaded `real-world` / `raw-data` with an explicit per-shot synthetic simulation mode, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
 
 Note: you can override the reconstruction state count:
 

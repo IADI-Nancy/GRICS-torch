@@ -93,7 +93,7 @@ class DataLoader:
     def _apply_or_import_motion(self):
         motion_sim_device = self.t_device
         if (
-            self.params.motion_type == "rigid"
+            self.params.simulated_motion_type == "rigid"
             and self.params.motion_state_mode == "realistic"
         ):
             motion_sim_device = torch.device("cpu")
@@ -136,14 +136,14 @@ class DataLoader:
                 motionSimulator._simulate_no_motion()
                 self.image_no_moco = self.image_ground_truth
             else:      
-                if self.params.motion_type == "rigid":
+                if self.params.simulated_motion_type == "rigid":
                     if self.params.motion_state_mode == "per-shot":
                         motionSimulator._simulate_discrete_rigid_motion()
                     elif self.params.motion_state_mode == "realistic":
                         motionSimulator._simulate_realistic_rigid_motion()
                     else:
                         raise ValueError("Unknown motion_state_mode for rigid motion.")
-                elif self.params.motion_type == "non-rigid":
+                elif self.params.simulated_motion_type == "non-rigid":
                     if self.params.motion_state_mode == "per-shot":
                         motionSimulator._simulate_discrete_non_rigid_motion()
                     elif self.params.motion_state_mode == "realistic":
@@ -191,7 +191,7 @@ class DataLoader:
                 "alpha_visual_scale": None,
             }
             if (
-                self.params.motion_type == "non-rigid"
+                self.params.simulated_motion_type == "non-rigid"
                 and hasattr(self, "alpha_maps_true")
                 and self.alpha_maps_true is not None
             ):
@@ -266,7 +266,7 @@ class DataLoader:
         if (
             hasattr(self, "alpha_maps_true")
             and self.alpha_maps_true is not None
-            and self.params.motion_type == "non-rigid"
+            and self.params.simulated_motion_type == "non-rigid"
             and self.alpha_maps_true.ndim >= 3
             and self.alpha_maps_true.shape[0] >= 2
         ):
@@ -833,7 +833,7 @@ class DataLoader:
 
     def _debug_check_true_motion_image_reconstruction(self, motionSimulator):
         # This consistency check is meaningful only for simulated non-rigid data.
-        if self.params.motion_type != "non-rigid":
+        if self.params.simulated_motion_type != "non-rigid":
             return
         if not self._has_simulated_motion():
             return
@@ -850,7 +850,7 @@ class DataLoader:
             nsamples_true = self.Nx * self.Ny * self.Nz
 
             motion_op_true = MotionOperator(
-                self.Nx, self.Ny, alpha_true, self.params.motion_type,
+                self.Nx, self.Ny, alpha_true, self.params.simulated_motion_type,
                 motion_signal=signal_true, Nz=self.Nz,
             )
 
