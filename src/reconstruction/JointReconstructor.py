@@ -116,11 +116,6 @@ class JointReconstructor:
         imag = interp_part(img.imag)
         return torch.complex(real, imag)
 
-    # Backward-compatible alias used by existing code paths.
-    def _resize_img_2d(self, img, new_size):
-        return self._resize_img_xy(img, new_size)
-        
-
     def _downsample_sampling_indices(self, Sampling_full, Nx_res, Ny_res, Nz_res=1):
         Nx_full, Ny_full = self.Data_full["Nx"], self.Data_full["Ny"]
         Nz_full = int(self.Data_full.get("Nz", 1))

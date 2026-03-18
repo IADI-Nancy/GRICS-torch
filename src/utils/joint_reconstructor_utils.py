@@ -30,14 +30,6 @@ def _assign_cached_reg_scale(params, Data_res, cache_key, solver, reference_vec)
     solver.reg_scale = cache[cache_key]
 
 
-def _initialize_global_tracking():
-    global_best_metric = float("inf")
-    global_best_image = None
-    global_best_motion = None
-    global_converged = False
-    return global_best_metric, global_best_image, global_best_motion, global_converged
-
-
 def _parse_gn_iterations_per_level(params, res_levels):
     gn_cfg = params.GN_iterations_per_level
     if isinstance(gn_cfg, int):
@@ -109,14 +101,6 @@ def _initialize_level_tracking():
     best_image = None
     best_motion = None
     return residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion
-
-
-def _update_global_best(best_relres, best_image, best_motion, global_best_metric, global_best_image, global_best_motion):
-    if best_relres < global_best_metric:
-        global_best_metric = best_relres
-        global_best_image = best_image.clone()
-        global_best_motion = best_motion.clone()
-    return global_best_metric, global_best_image, global_best_motion
 
 
 def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, flip_for_display):

@@ -563,25 +563,6 @@ def save_residual_subplots(values_by_level, title, y_label, out_path):
     plt.close(fig)
 
 
-def save_residual_convergence(residual_norms, title, res_level, logs_folder):
-    os.makedirs(logs_folder, exist_ok=True)
-
-    plt.figure()
-    plt.plot(residual_norms, marker="o")
-    plt.xlabel("GN iteration")
-    plt.ylabel("||residual||2")
-    plt.title(f"Residual convergence ({title}, resolution level {res_level})")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.ylim(bottom=0)
-    plt.savefig(os.path.join(logs_folder, f"residual_convergence_{title}_res{res_level}.png"))
-    plt.close()
-
-    with open(os.path.join(logs_folder, f"residual_convergence_{title}_res{res_level}.txt"), "w") as f:
-        for i, v in enumerate(residual_norms):
-            f.write(f"{i+1}\t{v}\n")
-
-
 def _visualize_ky_order(ky_per_shot, ny, folder, fname="ky_sampling_order.png"):
     img = torch.zeros((ny, ny, 3), dtype=torch.float64)
     all_ky = torch.cat(ky_per_shot)

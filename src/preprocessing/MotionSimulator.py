@@ -215,7 +215,6 @@ class MotionSimulator:
 
     def _create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
-        t = torch.arange(self.Ny*self.params.Nex, device=self.t_device, dtype=torch.float64)
         n_events = int(getattr(self.params, "num_motion_events", 3))
         n_events = max(1, min(n_events, self.Ny * self.params.Nex))
         tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
@@ -288,7 +287,6 @@ class MotionSimulator:
     def _create_realistic_motion_curves_3d(self):
         # Time axis: one value per k-space line (Ny * Nex global states).
         n_states = self.Ny * self.params.Nex
-        t = torch.arange(n_states, device=self.t_device, dtype=torch.float64)
         n_events = int(getattr(self.params, "num_motion_events", 3))
         n_events = max(1, min(n_events, n_states))
         tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
