@@ -277,18 +277,10 @@ def _refresh_derived(params):
     params.N_motion_states = manual_states
 
     if params.motion_simulation_type in ["discrete-rigid", "discrete-non-rigid"]:
-        # Simulated motion active: use simulation-driven state count.
+        # Per-shot simulations always use one reconstruction state per shot.
         params.N_motion_states = params.Nshots
-    elif params.motion_simulation_type == "rigid":
-        # Simulated motion active: use simulation-driven state count.
-        if not hasattr(params, "num_motion_events"):
-            raise ValueError("Missing 'num_motion_events' for rigid simulation.")
-        params.N_motion_states = int(params.num_motion_events) + 1
-    elif params.motion_simulation_type == "non-rigid":
-        # For realistic non-rigid simulation, keep user-defined reconstruction bins.
-        params.N_motion_states = manual_states
-    elif params.motion_simulation_type in ["no-motion-data", "as-it-is"]:
-        # No simulated motion: keep manual reconstruction value.
+    elif params.motion_simulation_type in ["rigid", "non-rigid", "no-motion-data", "as-it-is"]:
+        # For all non-per-shot modes, keep the manual reconstruction bin count.
         params.N_motion_states = manual_states
 
     if not hasattr(params, "Nex"):
@@ -297,7 +289,7 @@ def _refresh_derived(params):
     os.makedirs(params.debug_folder, exist_ok=True)
     os.makedirs(params.logs_folder, exist_ok=True)
     os.makedirs(params.results_folder, exist_ok=True)
-    os.makedirs(params.input_data_folder, exist_ok=True)
+    os.makedirs(params.initial_data_folder, exist_ok=True)
 
     return params
 

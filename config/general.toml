@@ -6,7 +6,7 @@ logs_folder = "logs/"
 # Folder for final outputs (images, motion model).
 results_folder = "results/"
 # Folder for saved input data artifacts (ground truth/distorted images, motion signals, etc.).
-input_data_folder = "input_data/"
+initial_data_folder = "initial_data/"
 
 [runtime]
 # Enable debug visualizations and deterministic behavior where possible.
@@ -19,7 +19,7 @@ seed = 1
 verbose = true
 # Print JointReconstructor progress to console.
 print_to_console = true
-# Clean debug/log/results/input_data folders before each run.
+# Clean debug/log/results/initial_data folders before each run.
 clean_output_folders_before_run = true
 
 

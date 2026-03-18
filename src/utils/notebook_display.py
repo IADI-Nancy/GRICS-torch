@@ -106,7 +106,7 @@ def display_run_panels(
         has_ground_truth = _infer_has_ground_truth(params)
 
     logs_folder = Path(params.logs_folder)
-    input_folder = Path(params.input_data_folder)
+    input_folder = Path(params.initial_data_folder)
     results_folder = Path(params.results_folder)
 
     _display_log_images(logs_folder, has_ground_truth=has_ground_truth)
@@ -190,7 +190,7 @@ def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_
     if has_ground_truth is None:
         has_ground_truth = _infer_has_ground_truth(params)
 
-    input_folder = Path(params.input_data_folder)
+    input_folder = Path(params.initial_data_folder)
     row_width = 13.0 if has_ground_truth else 10.0
     sampling_path = _first_existing_glob(
         input_folder,
@@ -252,7 +252,7 @@ def display_3d_image_matrix(image_uncorrected, image_corrected, image_gt):
 
 def display_logs_and_motion_same_as_2d(params):
     logs_folder = Path(params.logs_folder)
-    input_folder = Path(params.input_data_folder)
+    input_folder = Path(params.initial_data_folder)
     results_folder = Path(params.results_folder)
 
     _display_log_images(logs_folder, has_ground_truth=True)

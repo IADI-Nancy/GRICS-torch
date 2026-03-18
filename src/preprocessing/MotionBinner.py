@@ -73,7 +73,7 @@ class MotionBinner:
             ky_idx=ky_idx,
             nex_idx=nex_idx,
             nbins=Nbins,
-            output_folder=params.input_data_folder,
+            output_folder=params.initial_data_folder,
             resolution_levels=params.ResolutionLevels,
             tx=tx,
             ty=ty,

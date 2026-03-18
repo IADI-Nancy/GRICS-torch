@@ -40,7 +40,7 @@ class DataLoader:
         motionSimulator = self._apply_or_import_motion()
         self._build_sampling_indices()
 
-        self._save_input_data_artifacts()
+        self._save_initial_data_artifacts()
 
         if self.params.debug_flag and self._has_simulated_motion():
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
@@ -240,8 +240,8 @@ class DataLoader:
             f"scale={self.kspace_scale:.6e}"
         )
 
-    def _save_input_data_artifacts(self):
-        folder = self.params.input_data_folder
+    def _save_initial_data_artifacts(self):
+        folder = self.params.initial_data_folder
         if not folder:
             return
         os.makedirs(folder, exist_ok=True)
@@ -624,7 +624,7 @@ class DataLoader:
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
-            folder=self.params.input_data_folder, fname=f"ky_order_rawdata_slice{slice_idx}.png"
+            folder=self.params.initial_data_folder, fname=f"ky_order_rawdata_slice{slice_idx}.png"
         )
         
 
@@ -701,7 +701,7 @@ class DataLoader:
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
-            folder=self.params.input_data_folder, fname=f"ky_order_realworld_slice{slice_idx}.png"
+            folder=self.params.initial_data_folder, fname=f"ky_order_realworld_slice{slice_idx}.png"
         )
 
     def _calc_espirit_maps(self):

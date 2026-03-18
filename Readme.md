@@ -87,7 +87,7 @@ Loaded via `DataLoader.load_realworld_data(...)` from HDF5 with datasets:
 - `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
 - `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
 - `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
-- `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`) (used by the 3D real-world path)
+- `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 - `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 
 For 2D `real-world` and `raw-data`, the `slice_idx` argument of `DataLoader` selects the slice/partition to load (default: `0` if omitted).
@@ -102,9 +102,6 @@ Loaded from raw scanner and physiological files using `RawDataReader`:
 - physiological data file in SAEC [2, 3] format (`saec_file`)
 
 The reader will convert these files to the format corresponding to the 'real-world' mode.
-
-For 3D acquisitions, the converted output preserves kz-resolved acquisition ordering so that motion binning and sampling can use real `(ky, kz)` timing-consistent readouts.
-
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -153,7 +150,7 @@ Adds no synthetic corruption and replaces the available motion signal with zeros
 
 Shot-wise rigid states:
 - one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
-- random `(tx, ty, phi)` per shot in configured ranges
+- random `(tx, ty, phi)` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case) per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
 
 ### `rigid` + `motion_state_mode = "realistic"`
@@ -161,17 +158,17 @@ Shot-wise rigid states:
 Continuous rigid curve over full acquisition:
 - random event times over `Ny * Nex` lines
 - smooth raised-cosine transitions (`motion_tau`)
-- random event amplitudes for `tx`, `ty`, `phi`
+- random event amplitudes for `tx`, `ty`, `phi` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case)
 - data is then reclustered to `N_motion_states` from the simulated navigator signal (first principal component of the simulated rigid motion parameters)
 
-For corruption, simulation uses one global state per acquired line (`Ny * Nex` states).
+For corruption, simulation uses one global state per acquired line (`Ny * Nz * Nex` states).
 
 ### `non-rigid` + `motion_state_mode = "per-shot"`
 
 Shot-wise non-rigid with fixed spatial basis maps:
-- displacement field maps `alpha_x`, `alpha_y` simulate respiration
+- displacement field maps `alpha_x`, `alpha_y` (+ `alpha_z` for 3D) simulate respiration
 - one random scalar per shot (`S`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
-- displacement at state `m`: `[ux, uy] = [alpha_x, alpha_y] * S[m]`
+- displacement at state `m`: `[ux, uy, (uz)] = [alpha_x, alpha_y, (alpha_z)] * S[m]`
 
 ### `non-rigid` + `motion_state_mode = "realistic"`
 
@@ -180,8 +177,8 @@ Continuous sinusoidal temporal curve:
 - random cycles per image in `[nonrigid_resp_cycles_min, nonrigid_resp_cycles_max]`
 - normalized to unit amplitude
 
-Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y`) scaled by `nonrigid_motion_amplitude`.
-For corruption, simulation uses one state per acquired line (`Ny * Nex` states).
+Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z` for 3D) scaled by `nonrigid_motion_amplitude`.
+For corruption, simulation uses one state per acquired line (`Ny * Nz * Nex` states).
 
 ## Motion Binning and Reconstruction States
 
@@ -189,19 +186,36 @@ After loading or simulation, the motion curve is clustered with k-means (`Motion
 
 Key points:
 - simulation state count and reconstruction state count can differ.
-- corruption may be line-wise (`Ny * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
+- corruption may be line-wise (`Ny * Nz * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
+- `N_motion_states` is a manual reconstruction setting from the reconstruction TOML (or from an explicit `load_config(..., N_motion_states=...)` override).
 
-Default state-count rules are set in `runtime_config.refresh_derived(...)`:
+State-count rules are set in `runtime_config.refresh_derived(...)`:
 - `motion_state_mode = "per-shot"`: `N_motion_states = Nshots`
-- `motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states = num_motion_events + 1`
-- `motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the reconstruction config value
-- `as-it-is` and `no-motion-data`: `N_motion_states` stays the reconstruction config value
+- `motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
+- `motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
+- `as-it-is` and `no-motion-data`: `N_motion_states` stays the manual reconstruction value
+
+For loaded `real-world` / `raw-data`, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
+
+Note: you can override the reconstruction state count:
+
+Example:
+
+```python
+params = load_config(
+    data_type="real-world",
+    reconstruction_config="config/reconstruction/nonrigid_fast_2d.toml",
+    N_motion_states=6,
+)
+```
+
+Note: this manual override is not respected for `per-shot` modes, where `N_motion_states` is forced to `Nshots`
 
 ## Outputs
 
 Each run writes into folders from `config/general.toml`:
 
-- `input_data/`: sampling order, motion curves, corrupted and ground-truth images (if they exist), and simulated motion (if it exists)
+- `initial_data/`: sampling order, motion curves, corrupted and ground-truth images (if they exist), and simulated motion (if it exists)
 - `debug_outputs/`: results per reconstruction level
 - `logs/`: residual curves and run log
 - `results/`: final reconstructed outputs

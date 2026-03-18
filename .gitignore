@@ -6,7 +6,7 @@ __pycache__/
 debug_outputs/
 logs/
 results/
-input_data/
+initial_data/
 tests/artifacts/
 bart-*
 .env
