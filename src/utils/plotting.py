@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize, TwoSlopeNorm
+from matplotlib.patches import Rectangle
 
 
 _ORIENT_LABELS = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
@@ -310,6 +311,53 @@ def _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels):
         ax.axvline(right, color=color, linestyle="--", linewidth=1.4, alpha=0.9)
 
 
+def _add_resolution_center_boxes(ax, ny, nz, resolution_levels):
+    if resolution_levels is None:
+        return
+    if ny <= 0 or nz <= 0:
+        return
+
+    colors = ["green", "red", "tab:blue", "tab:orange", "tab:purple", "tab:brown"]
+    for i, frac in enumerate(resolution_levels):
+        try:
+            frac = float(frac)
+        except Exception:
+            continue
+        if frac <= 0:
+            continue
+        frac = min(frac, 1.0)
+        height = frac * ny
+        width = frac * nz
+        x0 = (nz - width) / 2.0 - 0.5
+        y0 = (ny - height) / 2.0 - 0.5
+        rect = Rectangle(
+            (x0, y0),
+            width,
+            height,
+            fill=False,
+            edgecolor=colors[i % len(colors)],
+            linestyle="--",
+            linewidth=1.6,
+            alpha=0.9,
+        )
+        ax.add_patch(rect)
+
+
+def _motion_value_norm(motion_cpu, y_limits=None):
+    if y_limits is not None:
+        vmin, vmax = float(y_limits[0]), float(y_limits[1])
+    else:
+        vmin = float(torch.min(motion_cpu).item())
+        vmax = float(torch.max(motion_cpu).item())
+
+    if vmin < 0 < vmax:
+        vmax_abs = max(abs(vmin), abs(vmax), 1e-12)
+        return TwoSlopeNorm(vmin=-vmax_abs, vcenter=0.0, vmax=vmax_abs), "coolwarm"
+    if abs(vmax - vmin) < 1e-12:
+        vmax = vmin + 1e-12
+    return Normalize(vmin=vmin, vmax=vmax), "viridis"
+
+
 def compute_motion_y_limits(
     motion_curve,
     tx=None,
@@ -354,6 +402,7 @@ def save_clustered_motion_plots(
     labels,
     ky_idx,
     nex_idx,
+    kz_idx,
     nbins,
     output_folder,
     resolution_levels=None,
@@ -390,28 +439,56 @@ def save_clustered_motion_plots(
     nex_cpu = nex_idx.detach().cpu()
     time_idx = torch.arange(len(motion_cpu))
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    if tx is not None:
-        ax.plot(torch.as_tensor(tx).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid tx (line)")
-    if ty is not None:
-        ax.plot(torch.as_tensor(ty).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid ty (line)")
-    if phi is not None:
-        ax.plot(torch.as_tensor(phi).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid phi (line)")
-    if tz is not None:
-        ax.plot(torch.as_tensor(tz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid tz (line)")
-    if rx is not None:
-        ax.plot(torch.as_tensor(rx).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid rx (line)")
-    if ry is not None:
-        ax.plot(torch.as_tensor(ry).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid ry (line)")
-    if rz is not None:
-        ax.plot(torch.as_tensor(rz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="Rigid rz (line)")
+    def _add_rigid_param_legends(ax, handle_by_name):
+        translation_names = [name for name in ["tx", "ty", "tz"] if name in handle_by_name]
+        rotation_names = [name for name in ["phi", "rx", "ry", "rz"] if name in handle_by_name]
+        legend_style = {
+            "framealpha": 0.9,
+            "borderpad": 0.25,
+            "labelspacing": 0.2,
+            "handlelength": 1.6,
+            "handletextpad": 0.35,
+            "borderaxespad": 0.35,
+            "fontsize": 9,
+        }
 
-    if data_type in {"real-world", "raw-data"}:
-        sample_label_prefix = "Measured motion signal samples"
-    elif data_type == "shepp-logan":
-        sample_label_prefix = "PC1 motion samples"
-    else:
-        sample_label_prefix = "Motion signal samples"
+        translation_legend = None
+        if translation_names:
+            translation_handles = [handle_by_name[name] for name in translation_names]
+            translation_legend = ax.legend(
+                handles=translation_handles,
+                loc="lower left",
+                bbox_to_anchor=(0.01, 0.01),
+                **legend_style,
+            )
+            ax.add_artist(translation_legend)
+
+        if rotation_names:
+            rotation_handles = [handle_by_name[name] for name in rotation_names]
+            x_anchor = 0.15 if translation_legend is not None else 0.01
+            ax.legend(
+                handles=rotation_handles,
+                loc="lower left",
+                bbox_to_anchor=(x_anchor, 0.01),
+                **legend_style,
+            )
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    line_handles = {}
+    if tx is not None:
+        line_handles["tx"] = ax.plot(torch.as_tensor(tx).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="tx")[0]
+    if ty is not None:
+        line_handles["ty"] = ax.plot(torch.as_tensor(ty).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="ty")[0]
+    if phi is not None:
+        line_handles["phi"] = ax.plot(torch.as_tensor(phi).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="phi")[0]
+    if tz is not None:
+        line_handles["tz"] = ax.plot(torch.as_tensor(tz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="tz")[0]
+    if rx is not None:
+        line_handles["rx"] = ax.plot(torch.as_tensor(rx).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="rx")[0]
+    if ry is not None:
+        line_handles["ry"] = ax.plot(torch.as_tensor(ry).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="ry")[0]
+    if rz is not None:
+        line_handles["rz"] = ax.plot(torch.as_tensor(rz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="rz")[0]
 
     for nex in torch.unique(nex_cpu):
         mask = nex_cpu == nex
@@ -423,15 +500,15 @@ def save_clustered_motion_plots(
             cmap=cluster_cmap,
             norm=norm_color,
             marker=markers[int(nex) % len(markers)],
-            label=f"{sample_label_prefix} (rep {int(nex) + 1})",
         )
     ax.set_xlabel("Time / acquisition order")
     ax.set_ylabel("Motion amplitude")
-    ax.set_title("Chronological rigid parameter curves + clustered PC1 samples")
+    ax.set_title("Chronological rigid parameter curves + clustered motion samples")
     if y_limits is not None:
         ax.set_ylim(y_limits[0], y_limits[1])
     _add_mesh(ax)
-    ax.legend(title="Legend", loc="best")
+    if line_handles:
+        _add_rigid_param_legends(ax, line_handles)
     sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax)
@@ -443,38 +520,80 @@ def save_clustered_motion_plots(
 
     unique_nex = torch.unique(nex_cpu)
     n_nex = int(unique_nex.numel())
-    fig, axes = plt.subplots(n_nex, 1, figsize=(10, max(3.6, 2.9 * n_nex)), sharex=True, sharey=True, constrained_layout=True)
+
+    if kz_idx is None:
+        fig, axes = plt.subplots(n_nex, 1, figsize=(10, max(3.6, 2.9 * n_nex)), sharex=True, sharey=True, constrained_layout=True)
+        if n_nex == 1:
+            axes = [axes]
+
+        for ax, nex in zip(axes, unique_nex):
+            mask = nex_cpu == nex
+            ax.scatter(
+                ky_idx_cpu[mask],
+                motion_cpu[mask],
+                c=labels_cpu[mask],
+                s=12,
+                cmap=cluster_cmap,
+                norm=norm_color,
+                marker=markers[int(nex) % len(markers)],
+            )
+            ax.set_ylabel("Motion curve value")
+            ax.set_title(f"Clustered motion samples vs ky (rep {int(nex) + 1})")
+            if y_limits is not None:
+                ax.set_ylim(y_limits[0], y_limits[1])
+            _add_resolution_center_lines(ax, ky_idx_cpu[mask], resolution_levels)
+            _add_mesh(ax)
+
+        axes[-1].set_xlabel("Line index (ky)")
+
+        sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes, location="right", fraction=0.03, pad=0.02)
+        cbar.set_label("Motion bin")
+        cbar.set_ticks(range(nbins))
+        fig.savefig(os.path.join(output_folder, "clustered_motion_curve_sorted_ky.png"))
+        plt.close(fig)
+        return
+
+    if torch.is_tensor(kz_idx):
+        kz_idx_cpu = kz_idx.detach().cpu()
+    else:
+        kz_idx_cpu = torch.cat([k.reshape(-1) for k in kz_idx], dim=0).detach().cpu()
+    fig, axes = plt.subplots(
+        n_nex,
+        1,
+        figsize=(7.0, max(5.0, 5.0 * n_nex)),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
+    )
     if n_nex == 1:
         axes = [axes]
 
+    ny_dim = int(torch.max(ky_idx_cpu).item()) + 1 if ky_idx_cpu.numel() > 0 else 0
+    nz_dim = int(torch.max(kz_idx_cpu).item()) + 1 if kz_idx_cpu.numel() > 0 else 0
+
     for ax, nex in zip(axes, unique_nex):
         mask = nex_cpu == nex
-        ax.scatter(
-            ky_idx_cpu[mask],
-            motion_cpu[mask],
-            c=labels_cpu[mask],
-            s=12,
-            cmap=cluster_cmap,
-            norm=norm_color,
-            marker=markers[int(nex) % len(markers)],
-            label=f"{sample_label_prefix} (rep {int(nex) + 1})",
-        )
-        ax.set_ylabel("Motion curve value")
-        ax.set_title(f"Clustered PC1 motion samples vs ky (rep {int(nex) + 1})")
-        if y_limits is not None:
-            ax.set_ylim(y_limits[0], y_limits[1])
-        _add_resolution_center_lines(ax, ky_idx_cpu[mask], resolution_levels)
-        _add_mesh(ax)
-        ax.legend(title="Legend", loc="best")
+        label_map = torch.full((ny_dim, nz_dim), -1, dtype=torch.int64)
+        ky_vals = ky_idx_cpu[mask].to(torch.int64)
+        kz_vals = kz_idx_cpu[mask].to(torch.int64)
+        label_vals = labels_cpu[mask].to(torch.int64)
+        label_map[ky_vals, kz_vals] = label_vals
 
-    axes[-1].set_xlabel("Line index (ky)")
+        masked = np.ma.masked_less(label_map.numpy(), 0)
+        cmap = cluster_cmap.copy()
+        cmap.set_bad(color="black")
+        im = ax.imshow(masked, origin="lower", aspect="auto", cmap=cmap, norm=norm_color)
+        _add_resolution_center_boxes(ax, ny_dim, nz_dim, resolution_levels)
+        ax.set_ylabel("ky")
+        ax.set_title(f"Motion bins in k-space (rep {int(nex) + 1})")
 
-    sm = plt.cm.ScalarMappable(cmap=cluster_cmap, norm=norm_color)
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axes, location="right", fraction=0.03, pad=0.02)
+    axes[-1].set_xlabel("kz")
+    cbar = fig.colorbar(im, ax=axes, location="right", fraction=0.03, pad=0.02)
     cbar.set_label("Motion bin")
     cbar.set_ticks(range(nbins))
-    fig.savefig(os.path.join(output_folder, "clustered_motion_curve_sorted_ky.png"))
+    fig.savefig(os.path.join(output_folder, "clustered_motion_curve_sorted_kykz.png"))
     plt.close(fig)
 
 
@@ -603,14 +722,13 @@ def _visualize_ky_kz_order(ky_per_block, kz_per_block, ny, nz, folder, fname="ky
     for b in range(nblocks):
         ky_vals = ky_per_block[b].to(torch.int64).reshape(-1)
         kz_vals = kz_per_block[b].to(torch.int64).reshape(-1)
-        for ky in ky_vals.tolist():
-            if ky < 0 or ky >= ny:
+        if ky_vals.numel() != kz_vals.numel():
+            raise ValueError("ky_per_block and kz_per_block must contain paired sequences of equal length.")
+        for ky, kz in zip(ky_vals.tolist(), kz_vals.tolist()):
+            if ky < 0 or ky >= ny or kz < 0 or kz >= nz:
                 continue
-            for kz in kz_vals.tolist():
-                if kz < 0 or kz >= nz:
-                    continue
-                order_map[ky, kz] = float(order)
-                order += 1
+            order_map[ky, kz] = float(order)
+            order += 1
 
     fig, ax = plt.subplots(figsize=(7, 5))
     masked = np.ma.masked_less(order_map.numpy(), 0)

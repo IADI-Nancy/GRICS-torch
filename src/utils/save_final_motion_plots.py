@@ -30,6 +30,7 @@ def save_final_rigid_motion_plots(motion_model, motion_plot_context, results_fol
     labels_in = context.get("labels")
     ky_idx = context.get("ky_idx")
     nex_idx = context.get("nex_idx")
+    kz_idx = context.get("kz_idx")
     if motion_curve is None or labels_in is None or ky_idx is None or nex_idx is None:
         return
 
@@ -50,7 +51,7 @@ def save_final_rigid_motion_plots(motion_model, motion_plot_context, results_fol
         phi = motion_model[2, labels]
 
     save_clustered_motion_plots(
-        motion_curve=motion_curve, labels=labels_in, ky_idx=ky_idx, nex_idx=nex_idx, nbins=n_motion_states,
+        motion_curve=motion_curve, labels=labels_in, ky_idx=ky_idx, nex_idx=nex_idx, kz_idx=kz_idx, nbins=n_motion_states,
         output_folder=results_folder, resolution_levels=context.get("resolution_levels", resolution_levels),
         tx=tx, ty=ty, phi=phi, tz=tz, rx=rx, ry=ry, rz=rz,
         data_type=context.get("data_type", data_type), y_limits=context.get("y_limits"),

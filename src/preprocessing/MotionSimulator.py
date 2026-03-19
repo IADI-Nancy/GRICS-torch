@@ -16,12 +16,26 @@ from src.utils.nonrigid_display import (
 )
 
 class MotionSimulator:
-    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, params, sp_device=None, t_device=None):
+    def __init__(
+        self,
+        image,
+        smaps,
+        ky_idx,
+        nex_idx,
+        ky_per_motion_state,
+        params,
+        sp_device=None,
+        t_device=None,
+        kz_idx=None,
+        kz_per_motion_state=None,
+    ):
         self.image = image
         self.smaps = smaps
         self.ky_idx = ky_idx
         self.nex_idx = nex_idx
         self.ky_per_motion_state = ky_per_motion_state
+        self.kz_idx = kz_idx
+        self.kz_per_motion_state = kz_per_motion_state
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
@@ -43,13 +57,30 @@ class MotionSimulator:
     # non-rigid, and no-motion simulation paths.
     # =============================================================================
 
+    @staticmethod
+    def _flatten_index_list(values):
+        if values is None:
+            return None
+        if torch.is_tensor(values):
+            return values.reshape(-1)
+        return torch.cat([v.reshape(-1) for v in values], dim=0)
+
+    def _num_motion_readouts(self):
+        ky_flat = self._flatten_index_list(self.ky_idx)
+        if ky_flat is None:
+            raise ValueError("ky_idx is required to determine the number of motion readouts.")
+        return int(ky_flat.numel())
+
     def _build_sampling_per_line_global_states(self):
         """
-        Build sampling indices with one global motion state per acquired ky line.
-        Output shape is [Nex][Ny_total], where Ny_total = Nex * Ny.
+        Build sampling indices with one global motion state per acquired readout.
+        Output shape is [Nex][Nreadouts_total].
         """
-        ky_flat = torch.cat([k.reshape(-1) for k in self.ky_idx], dim=0)
-        nex_flat = torch.cat([n.reshape(-1) for n in self.nex_idx], dim=0).to(torch.int64)
+        ky_flat = self._flatten_index_list(self.ky_idx).to(torch.int64)
+        nex_flat = self._flatten_index_list(self.nex_idx).to(torch.int64)
+        kz_flat = self._flatten_index_list(self.kz_idx)
+        if kz_flat is not None:
+            kz_flat = kz_flat.to(torch.int64)
         ny_total = int(ky_flat.numel())
         nex_total = int(self.params.Nex)
 
@@ -64,13 +95,76 @@ class MotionSimulator:
             nex = int(nex_flat[state].item())
             ky = ky_flat[state].to(torch.int64).reshape(1)
             samp_xy = (ky[:, None] + self.Ny * kx[None, :])
-            if self.Nz > 1:
+            if self.Nz > 1 and kz_flat is not None:
+                kz_state = kz_flat[state].reshape(1)
+                samp = (samp_xy * self.Nz + kz_state[:, None]).reshape(-1)
+            elif self.Nz > 1:
                 samp = (samp_xy[:, :, None] * self.Nz + kz[None, None, :]).reshape(-1)
             else:
                 samp = samp_xy.reshape(-1)
             sampling[nex][state] = samp
 
         return sampling
+
+    def _compress_consecutive_rigid_states(self, alpha, centers=None):
+        """
+        Merge consecutive readouts that share the exact same rigid parameters.
+        Plateau regions become one motion state; transition readouts stay separate.
+        """
+        if alpha.ndim != 2:
+            raise ValueError("alpha must have shape [Nparams, Nreadouts].")
+
+        n_readouts = int(alpha.shape[1])
+        if n_readouts < 1:
+            raise ValueError("alpha must contain at least one readout.")
+
+        new_state = torch.ones(n_readouts, dtype=torch.bool, device=self.t_device)
+        if n_readouts > 1:
+            same_as_prev = torch.all(alpha[:, 1:] == alpha[:, :-1], dim=0)
+            if centers is not None:
+                same_as_prev = same_as_prev & torch.all(centers[:, 1:] == centers[:, :-1], dim=0)
+            new_state[1:] = ~same_as_prev
+
+        state_ids = torch.cumsum(new_state.to(torch.int64), dim=0) - 1
+        n_states = int(state_ids[-1].item()) + 1
+
+        ky_flat = self._flatten_index_list(self.ky_idx).to(torch.int64)
+        nex_flat = self._flatten_index_list(self.nex_idx).to(torch.int64)
+        kz_flat = self._flatten_index_list(self.kz_idx)
+        if kz_flat is not None:
+            kz_flat = kz_flat.to(torch.int64)
+
+        binned_ky = [
+            [torch.empty(0, dtype=torch.int64, device=self.t_device) for _ in range(n_states)]
+            for _ in range(self.params.Nex)
+        ]
+        binned_kz = None
+        if kz_flat is not None:
+            binned_kz = [
+                [torch.empty(0, dtype=torch.int64, device=self.t_device) for _ in range(n_states)]
+                for _ in range(self.params.Nex)
+            ]
+
+        for nex in range(self.params.Nex):
+            nex_mask = nex_flat == nex
+            for state in range(n_states):
+                mask = nex_mask & (state_ids == state)
+                binned_ky[nex][state] = ky_flat[mask]
+                if binned_kz is not None:
+                    binned_kz[nex][state] = kz_flat[mask]
+
+        compressed_alpha = alpha[:, new_state]
+        compressed_centers = None if centers is None else centers[:, new_state]
+        sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
+            binned_ky,
+            self.t_device,
+            self.Nx,
+            self.Ny,
+            Nz=self.Nz,
+            kspace_sampling_type=self.params.kspace_sampling_type,
+            binned_kz_indices=binned_kz,
+        )
+        return sampling_idx, compressed_alpha, compressed_centers
 
     def _globalize_per_shot_states(self, ky_per_mot_state_idx):
         """
@@ -180,16 +274,22 @@ class MotionSimulator:
         navigator = 0
         """
         # Single motion state per Nex; retain full acquired ky set for each Nex.
+        kz_per_mot_state_idx = None
         if isinstance(self.ky_idx, list):
             ky_per_mot_state_idx = [[ky] for ky in self.ky_idx]
             ny_total = sum(ky.numel() for ky in self.ky_idx)
+            if isinstance(self.kz_idx, list):
+                kz_per_mot_state_idx = [[kz] for kz in self.kz_idx]
         else:
             ky_per_mot_state_idx = [[self.ky_idx]]
             ny_total = int(self.ky_idx.numel())
+            if torch.is_tensor(self.kz_idx):
+                kz_per_mot_state_idx = [[self.kz_idx]]
 
         self.sampling_idx_per_nex = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type,
+            binned_kz_indices=kz_per_mot_state_idx,
         )
         
         self.TotalKspaceSamples = self.Nx * self.Ny * self.Nz
@@ -215,14 +315,14 @@ class MotionSimulator:
 
     def _create_realistic_motion_curves(self):
         # Time axis: one value per k-space line (Ny)
+        total_lines = self._num_motion_readouts()
         n_events = int(getattr(self.params, "num_motion_events", 3))
-        n_events = max(1, min(n_events, self.Ny * self.params.Nex))
+        n_events = max(1, min(n_events, total_lines))
         tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
         tau = max(1, tau)
 
         # 1) Generate unique event times over the full acquisition.
         # Each event represents a bounded state-to-state change.
-        total_lines = self.Ny * self.params.Nex
         event_times = torch.sort(
             torch.randperm(total_lines, device=self.t_device)[:n_events]
         ).values
@@ -240,21 +340,21 @@ class MotionSimulator:
         )
 
         # 3) Build independent motion curves
-        tx  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
-        ty  = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
-        phi = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
+        tx  = torch.zeros(total_lines, device=self.t_device)
+        ty  = torch.zeros(total_lines, device=self.t_device)
+        phi = torch.zeros(total_lines, device=self.t_device)
 
         for i, ti in enumerate(event_times):
             ti = event_times[i].item()
-            t_end = min(ti + tau, self.Ny*self.params.Nex)
+            t_end = min(ti + tau, total_lines)
             # Normalized time for the transition
             alpha = np.linspace(0.0, 1.0, t_end - ti)
             # Raised cosine ramp (finite, smooth)
             s = 0.5 * (1.0 - np.cos(np.pi * alpha))
 
-            f = torch.zeros(self.Ny*self.params.Nex, device=self.t_device)
+            f = torch.zeros(total_lines, device=self.t_device)
             f[ti:t_end] = torch.from_numpy(s).to(self.t_device)
-            if t_end < self.Ny*self.params.Nex:
+            if t_end < total_lines:
                 f[t_end:] = 1.0
 
             # Add bounded increment so config amplitudes act as per-state changes.
@@ -285,8 +385,8 @@ class MotionSimulator:
         return navigator, tx, ty, phi
 
     def _create_realistic_motion_curves_3d(self):
-        # Time axis: one value per k-space line (Ny * Nex global states).
-        n_states = self.Ny * self.params.Nex
+        # Time axis: one value per acquired 3D readout.
+        n_states = self._num_motion_readouts()
         n_events = int(getattr(self.params, "num_motion_events", 3))
         n_events = max(1, min(n_events, n_states))
         tau = int(getattr(self.params, "motion_tau", max(1, self.Ny // 8)))
@@ -353,11 +453,8 @@ class MotionSimulator:
         return navigator, tx, ty, tz, rx, ry, rz
 
     def _simulate_realistic_rigid_motion(self):
-        # One global motion state per acquired ky line (Ny * Nex states).
-        self.sampling_idx = self._build_sampling_per_line_global_states()
-
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
-        n_states = self.Ny * self.params.Nex
+        n_states = self._num_motion_readouts()
 
         if self.Nz > 1:
             # Generate 3D realistic rigid curves and parameters.
@@ -404,7 +501,10 @@ class MotionSimulator:
             centers[0, :] = self.Nx / 2 + lim["max_center_x_px"] * torch.ones(n_states, device=self.t_device)
             centers[1, :] = self.Ny / 2 + lim["max_center_y_px"] * torch.randn(n_states, device=self.t_device)
 
-        self._apply_motion(alpha, centers)
+        self.sampling_idx, alpha_compressed, centers_compressed = self._compress_consecutive_rigid_states(
+            alpha, centers
+        )
+        self._apply_motion(alpha_compressed, centers_compressed)
 
     # -----------------------------------------------------------------------------
     # -------------------- Discrete Rigid States (Per-Shot) ----------------------
@@ -566,12 +666,16 @@ class MotionSimulator:
     def _simulate_discrete_rigid_motion(self):
         # Each shot is its own motion state
         ky_per_mot_state_idx = self._globalize_per_shot_states(self.ky_per_motion_state)
+        kz_per_mot_state_idx = None
+        if self.kz_per_motion_state is not None:
+            kz_per_mot_state_idx = self._globalize_per_shot_states(self.kz_per_motion_state)
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type,
+            binned_kz_indices=kz_per_mot_state_idx,
         ) # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
@@ -686,9 +790,13 @@ class MotionSimulator:
         print("Simulating non-rigid motion fields...")
 
         ky_per_mot_state_idx = self._globalize_per_shot_states(self.ky_per_motion_state)
+        kz_per_mot_state_idx = None
+        if self.kz_per_motion_state is not None:
+            kz_per_mot_state_idx = self._globalize_per_shot_states(self.kz_per_motion_state)
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type
+            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type,
+            binned_kz_indices=kz_per_mot_state_idx,
         )
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
@@ -734,7 +842,7 @@ class MotionSimulator:
         Create a respiratory-like sinusoidal motion curve with unit amplitude.
         Frequency (cycles per image/Nex block) and phase are randomized.
         """
-        n_lines_total = self.Ny * self.params.Nex
+        n_lines_total = self._num_motion_readouts()
         line_idx = torch.arange(n_lines_total, device=self.t_device, dtype=torch.float64)
 
         cycles_min = float(self.params.nonrigid_resp_cycles_min)
@@ -746,10 +854,10 @@ class MotionSimulator:
 
         cycles = cycles_min + (cycles_max - cycles_min) * torch.rand(1, device=self.t_device).item()
         phase = 2.0 * np.pi * torch.rand(1, device=self.t_device).item()
-        # Angular increment per acquired ky line: cycles are expressed per image.
-        # This keeps the same respiration frequency per image when Nex changes,
-        # while remaining continuous across Nex boundaries.
-        omega = 2.0 * np.pi * cycles / max(float(self.Ny), 1.0)
+        # Angular increment per acquired readout: cycles are expressed per full
+        # image/volume repeat so the respiratory rate stays stable when Nz changes.
+        readouts_per_repeat = max(float(n_lines_total) / max(float(self.params.Nex), 1.0), 1.0)
+        omega = 2.0 * np.pi * cycles / readouts_per_repeat
         signal = torch.sin(omega * line_idx + phase)
 
         # Numerical guard for exact unit-amplitude scaling.
@@ -759,7 +867,7 @@ class MotionSimulator:
     def _simulate_realistic_non_rigid_motion(self):
         print("Simulating realistic non-rigid motion fields...")
 
-        # One global motion state per acquired ky line (Ny * Nex states).
+        # One global motion state per acquired readout.
         self.sampling_idx = self._build_sampling_per_line_global_states()
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 

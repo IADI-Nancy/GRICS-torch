@@ -144,6 +144,8 @@ _MOTION_KEYS = {
     "motion_simulation_type",
 } | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
 
+_STRUCTURAL_OVERRIDE_KEYS = {"data_type"}
+
 
 def _drop_keys(cfg, keys):
     for key in keys:
@@ -511,6 +513,11 @@ def _prune_irrelevant_motion_parameters(cfg):
 
 def _apply_user_overrides(cfg, overrides):
     for key, value in (overrides or {}).items():
+        if key in _STRUCTURAL_OVERRIDE_KEYS:
+            raise ValueError(
+                f"'{key}' cannot be set via overrides because it determines which source configs are loaded. "
+                f"Pass {key}=... directly to load_config(...) instead."
+            )
         cfg[key] = value
 
 
@@ -582,6 +589,12 @@ def _normalize_data_config(data):
             data.data_dimension = "2D"
     else:
         data.data_dimension = _normalize_data_dimension(data.data_dimension)
+
+    if data.data_type in {"from_image", "from_dicom"} and data.data_dimension == "3D":
+        raise ValueError(
+            f"data_type='{data.data_type}' is only supported for 2D inputs; "
+            "3D is not compatible with this source type."
+        )
 
     motion_cfg_dim = _normalize_data_dimension(data.motion_simulation_config_dimension)
     if recon_dim is not None and recon_dim != data.data_dimension:

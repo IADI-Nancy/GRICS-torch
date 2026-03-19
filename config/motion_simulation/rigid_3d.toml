@@ -12,7 +12,7 @@ motion_type = "rigid"
 # Temporal simulation mode: "realistic" (continuous) or "per-shot" (piecewise-constant).
 motion_state_mode = "realistic"
 # Number of smooth motion events across the acquisition.
-num_motion_events = 2
+num_motion_events = 3
 # Transition duration (in lines) for each motion event (inverse to motion speed).
 motion_tau = 10
 # Global scale factor for rigid-motion amplitudes.

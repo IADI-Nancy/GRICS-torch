@@ -114,6 +114,18 @@ class DataLoader:
             [ky.to(motion_sim_device) for ky in ky_per_nex]
             for ky_per_nex in self.ky_per_motion
         ]
+        kz_idx = getattr(self, "kz_idx", None)
+        if torch.is_tensor(kz_idx):
+            kz_idx = kz_idx.to(motion_sim_device)
+        elif kz_idx is not None:
+            kz_idx = [kz.to(motion_sim_device) for kz in kz_idx]
+
+        kz_per_motion = getattr(self, "kz_per_motion", None)
+        if kz_per_motion is not None:
+            kz_per_motion = [
+                [kz.to(motion_sim_device) for kz in kz_per_nex]
+                for kz_per_nex in kz_per_motion
+            ]
 
         motionSimulator = MotionSimulator(
             image_ground_truth,
@@ -121,6 +133,8 @@ class DataLoader:
             ky_idx,
             nex_idx,
             ky_per_motion,
+            kz_idx=kz_idx,
+            kz_per_motion_state=kz_per_motion,
             params=self.params,
             sp_device=self.sp_device,
             t_device=motion_sim_device,
@@ -176,7 +190,7 @@ class DataLoader:
                 self.ky_idx_chronological,
                 self.nex_idx_chronological,
             ) = MotionBinner._bin_motion(
-                motion_curve, self.ky_idx, self.nex_idx, self.t_device, self.params,
+                motion_curve, self.ky_idx, self.nex_idx, self.kz_idx, self.t_device, self.params,
                 tx=tx, ty=ty, phi=phi_for_plot, tz=tz, rx=rx, ry=ry, rz=rz,
                 y_limits=y_limits, return_debug_data=True,
             )
@@ -185,6 +199,9 @@ class DataLoader:
                 "labels": self.motion_labels,
                 "ky_idx": self.ky_idx_chronological,
                 "nex_idx": self.nex_idx_chronological,
+                "kz_idx": None if getattr(self, "kz_idx", None) is None else (
+                    self.kz_idx if torch.is_tensor(self.kz_idx) else torch.cat([k.reshape(-1) for k in self.kz_idx], dim=0)
+                ),
                 "resolution_levels": self.params.ResolutionLevels,
                 "data_type": self.params.data_type,
                 "y_limits": y_limits,
@@ -209,6 +226,7 @@ class DataLoader:
                         "alpha_abs_max_y": max(alpha_abs_max_y, 1e-12),
                         "amp_max": max(amp_max, 1e-12),
                     }
+            self._rebuild_binned_kz_from_motion_labels()
 
         return motionSimulator
 
@@ -342,7 +360,13 @@ class DataLoader:
         self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator._build_ky_and_nex()
+        (
+            self.ky_idx,
+            self.nex_idx,
+            self.ky_per_motion,
+            self.kz_idx,
+            self.kz_per_motion,
+        ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
 
     def _apply_resize_factor(self, img_np):
         factor = float(self.params.image_resize_factor)
@@ -523,7 +547,13 @@ class DataLoader:
 
         # 5. Sampling
         samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
-        self.ky_idx, self.nex_idx, self.ky_per_motion = samplingSimulator._build_ky_and_nex()
+        (
+            self.ky_idx,
+            self.nex_idx,
+            self.ky_per_motion,
+            self.kz_idx,
+            self.kz_per_motion,
+        ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
 
     def _validate_slice_idx(self):
         is_3d = getattr(self.params, "data_dimension", None) == "3D"
@@ -543,6 +573,76 @@ class DataLoader:
 
         if supports_slice_idx and not is_3d and self.slice_idx is None:
             self.slice_idx = 0
+
+    def _build_linewise_groups(self, values, nex_idx):
+        return [
+            [value.reshape(1) for value in values[nex_idx == nex]]
+            for nex in range(self.params.Nex)
+        ]
+
+    def _rebuild_binned_kz_from_motion_labels(self):
+        kz_idx = getattr(self, "kz_idx", None)
+        labels = getattr(self, "motion_labels", None)
+        nex_idx = getattr(self, "nex_idx_chronological", None)
+
+        if kz_idx is None or labels is None or nex_idx is None or self.Nz <= 1:
+            self.binned_kz_indices = None
+            return
+
+        if not torch.is_tensor(kz_idx):
+            kz_idx = torch.cat([k.reshape(-1) for k in kz_idx], dim=0)
+
+        nbins = self.params.N_motion_states
+        self.binned_kz_indices = [
+            [kz_idx[(nex_idx == nex) & (labels == b)] for b in range(nbins)]
+            for nex in range(self.params.Nex)
+        ]
+
+    def _configure_realworld_motion_inputs(self, motion_data, kz_all=None):
+        self.kz_idx = kz_all
+
+        if self.params.motion_simulation_type == "as-it-is":
+            y_limits = compute_motion_y_limits(motion_data)
+            (
+                self.ky_per_motion,
+                self.motion_signal,
+                self.motion_labels,
+                self.ky_idx_chronological,
+                self.nex_idx_chronological,
+            ) = MotionBinner._bin_motion(
+                motion_data, self.ky_idx, self.nex_idx, self.kz_idx, self.t_device, self.params,
+                y_limits=y_limits, return_debug_data=True
+            )
+            self.motion_plot_context = {
+                "motion_curve": motion_data,
+                "labels": self.motion_labels,
+                "ky_idx": self.ky_idx_chronological,
+                "nex_idx": self.nex_idx_chronological,
+                "kz_idx": self.kz_idx,
+                "resolution_levels": self.params.ResolutionLevels,
+                "data_type": self.params.data_type,
+                "y_limits": y_limits,
+            }
+            self.binned_indices = self.ky_per_motion
+            self._rebuild_binned_kz_from_motion_labels()
+            return
+
+        self.ky_idx_chronological = self.ky_idx.reshape(-1)
+        self.nex_idx_chronological = self.nex_idx.reshape(-1)
+        self.ky_per_motion = self._build_linewise_groups(
+            self.ky_idx_chronological, self.nex_idx_chronological
+        )
+        self.binned_indices = self.ky_per_motion
+        self.motion_signal = None
+        self.motion_labels = None
+        self.motion_plot_context = None
+
+        if kz_all is None:
+            self.binned_kz_indices = None
+        else:
+            self.binned_kz_indices = self._build_linewise_groups(
+                kz_all.reshape(-1), self.nex_idx_chronological
+            )
 
     def _resolve_rawdata_filenames(self):
         if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
@@ -587,40 +687,7 @@ class DataLoader:
             self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
             kz_all = None
             self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
-
-        y_limits = compute_motion_y_limits(motion_data)
-        (
-            self.ky_per_motion,
-            self.motion_signal,
-            self.motion_labels,
-            self.ky_idx_chronological,
-            self.nex_idx_chronological,
-        ) = MotionBinner._bin_motion(
-            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params,
-            y_limits=y_limits, return_debug_data=True
-        )
-
-        # For 3D: build per-bin kz indices using the same cluster labels.
-        self.binned_kz_indices = None
-        if is_3d and kz_all is not None:
-            Nbins = self.params.N_motion_states
-            nex_flat = self.nex_idx_chronological
-            labels = self.motion_labels
-            self.binned_kz_indices = [
-                [kz_all[(nex_flat == nex) & (labels == b)] for b in range(Nbins)]
-                for nex in range(self.params.Nex)
-            ]
-
-        self.motion_plot_context = {
-            "motion_curve": motion_data,
-            "labels": self.motion_labels,
-            "ky_idx": self.ky_idx_chronological,
-            "nex_idx": self.nex_idx_chronological,
-            "resolution_levels": self.params.ResolutionLevels,
-            "data_type": self.params.data_type,
-            "y_limits": y_limits,
-        }
-        self.binned_indices = self.ky_per_motion
+        self._configure_realworld_motion_inputs(motion_data, kz_all=kz_all)
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
@@ -664,40 +731,7 @@ class DataLoader:
             self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
             kz_all = None
             self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
-
-        y_limits = compute_motion_y_limits(motion_data)
-        (
-            self.ky_per_motion,
-            self.motion_signal,
-            self.motion_labels,
-            self.ky_idx_chronological,
-            self.nex_idx_chronological,
-        ) = MotionBinner._bin_motion(
-            motion_data, self.ky_idx, self.nex_idx, self.t_device, self.params,
-            y_limits=y_limits, return_debug_data=True
-        )
-
-        # For 3D: build per-bin kz indices using the same cluster labels.
-        self.binned_kz_indices = None
-        if is_3d and kz_all is not None:
-            Nbins = self.params.N_motion_states
-            nex_flat = self.nex_idx_chronological
-            labels = self.motion_labels
-            self.binned_kz_indices = [
-                [kz_all[(nex_flat == nex) & (labels == b)] for b in range(Nbins)]
-                for nex in range(self.params.Nex)
-            ]
-
-        self.motion_plot_context = {
-            "motion_curve": motion_data,
-            "labels": self.motion_labels,
-            "ky_idx": self.ky_idx_chronological,
-            "nex_idx": self.nex_idx_chronological,
-            "resolution_levels": self.params.ResolutionLevels,
-            "data_type": self.params.data_type,
-            "y_limits": y_limits,
-        }
-        self.binned_indices = self.ky_per_motion
+        self._configure_realworld_motion_inputs(motion_data, kz_all=kz_all)
 
         SamplingSimulator._visualize_ky_order(
             [self.ky_idx.detach().cpu()], Ny=self.Ny,
