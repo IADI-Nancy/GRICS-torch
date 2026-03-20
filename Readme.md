@@ -208,7 +208,7 @@ Example:
 ```python
 params = load_config(
     data_type="real-world",
-    reconstruction_config="config/reconstruction/nonrigid_fast_2d.toml",
+    reconstruction_config="config/reconstruction/nonrigid_2d.toml",
     N_motion_states=6,
 )
 ```

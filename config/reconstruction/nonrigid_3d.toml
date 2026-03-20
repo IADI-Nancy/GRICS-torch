@@ -1,6 +1,6 @@
 [reconstruction]
 # Reconstruction data dimensionality tag for compatibility checks.
-reconstruction_dimension = "2D"
+reconstruction_dimension = "3D"
 # Motion model used by reconstruction ("rigid" or "non-rigid").
 motion_type = "non-rigid"
 # Manual number of motion states used for reconstruction.
@@ -11,14 +11,14 @@ use_scaled_motion_update = false
 # Multi-resolution scale factors (relative to full resolution).
 ResolutionLevels = [0.25, 0.5, 1.0]
 # Number of GN iterations for each resolution level.
-GN_iterations_per_level = [16, 8, 8]
+GN_iterations_per_level = [10, 4, 4]
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
 # Iteration interval for recomputing the true residual in CG.
 cg_true_residual_interval = 10
 # Allowed consecutive stagnating CG steps.
-cg_max_stag_steps = 6
+cg_max_stag_steps = 12
 # Extra CG steps after the first stopping criterion is met.
 cg_max_more_steps = 6
 # Estimate regularization scaling internally from probes.
@@ -31,7 +31,7 @@ lambda_r = 5.0e-2
 # Maximum CG/GN inner iterations for image update.
 max_iter_recon = 160
 # Convergence tolerance for image update.
-tol_recon = 1.0e-3
+tol_recon = 1.0e-4
 
 # Motion reconstruction regularization weight.
 lambda_m = 10.0

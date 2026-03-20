@@ -38,9 +38,9 @@ class DataLoader:
         self._normalize_kspace_if_enabled()
         self._compute_reference_image_data()
         motionSimulator = self._apply_or_import_motion()
-        self._build_sampling_indices()
+        self._build_binned_sampling_indices()
 
-        self._save_initial_data_artifacts()
+        self._save_initial_data()
 
         if self.params.debug_flag and self._has_simulated_motion():
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
@@ -51,7 +51,6 @@ class DataLoader:
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
-        self.kspace_scale = 1.0
         self.filename = filename
         self.slice_idx = slice_idx
         self.motion_plot_context = None
@@ -60,7 +59,23 @@ class DataLoader:
         if self.params.data_type != "shepp-logan" and self.filename is None:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
 
-        self._validate_slice_idx()
+        is_3d = getattr(self.params, "data_dimension", None) == "3D"
+        supports_slice_idx = self.params.data_type in {"real-world", "raw-data"}
+
+        if self.slice_idx is not None and not supports_slice_idx:
+            raise ValueError(
+                "slice_idx is only supported for 2D real-world or raw-data inputs. "
+                f"Do not provide slice_idx when data_type='{self.params.data_type}'."
+            )
+
+        if is_3d and self.slice_idx is not None:
+            raise ValueError(
+                "slice_idx is only supported for 2D real-world or raw-data inputs. "
+                "Do not provide slice_idx when data_dimension='3D'."
+            )
+
+        if supports_slice_idx and not is_3d and self.slice_idx is None:
+            self.slice_idx = 0
 
     def _load_source_data(self):
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
@@ -85,10 +100,8 @@ class DataLoader:
         # Calculate ESPIRiT maps and input image
         self.smaps = self._calc_espirit_maps()
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
-        smaps_replicated = self.smaps.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1)
-        self.image_ground_truth = torch.sum(img_cplx * smaps_replicated.conj(), dim=0).to(self.t_device)
+        self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
         del img_cplx
-        del smaps_replicated
 
     def _apply_or_import_motion(self):
         motion_sim_device = self.t_device
@@ -230,7 +243,7 @@ class DataLoader:
 
         return motionSimulator
 
-    def _build_sampling_indices(self):
+    def _build_binned_sampling_indices(self):
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             self.binned_indices, self.t_device, self.Nx, self.Ny,
             Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data"),
@@ -239,7 +252,6 @@ class DataLoader:
 
     def _normalize_kspace_if_enabled(self):
         if not self.params.normalize_kspace:
-            self.kspace_scale = 1.0
             return
 
         k = self.kspace
@@ -258,7 +270,7 @@ class DataLoader:
             f"scale={self.kspace_scale:.6e}"
         )
 
-    def _save_initial_data_artifacts(self):
+    def _save_initial_data(self):
         folder = self.params.initial_data_folder
         if not folder:
             return
@@ -554,25 +566,6 @@ class DataLoader:
             self.kz_idx,
             self.kz_per_motion,
         ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
-
-    def _validate_slice_idx(self):
-        is_3d = getattr(self.params, "data_dimension", None) == "3D"
-        supports_slice_idx = self.params.data_type in {"real-world", "raw-data"}
-
-        if self.slice_idx is not None and not supports_slice_idx:
-            raise ValueError(
-                "slice_idx is only supported for 2D real-world or raw-data inputs. "
-                f"Do not provide slice_idx when data_type='{self.params.data_type}'."
-            )
-
-        if is_3d and self.slice_idx is not None:
-            raise ValueError(
-                "slice_idx is only supported for 2D real-world or raw-data inputs. "
-                "Do not provide slice_idx when data_dimension='3D'."
-            )
-
-        if supports_slice_idx and not is_3d and self.slice_idx is None:
-            self.slice_idx = 0
 
     def _build_linewise_groups(self, values, nex_idx):
         return [

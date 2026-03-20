@@ -46,6 +46,7 @@ class JointReconstructor:
         self.motion_plot_context = motion_plot_context or {}
         self._last_image_cg_info = None
         self._last_motion_cg_info = None
+        self._current_level_idx = 0
 
         # Data changing with resolution
         self.Data_full = {}
@@ -263,6 +264,20 @@ class JointReconstructor:
                                         self.params.Nex, Data_res["ReconstructedImage"], Data_res["MotionOperator"])
         return J
 
+    def _lambda_r_for_level(self):
+        lambda_r = self.params.lambda_r
+        if isinstance(lambda_r, (list, tuple)):
+            if len(lambda_r) == 0:
+                raise ValueError("lambda_r list/tuple cannot be empty.")
+            if len(lambda_r) != len(self.params.ResolutionLevels):
+                raise ValueError(
+                    "Inconsistent config: "
+                    f"lambda_r has {len(lambda_r)} values, "
+                    f"but ResolutionLevels has {len(self.params.ResolutionLevels)} values."
+                )
+            return float(lambda_r[self._current_level_idx])
+        return float(lambda_r)
+
     def _solve_image(self, Data_res):
         x0 = Data_res["ReconstructedImage"]
         x0 = x0.to(self.device)
@@ -270,7 +285,7 @@ class JointReconstructor:
 
         b = E.adjoint(Data_res["KspaceData"])
         solver = ConjugateGradientSolver(
-            E, reg_lambda=self.params.lambda_r, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
+            E, reg_lambda=self._lambda_r_for_level(), verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
             true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
             max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
             reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
@@ -397,6 +412,7 @@ class JointReconstructor:
 
         # Loop over each configured resolution level.
         for idx_res, r in enumerate(ResLevels):
+            self._current_level_idx = idx_res
             GN_iter = gn_iters_per_level[idx_res]
             level_t0 = time.perf_counter()  # Level timer.
             # Build level-specific data
@@ -413,6 +429,7 @@ class JointReconstructor:
                 (
                     f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x{Data_res.get('Nz', 1)}, "
                     f"{Data_res['Ny']} views, {self.params.N_motion_states} virtual times)\n"
+                    f"    lambda_r : {self._lambda_r_for_level():.6e}\n"
                     f"    Resolution level initializations : {level_init_time:.6f} s\n"
                 ),
             )
@@ -448,14 +465,6 @@ class JointReconstructor:
                         f"    Reconstruction step : {_format_cg_info(self._last_image_cg_info)}, elapsed time = {img_elapsed:.6f} s",
                     )
 
-                    # Skip residual/motion step for the very last GN step of the final resolution level.
-                    if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
-                        Data_res.pop("E", None)
-                        Data_res.pop("MotionOperator", None)
-                        if pbar is not None:
-                            pbar.update(1) # Advance progress bar for this completed iteration.
-                        break
-
                     # 3) Compute residual
                     x = img.flatten()
                     y = Data_res["E"].forward(x) # Predict k-space from current image and motion estimate.
@@ -482,6 +491,26 @@ class JointReconstructor:
                     best_relres = rel_res
                     best_image = Data_res["ReconstructedImage"].clone()
                     best_motion = Data_res["MotionModel"].clone()
+
+                    # Final resolution level acts as an image-only polish stage.
+                    if idx_res == len(ResLevels) - 1:
+                        fp_elapsed = time.perf_counter() - fp_t0
+                        _append_run_log(
+                            run_log,
+                            (
+                                f"    Fixed point iter {it}: "
+                                f"recon_rel_residual = {rel_res:.6e}, "
+                                f"image_only = True : {fp_elapsed:.6f} s\n"
+                            ),
+                        )
+                        Data_res.pop("E", None)
+                        Data_res.pop("MotionOperator", None)
+                        if pbar is not None:
+                            pbar.update(1)
+                        del x
+                        del y
+                        del residual
+                        continue
 
                     # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
 
