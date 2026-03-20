@@ -65,6 +65,11 @@ class MotionSimulator:
             return values.reshape(-1)
         return torch.cat([v.reshape(-1) for v in values], dim=0)
 
+    def _group_flat_indices_by_nex(self, values, nex_idx):
+        values = self._flatten_index_list(values)
+        nex_idx = self._flatten_index_list(nex_idx).to(torch.int64)
+        return [[values[nex_idx == nex]] for nex in range(self.params.Nex)]
+
     def _num_motion_readouts(self):
         ky_flat = self._flatten_index_list(self.ky_idx)
         if ky_flat is None:
@@ -274,17 +279,11 @@ class MotionSimulator:
         navigator = 0
         """
         # Single motion state per Nex; retain full acquired ky set for each Nex.
+        ky_per_mot_state_idx = self._group_flat_indices_by_nex(self.ky_idx, self.nex_idx)
         kz_per_mot_state_idx = None
-        if isinstance(self.ky_idx, list):
-            ky_per_mot_state_idx = [[ky] for ky in self.ky_idx]
-            ny_total = sum(ky.numel() for ky in self.ky_idx)
-            if isinstance(self.kz_idx, list):
-                kz_per_mot_state_idx = [[kz] for kz in self.kz_idx]
-        else:
-            ky_per_mot_state_idx = [[self.ky_idx]]
-            ny_total = int(self.ky_idx.numel())
-            if torch.is_tensor(self.kz_idx):
-                kz_per_mot_state_idx = [[self.kz_idx]]
+        if self.kz_idx is not None:
+            kz_per_mot_state_idx = self._group_flat_indices_by_nex(self.kz_idx, self.nex_idx)
+        ny_total = self._num_motion_readouts()
 
         self.sampling_idx_per_nex = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,

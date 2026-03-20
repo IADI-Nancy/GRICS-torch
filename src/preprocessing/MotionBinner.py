@@ -26,6 +26,14 @@ def _kmeans_torch(x, k, n_iter=20):
 
 class MotionBinner:
     @staticmethod
+    def _flatten_index_tensor(values, name):
+        if torch.is_tensor(values):
+            return values.reshape(-1)
+        if isinstance(values, list):
+            return torch.cat([value.reshape(-1) for value in values], dim=0)
+        raise TypeError(f"{name} must be a tensor or list of tensors, got {type(values)!r}.")
+
+    @staticmethod
     def _bin_motion(
         motion_curve,
         ky_idx,
@@ -60,13 +68,14 @@ class MotionBinner:
         # ---- K-means clustering (global, across all Nex) ----
         labels, centers = _kmeans_torch(motion_curve.unsqueeze(1), Nbins)
 
+        ky_idx = MotionBinner._flatten_index_tensor(ky_idx, "ky_idx")
+        nex_idx = MotionBinner._flatten_index_tensor(nex_idx, "nex_idx")
+
         # ---- Allocate output: [Nex][Nbins] ----
         binned_indices = [
-            [torch.empty(0, dtype=ky_idx[0].dtype, device=t_device) for _ in range(Nbins)]
+            [torch.empty(0, dtype=ky_idx.dtype, device=t_device) for _ in range(Nbins)]
             for _ in range(Nex)
         ]
-        ky_idx = torch.cat([k.reshape(-1) for k in ky_idx], dim=0)
-        nex_idx = torch.cat([nex.reshape(-1) for nex in nex_idx], dim=0)
 
         # ---- Fill bins ----
         for nex in range(Nex):

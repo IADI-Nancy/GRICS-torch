@@ -113,25 +113,16 @@ class DataLoader:
 
         image_ground_truth = self.image_ground_truth.to(motion_sim_device)
         smaps = self.smaps.to(motion_sim_device)
-        if torch.is_tensor(self.ky_idx):
-            ky_idx = self.ky_idx.to(motion_sim_device)
-        else:
-            ky_idx = [ky.to(motion_sim_device) for ky in self.ky_idx]
-
-        if torch.is_tensor(self.nex_idx):
-            nex_idx = self.nex_idx.to(motion_sim_device)
-        else:
-            nex_idx = [nex.to(motion_sim_device) for nex in self.nex_idx]
+        ky_idx = self.ky_idx.to(motion_sim_device)
+        nex_idx = self.nex_idx.to(motion_sim_device)
 
         ky_per_motion = [
             [ky.to(motion_sim_device) for ky in ky_per_nex]
             for ky_per_nex in self.ky_per_motion
         ]
         kz_idx = getattr(self, "kz_idx", None)
-        if torch.is_tensor(kz_idx):
+        if kz_idx is not None:
             kz_idx = kz_idx.to(motion_sim_device)
-        elif kz_idx is not None:
-            kz_idx = [kz.to(motion_sim_device) for kz in kz_idx]
 
         kz_per_motion = getattr(self, "kz_per_motion", None)
         if kz_per_motion is not None:
@@ -212,9 +203,7 @@ class DataLoader:
                 "labels": self.motion_labels,
                 "ky_idx": self.ky_idx_chronological,
                 "nex_idx": self.nex_idx_chronological,
-                "kz_idx": None if getattr(self, "kz_idx", None) is None else (
-                    self.kz_idx if torch.is_tensor(self.kz_idx) else torch.cat([k.reshape(-1) for k in self.kz_idx], dim=0)
-                ),
+                "kz_idx": getattr(self, "kz_idx", None),
                 "resolution_levels": self.params.ResolutionLevels,
                 "data_type": self.params.data_type,
                 "y_limits": y_limits,
@@ -581,9 +570,6 @@ class DataLoader:
         if kz_idx is None or labels is None or nex_idx is None or self.Nz <= 1:
             self.binned_kz_indices = None
             return
-
-        if not torch.is_tensor(kz_idx):
-            kz_idx = torch.cat([k.reshape(-1) for k in kz_idx], dim=0)
 
         nbins = self.params.N_motion_states
         self.binned_kz_indices = [

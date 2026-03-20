@@ -17,6 +17,12 @@ class SamplingSimulator:
         _visualize_ky_kz_order(ky_per_block, kz_per_block, Ny, Nz, folder, fname)
 
     @staticmethod
+    def _flatten_per_nex(values):
+        if values is None:
+            return None
+        return torch.cat(values, dim=0)
+
+    @staticmethod
     def _build_ky_kz_pairs(
         ky,
         nex,
@@ -196,7 +202,13 @@ class SamplingSimulator:
                     fname=f"ky_order_nex{nex+1}.png"
                 )
 
-        return ky_idx, nex_idx, ky_per_shot, kz_idx, kz_per_shot
+        return (
+            self._flatten_per_nex(ky_idx),
+            self._flatten_per_nex(nex_idx),
+            ky_per_shot,
+            self._flatten_per_nex(kz_idx),
+            kz_per_shot,
+        )
     
     @staticmethod
     def _build_sampling_per_nex_per_motion(
