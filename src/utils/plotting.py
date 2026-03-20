@@ -27,6 +27,10 @@ def _prepare_display_image(img):
     return out
 
 
+def _rotation_curve_for_display(curve):
+    return torch.rad2deg(torch.as_tensor(curve).detach().cpu())
+
+
 def _extract_3d_central_slices(vol):
     ix = vol.shape[0] // 2
     iy = vol.shape[1] // 2
@@ -375,15 +379,15 @@ def compute_motion_y_limits(
     if ty is not None:
         vals.append(torch.as_tensor(ty).detach().flatten().cpu())
     if phi is not None:
-        vals.append(torch.as_tensor(phi).detach().flatten().cpu())
+        vals.append(_rotation_curve_for_display(phi).flatten())
     if tz is not None:
         vals.append(torch.as_tensor(tz).detach().flatten().cpu())
     if rx is not None:
-        vals.append(torch.as_tensor(rx).detach().flatten().cpu())
+        vals.append(_rotation_curve_for_display(rx).flatten())
     if ry is not None:
-        vals.append(torch.as_tensor(ry).detach().flatten().cpu())
+        vals.append(_rotation_curve_for_display(ry).flatten())
     if rz is not None:
-        vals.append(torch.as_tensor(rz).detach().flatten().cpu())
+        vals.append(_rotation_curve_for_display(rz).flatten())
 
     all_vals = torch.cat(vals) if vals else torch.tensor([0.0])
     y_min = float(torch.min(all_vals).item())
@@ -480,15 +484,15 @@ def save_clustered_motion_plots(
     if ty is not None:
         line_handles["ty"] = ax.plot(torch.as_tensor(ty).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="ty")[0]
     if phi is not None:
-        line_handles["phi"] = ax.plot(torch.as_tensor(phi).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="phi")[0]
+        line_handles["phi"] = ax.plot(_rotation_curve_for_display(phi).numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="phi [deg]")[0]
     if tz is not None:
         line_handles["tz"] = ax.plot(torch.as_tensor(tz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="tz")[0]
     if rx is not None:
-        line_handles["rx"] = ax.plot(torch.as_tensor(rx).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="rx")[0]
+        line_handles["rx"] = ax.plot(_rotation_curve_for_display(rx).numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="rx [deg]")[0]
     if ry is not None:
-        line_handles["ry"] = ax.plot(torch.as_tensor(ry).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="ry")[0]
+        line_handles["ry"] = ax.plot(_rotation_curve_for_display(ry).numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="ry [deg]")[0]
     if rz is not None:
-        line_handles["rz"] = ax.plot(torch.as_tensor(rz).detach().cpu().numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="rz")[0]
+        line_handles["rz"] = ax.plot(_rotation_curve_for_display(rz).numpy(), linewidth=1.0, linestyle="-", alpha=0.9, label="rz [deg]")[0]
 
     for nex in torch.unique(nex_cpu):
         mask = nex_cpu == nex
@@ -619,8 +623,8 @@ def save_motion_debug_plots(motion_curve, tx, ty, phi, output_folder, event_time
     plt.close()
 
     plt.figure()
-    plt.plot(phi.detach().cpu().numpy())
-    plt.title("phi curve")
+    plt.plot(_rotation_curve_for_display(phi).numpy())
+    plt.title("phi curve [deg]")
     plt.savefig(os.path.join(output_folder, "phi_curve.png"))
     plt.close()
 

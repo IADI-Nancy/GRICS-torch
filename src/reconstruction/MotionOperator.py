@@ -448,22 +448,19 @@ class MotionOperator:
         Xi = X + Ux
         Yi = Y + Uy
 
-        # Clamp interpolation points to valid non-periodic domain.
-        # Use upper bound (N-1) so the +1 neighbor always exists.
+        # Clamp interpolation points to the full valid domain.
+        # We clamp the lower neighbor separately so exact samples on the final
+        # voxel layer are preserved instead of being collapsed onto N-1.
         x_hi = max(1, Nx - 1)
         y_hi = max(1, Ny - 1)
-        Xi = Xi.clamp(1, x_hi)
-        Yi = Yi.clamp(1, y_hi)
+        Xi = Xi.clamp(1, Nx)
+        Yi = Yi.clamp(1, Ny)
 
         # -----------------------------
         # Surrounding integer coordinates
         # -----------------------------
-        Xi_i = Xi.floor()
-        Yi_i = Yi.floor()
-
-        # Boundaries
-        Xi_i = Xi_i.clamp(1, x_hi)
-        Yi_i = Yi_i.clamp(1, y_hi)
+        Xi_i = Xi.floor().clamp(1, x_hi)
+        Yi_i = Yi.floor().clamp(1, y_hi)
 
         # -----------------------------
         # Flatten sizes
@@ -543,13 +540,16 @@ class MotionOperator:
         z = torch.arange(1, Nz + 1, device=device, dtype=dtype)
         X, Y, Z = torch.meshgrid(x, y, z, indexing="ij")
 
-        Xi = (X + Ux).clamp(1, max(1, Nx - 1))
-        Yi = (Y + Uy).clamp(1, max(1, Ny - 1))
-        Zi = (Z + Uz).clamp(1, max(1, Nz - 1))
+        x_hi = max(1, Nx - 1)
+        y_hi = max(1, Ny - 1)
+        z_hi = max(1, Nz - 1)
+        Xi = (X + Ux).clamp(1, Nx)
+        Yi = (Y + Uy).clamp(1, Ny)
+        Zi = (Z + Uz).clamp(1, Nz)
 
-        Xi_i = Xi.floor().clamp(1, max(1, Nx - 1))
-        Yi_i = Yi.floor().clamp(1, max(1, Ny - 1))
-        Zi_i = Zi.floor().clamp(1, max(1, Nz - 1))
+        Xi_i = Xi.floor().clamp(1, x_hi)
+        Yi_i = Yi.floor().clamp(1, y_hi)
+        Zi_i = Zi.floor().clamp(1, z_hi)
 
         n = Nx * Ny * Nz
         row = torch.arange(n, device=device, dtype=torch.long)
