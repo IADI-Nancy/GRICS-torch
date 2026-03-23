@@ -166,7 +166,6 @@ class MotionSimulator:
             self.Nx,
             self.Ny,
             Nz=self.Nz,
-            kspace_sampling_type=self.params.kspace_sampling_type,
             binned_kz_indices=binned_kz,
         )
         return sampling_idx, compressed_alpha, compressed_centers
@@ -637,8 +636,7 @@ class MotionSimulator:
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type,
-            binned_kz_indices=kz_per_mot_state_idx,
+            Nz=self.Nz, binned_kz_indices=kz_per_mot_state_idx,
         ) # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
@@ -758,8 +756,7 @@ class MotionSimulator:
             kz_per_mot_state_idx = self._globalize_per_shot_states(self.kz_per_motion_state)
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type,
-            binned_kz_indices=kz_per_mot_state_idx,
+            Nz=self.Nz, binned_kz_indices=kz_per_mot_state_idx,
         )
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 

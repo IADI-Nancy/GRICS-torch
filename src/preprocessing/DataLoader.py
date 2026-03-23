@@ -76,15 +76,6 @@ class DataLoader:
                 raise ValueError(
                     "rawdata_sensor_type must be set for data_type='raw-data'."
                 )
-            if not getattr(self.params, "rawdata_ky_order_filename", None):
-                raise ValueError(
-                    "rawdata_ky_order_filename must be set for data_type='raw-data'."
-                )
-        if self.params.data_type == "real-world":
-            if not getattr(self.params, "realworld_ky_order_filename", None):
-                raise ValueError(
-                    "realworld_ky_order_filename must be set for data_type='real-world'."
-                )
 
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
@@ -332,8 +323,7 @@ class DataLoader:
         # whether those groups came from clustering or direct chronological order.
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
             self.binned_ky_indices, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data"),
-            binned_kz_indices=getattr(self, 'binned_kz_indices', None),  # [Nex][Nmotion]
+            Nz=self.Nz, binned_kz_indices=getattr(self, 'binned_kz_indices', None),  # [Nex][Nmotion]
         )
 
     def _normalize_kspace_if_enabled(self):
@@ -484,7 +474,7 @@ class DataLoader:
             self.ky_per_motion_state,
             self.kz_idx,
             self.kz_per_motion_state,
-        ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
+        ) = samplingSimulator._build_phase_encode_indices_and_nex(Nz=self.Nz)
 
     def _apply_resize_factor(self, img_np):
         factor = float(self.params.image_resize_factor)
@@ -669,7 +659,7 @@ class DataLoader:
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
-                fname=self.params.rawdata_ky_order_filename.format(slice_idx=slice_idx),
+                fname=f"ky_order_rawdata_slice{slice_idx}.png",
             )
         
 
@@ -687,7 +677,7 @@ class DataLoader:
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
-                fname=self.params.realworld_ky_order_filename.format(slice_idx=slice_idx),
+                fname=f"ky_order_realworld_slice{slice_idx}.png",
             )
 
     @staticmethod

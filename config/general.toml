@@ -40,11 +40,3 @@ kernel_width = 12
 [raw_data]
 # Physiological sensor channel to read from the SAEC file.
 rawdata_sensor_type = "BELT"
-# Output filename template for the raw-data ky-order plot.
-# Available placeholder: {slice_idx}
-rawdata_ky_order_filename = "ky_order_rawdata_slice{slice_idx}.png"
-
-[real_world]
-# Output filename template for the real-world ky-order plot.
-# Available placeholder: {slice_idx}
-realworld_ky_order_filename = "ky_order_realworld_slice{slice_idx}.png"

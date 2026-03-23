@@ -102,6 +102,11 @@ Loaded from raw scanner and physiological files using `RawDataReader`:
 - physiological data file in SAEC [2, 3] format (`saec_file`)
 
 The reader will convert these files to the format corresponding to the 'real-world' mode.
+The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
+
+When `debug_flag=true`, the loader also writes acquisition-order debug plots into `initial_data_folder` using hardcoded filenames:
+- raw-data: `ky_order_rawdata_slice{slice_idx}.png`
+- real-world: `ky_order_realworld_slice{slice_idx}.png`
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -111,6 +116,10 @@ Configured with:
 - `Nex`
 
 Implemented in `src/preprocessing/SamplingSimulator.py`.
+
+When synthetic sampling is generated, per-`nex` debug plots are written to `initial_data_folder` with hardcoded names:
+- 2D sampling: `ky_order_nex{nex}.png`
+- 3D sampling: `ky_kz_order_nex{nex}.png`
 
 For each `nex`, ky lines are split into `NshotsPerNex` chronological shot blocks:
 

@@ -140,8 +140,6 @@ _DATA_SOURCE_KEYS = {
     "from_image",
     "image_resize_factor",
     "rawdata_sensor_type",
-    "rawdata_ky_order_filename",
-    "realworld_ky_order_filename",
 }
 _SAMPLING_KEYS = {
     "kspace_sampling_type",
