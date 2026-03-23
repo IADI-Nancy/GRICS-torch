@@ -53,6 +53,7 @@ _RIGID_MOTION_KEYS = {
     "max_center_x",
     "max_center_y",
     "motion_tau",
+    "rigid_motion_amplitude_scale",
 }
 
 _NONRIGID_MOTION_KEYS = {
@@ -80,9 +81,9 @@ _CODE_DEFAULTS = {
 
 _MOTION_TYPES = {"rigid", "non-rigid"}
 _MOTION_STATE_MODES = {"realistic", "per-shot"}
+_SAMPLING_TYPES = {"linear", "interleaved", "random", "from-data"}
 _MOTION_SIM_TYPES = {
     "as-it-is",
-    "no-motion-data",
     "rigid",
     "discrete-rigid",
     "non-rigid",
@@ -94,7 +95,6 @@ _SIM_TYPE_TO_MODEL = {
     "non-rigid": ("non-rigid", "realistic"),
     "discrete-non-rigid": ("non-rigid", "per-shot"),
     "as-it-is": (None, None),
-    "no-motion-data": (None, None),
 }
 _PER_SHOT_SIM_TYPES = {"discrete-rigid", "discrete-non-rigid"}
 
@@ -180,6 +180,8 @@ def _normalize_motion_state_mode(raw_mode):
 
 
 def _normalize_motion_simulation_type(raw_type):
+    if raw_type is None:
+        return None
     key = str(raw_type).strip().lower()
     if key not in _MOTION_SIM_TYPES:
         raise ValueError(f"Unsupported motion_simulation_type: {raw_type}")
@@ -393,10 +395,10 @@ def _load_base_config_dict(
         if not shepp_logan_config:
             raise ValueError("shepp_logan_config is required when data_type='shepp-logan'.")
         cfg.update(_load_toml_flat(shepp_logan_config))
-    elif data_type in {"from_image", "from_dicom"}:
+    elif data_type == "from_image":
         if from_image_config is None:
             raise ValueError(
-                "from_image_config is required when data_type is 'from_image' or 'from_dicom'."
+                "from_image_config is required when data_type is 'from_image'."
             )
         cfg.update(_load_toml_flat(from_image_config))
     elif data_type in {"real-world", "raw-data"}:
@@ -463,16 +465,16 @@ def _resolve_sampling_origin(cfg, data_type):
     return True
 
 
-def _require_motion_input_for_image_sources(cfg, *, motion_simulation_config):
+def _require_motion_input_for_simulated_sources(cfg, *, motion_simulation_config):
     if (
-        cfg.get("data_type") in {"from_image", "from_dicom"}
+        cfg.get("data_type") not in {"real-world", "raw-data"}
         and motion_simulation_config is None
         and cfg.get("motion_simulation_type") is None
         and cfg.get("motion_state_mode") is None
     ):
         raise ValueError(
             "motion_simulation_config (or motion_simulation_type/motion_state_mode override) is required "
-            "for data_type='from_image'/'from_dicom'."
+            f"for data_type='{cfg.get('data_type')}'."
         )
 
 
@@ -481,27 +483,31 @@ def _resolve_motion_simulation(cfg, *, sampling_from_data, motion_simulation_con
     if motion_simulation_type_final is None and sampling_from_data:
         motion_simulation_type_final = "as-it-is"
     elif motion_simulation_type_final is None:
-        if motion_simulation_config is None and "motion_state_mode" not in cfg:
-            motion_simulation_type_final = "no-motion-data"
-        else:
-            motion_state_mode_final = cfg.get("motion_state_mode", "realistic")
-            simulated_motion_type_final = cfg.get(
-                "simulated_motion_type",
-                cfg["reconstruction_motion_type"],
-            )
-            motion_simulation_type_final = _simulation_type_from_motion_model(
-                simulated_motion_type_final,
-                motion_state_mode_final,
-            )
-            cfg["simulated_motion_type"] = _normalize_motion_type(simulated_motion_type_final)
-            cfg["motion_state_mode"] = _normalize_motion_state_mode(motion_state_mode_final)
+        motion_state_mode_final = cfg.get("motion_state_mode", "realistic")
+        simulated_motion_type_final = cfg.get(
+            "simulated_motion_type",
+            cfg["reconstruction_motion_type"],
+        )
+        motion_simulation_type_final = _simulation_type_from_motion_model(
+            simulated_motion_type_final,
+            motion_state_mode_final,
+        )
+        cfg["simulated_motion_type"] = _normalize_motion_type(simulated_motion_type_final)
+        cfg["motion_state_mode"] = _normalize_motion_state_mode(motion_state_mode_final)
 
     cfg["motion_simulation_type"] = _normalize_motion_simulation_type(motion_simulation_type_final)
+    if (
+        cfg["motion_simulation_type"] == "as-it-is"
+        and cfg.get("data_type") not in {"real-world", "raw-data"}
+    ):
+        raise ValueError(
+            "motion_simulation_type='as-it-is' is only valid for real-world or raw-data inputs."
+        )
 
 
 def _prune_irrelevant_motion_parameters(cfg):
     sim_type = cfg["motion_simulation_type"]
-    if sim_type in {"as-it-is", "no-motion-data"}:
+    if sim_type == "as-it-is":
         _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
     elif sim_type in {"rigid", "discrete-rigid"}:
         _drop_keys(cfg, _NONRIGID_MOTION_KEYS)
@@ -562,6 +568,14 @@ def _normalize_sampling_config(sampling, data_type):
             sampling.kspace_sampling_type = "from-data"
         else:
             sampling.kspace_sampling_type = "linear"
+    else:
+        sampling.kspace_sampling_type = str(sampling.kspace_sampling_type).strip().lower()
+
+    if sampling.kspace_sampling_type not in _SAMPLING_TYPES:
+        raise ValueError(
+            "kspace_sampling_type must be one of "
+            f"{sorted(_SAMPLING_TYPES)}."
+        )
 
     has_sampling_sim = sampling.NshotsPerNex is not None and sampling.Nex is not None
     if has_sampling_sim:
@@ -590,7 +604,7 @@ def _normalize_data_config(data):
     else:
         data.data_dimension = _normalize_data_dimension(data.data_dimension)
 
-    if data.data_type in {"from_image", "from_dicom"} and data.data_dimension == "3D":
+    if data.data_type == "from_image" and data.data_dimension == "3D":
         raise ValueError(
             f"data_type='{data.data_type}' is only supported for 2D inputs; "
             "3D is not compatible with this source type."
@@ -627,7 +641,7 @@ def _normalize_motion_config(motion):
         motion.motion_state_mode = _normalize_motion_state_mode(motion.motion_state_mode)
 
     if motion.motion_simulation_type is None:
-        motion.motion_simulation_type = "as-it-is"
+        raise ValueError("motion_simulation_type must be resolved before motion config normalization.")
     motion.motion_simulation_type = _normalize_motion_simulation_type(motion.motion_simulation_type)
 
     inferred_motion_type, inferred_mode = _SIM_TYPE_TO_MODEL[motion.motion_simulation_type]
@@ -651,14 +665,17 @@ def _normalize_motion_config(motion):
         motion.motion_state_mode = inferred_mode
     else:
         motion.simulated_motion_type = None
-        if (
-            motion.motion_simulation_type == "as-it-is"
-            and motion.motion_state_mode is not None
-        ):
+        if motion.motion_simulation_type == "as-it-is" and motion.motion_state_mode is not None:
             raise ValueError(
                 "motion_state_mode must not be set when motion_simulation_type='as-it-is'."
             )
         motion.motion_state_mode = None
+
+    if motion.motion_simulation_type in {"rigid", "discrete-rigid"}:
+        rigid_amp_scale = float(motion.parameters.get("rigid_motion_amplitude_scale", 1.0))
+        if rigid_amp_scale < 0:
+            raise ValueError("rigid_motion_amplitude_scale must be >= 0.")
+        motion.parameters["rigid_motion_amplitude_scale"] = rigid_amp_scale
 
     if motion.motion_simulation_type == "non-rigid":
         if "nonrigid_resp_cycles_min" not in motion.parameters:
@@ -669,6 +686,14 @@ def _normalize_motion_config(motion):
             raise ValueError(
                 "nonrigid_resp_cycles_max must be specified for realistic non-rigid motion simulation."
             )
+        cycles_min = float(motion.parameters["nonrigid_resp_cycles_min"])
+        cycles_max = float(motion.parameters["nonrigid_resp_cycles_max"])
+        if cycles_min <= 0 or cycles_max <= 0:
+            raise ValueError("nonrigid_resp_cycles_min/max must be > 0.")
+        if cycles_min > cycles_max:
+            cycles_min, cycles_max = cycles_max, cycles_min
+        motion.parameters["nonrigid_resp_cycles_min"] = cycles_min
+        motion.parameters["nonrigid_resp_cycles_max"] = cycles_max
 
 
 def _normalize_reconstruction_config(reconstruction, motion, sampling):
@@ -756,7 +781,7 @@ def load_config(
     _apply_user_overrides(cfg, overrides)
 
     sampling_from_data = _resolve_sampling_origin(cfg, cfg["data_type"])
-    _require_motion_input_for_image_sources(
+    _require_motion_input_for_simulated_sources(
         cfg,
         motion_simulation_config=motion_simulation_config,
     )

@@ -53,8 +53,8 @@ class MotionSimulator:
     # =============================================================================
     # =========================== SHARED CORE UTILITIES ============================
     # =============================================================================
-    # Utilities in this block are motion-type agnostic and are reused by rigid,
-    # non-rigid, and no-motion simulation paths.
+    # Utilities in this block are motion-type agnostic and are reused by rigid
+    # and non-rigid simulation paths.
     # =============================================================================
 
     @staticmethod
@@ -239,8 +239,6 @@ class MotionSimulator:
         sz = float(self.Nz) / fovz_mm
 
         rigid_amp_scale = float(getattr(self.params, "rigid_motion_amplitude_scale", 1.0))
-        if rigid_amp_scale < 0:
-            raise ValueError("rigid_motion_amplitude_scale must be >= 0.")
 
         max_tx_mm = float(getattr(self.params, "max_tx", 0.0)) * rigid_amp_scale
         max_ty_mm = float(getattr(self.params, "max_ty", 0.0)) * rigid_amp_scale
@@ -265,40 +263,6 @@ class MotionSimulator:
             "max_center_y_3d_px": max_center_y_3d_mm * sy,
             "max_center_z_3d_px": max_center_z_3d_mm * sz,
         }
-
-    # =============================================================================
-    # ================================ NO MOTION ==================================
-    # =============================================================================
-    # This block handles the strict zero-motion baseline simulation.
-    # =============================================================================
-    
-    def _simulate_no_motion(self):
-        """
-        Simulate acquisition with NO motion:
-        tx = ty = phi = 0 everywhere
-        navigator = 0
-        """
-        # Single motion state per Nex; retain full acquired ky set for each Nex.
-        ky_per_mot_state_idx = self._group_flat_indices_by_nex(self.ky_idx, self.nex_idx)
-        kz_per_mot_state_idx = None
-        if self.kz_idx is not None:
-            kz_per_mot_state_idx = self._group_flat_indices_by_nex(self.kz_idx, self.nex_idx)
-        ny_total = self._num_motion_readouts()
-
-        self.sampling_idx_per_nex = SamplingSimulator._build_sampling_per_nex_per_motion(
-            ky_per_mot_state_idx, self.t_device, self.Nx, self.Ny,
-            Nz=self.Nz, kspace_sampling_type=self.params.kspace_sampling_type,
-            binned_kz_indices=kz_per_mot_state_idx,
-        )
-        
-        self.TotalKspaceSamples = self.Nx * self.Ny * self.Nz
-
-        # Expand zero motion to ky (chronological)
-        self.tx        = torch.zeros(ny_total, device=self.t_device)
-        self.ty        = torch.zeros(ny_total, device=self.t_device)
-        self.phi       = torch.zeros(ny_total, device=self.t_device)
-        self.navigator = torch.zeros(ny_total, device=self.t_device)
-
 
     # =============================================================================
     # ============================== RIGID MOTION =================================
@@ -846,10 +810,6 @@ class MotionSimulator:
 
         cycles_min = float(self.params.nonrigid_resp_cycles_min)
         cycles_max = float(self.params.nonrigid_resp_cycles_max)
-        if cycles_min <= 0 or cycles_max <= 0:
-            raise ValueError("nonrigid_resp_cycles_min/max must be > 0.")
-        if cycles_min > cycles_max:
-            cycles_min, cycles_max = cycles_max, cycles_min
 
         cycles = cycles_min + (cycles_max - cycles_min) * torch.rand(1, device=self.t_device).item()
         phase = 2.0 * np.pi * torch.rand(1, device=self.t_device).item()

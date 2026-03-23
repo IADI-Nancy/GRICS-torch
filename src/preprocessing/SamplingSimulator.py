@@ -73,10 +73,8 @@ class SamplingSimulator:
                 kz_seq = torch.full_like(ky_seq, kz_val)
                 pair_blocks.append(torch.stack([ky_seq, kz_seq], dim=1))
             pairs = torch.cat(pair_blocks, dim=0)
-        elif kspace_sampling_type in {"linear", "from-data"}:
-            pairs = torch.cartesian_prod(ky, kz_ord)
         else:
-            raise ValueError(f"Unknown kspace_sampling_type: {kspace_sampling_type}")
+            pairs = torch.cartesian_prod(ky, kz_ord)
 
         return pairs[:, 0], pairs[:, 1]
 
@@ -145,12 +143,10 @@ class SamplingSimulator:
                         device=self.t_device,
                         dtype=torch.int32
                     )
-                elif self.params.kspace_sampling_type == 'random':
+                else:
                     end = start + split_sizes[shot]
                     ky = ky_all[start:end]
                     start = end  # advance the pointer
-                else:
-                    raise ValueError("Unknown kspace_sampling_type")
 
                 if Nz > 1:
                     if not use_global_random_3d:

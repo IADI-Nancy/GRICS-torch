@@ -37,8 +37,8 @@ class MotionBinner:
     def _bin_motion(
         motion_curve,
         ky_idx,
-        nex_idx,
         kz_idx,
+        nex_idx,
         t_device,
         params,
         tx=None,
@@ -69,13 +69,20 @@ class MotionBinner:
         labels, centers = _kmeans_torch(motion_curve.unsqueeze(1), Nbins)
 
         ky_idx = MotionBinner._flatten_index_tensor(ky_idx, "ky_idx")
+        kz_idx = None if kz_idx is None else MotionBinner._flatten_index_tensor(kz_idx, "kz_idx")
         nex_idx = MotionBinner._flatten_index_tensor(nex_idx, "nex_idx")
 
         # ---- Allocate output: [Nex][Nbins] ----
-        binned_indices = [
+        binned_ky_indices = [
             [torch.empty(0, dtype=ky_idx.dtype, device=t_device) for _ in range(Nbins)]
             for _ in range(Nex)
         ]
+        binned_kz_indices = None
+        if kz_idx is not None:
+            binned_kz_indices = [
+                [torch.empty(0, dtype=kz_idx.dtype, device=t_device) for _ in range(Nbins)]
+                for _ in range(Nex)
+            ]
 
         # ---- Fill bins ----
         for nex in range(Nex):
@@ -83,7 +90,9 @@ class MotionBinner:
 
             for b in range(Nbins):
                 mask = nex_mask & (labels == b)
-                binned_indices[nex][b] = ky_idx[mask]
+                binned_ky_indices[nex][b] = ky_idx[mask]
+                if binned_kz_indices is not None:
+                    binned_kz_indices[nex][b] = kz_idx[mask]
 
         # ---- Input data plots (always saved) ----
         save_clustered_motion_plots(
@@ -107,5 +116,13 @@ class MotionBinner:
         )
 
         if return_debug_data:
-            return binned_indices, centers.squeeze(1), labels, ky_idx, nex_idx
-        return binned_indices, centers.squeeze(1)
+            return (
+                binned_ky_indices,
+                binned_kz_indices,
+                centers.squeeze(1),
+                labels,
+                ky_idx,
+                kz_idx,
+                nex_idx,
+            )
+        return binned_ky_indices, binned_kz_indices, centers.squeeze(1)

@@ -18,7 +18,7 @@ from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.utils.plotting import (
-    show_and_save_image, compute_motion_y_limits,
+    show_and_save_image, compute_motion_plot_y_limits,
     save_nonrigid_alpha_plots,
 )
 from src.utils.nonrigid_display import to_cartesian_components
@@ -39,7 +39,7 @@ class DataLoader:
         self._compute_reference_image_data()
         motionSimulator = self._apply_or_import_motion()
         self._build_binned_sampling_indices()
-
+        self._prepare_motion_plot_context()
         self._save_initial_data()
 
         if self.params.debug_flag and self._has_simulated_motion():
@@ -54,6 +54,10 @@ class DataLoader:
         self.filename = filename
         self.slice_idx = slice_idx
         self.motion_plot_context = None
+        self._motion_curve_for_binning = None
+        self._motion_plot_kwargs = {}
+        self._motion_plot_y_limits = None
+        self.kz_idx_chronological = None
 
     def _validate_inputs(self):
         if self.params.data_type != "shepp-logan" and self.filename is None:
@@ -62,11 +66,20 @@ class DataLoader:
         is_3d = getattr(self.params, "data_dimension", None) == "3D"
         supports_slice_idx = self.params.data_type in {"real-world", "raw-data"}
 
+        if self.slice_idx is not None:
+            self.slice_idx = int(self.slice_idx)
+
+        if self.params.data_type == "raw-data":
+            self._resolve_rawdata_filenames()
+
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
                 "slice_idx is only supported for 2D real-world or raw-data inputs. "
                 f"Do not provide slice_idx when data_type='{self.params.data_type}'."
             )
+
+        if self.slice_idx is not None and self.slice_idx < 0:
+            raise ValueError("slice_idx must be >= 0.")
 
         if is_3d and self.slice_idx is not None:
             raise ValueError(
@@ -87,8 +100,6 @@ class DataLoader:
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
             self._load_from_image(self.filename)
-        elif self.params.data_type == 'from_dicom':
-            self._load_from_dicom(self.filename)
         else:
             raise ValueError("Unknown data_type")
 
@@ -103,7 +114,7 @@ class DataLoader:
         self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
         del img_cplx
 
-    def _apply_or_import_motion(self):
+    def _prepare_motion_simulator_inputs(self):
         motion_sim_device = self.t_device
         if (
             self.params.simulated_motion_type == "rigid"
@@ -115,65 +126,76 @@ class DataLoader:
         smaps = self.smaps.to(motion_sim_device)
         ky_idx = self.ky_idx.to(motion_sim_device)
         nex_idx = self.nex_idx.to(motion_sim_device)
-
-        ky_per_motion = [
+        ky_per_motion_state = [
             [ky.to(motion_sim_device) for ky in ky_per_nex]
-            for ky_per_nex in self.ky_per_motion
+            for ky_per_nex in self.ky_per_motion_state
         ]
+
         kz_idx = getattr(self, "kz_idx", None)
         if kz_idx is not None:
             kz_idx = kz_idx.to(motion_sim_device)
 
-        kz_per_motion = getattr(self, "kz_per_motion", None)
-        if kz_per_motion is not None:
-            kz_per_motion = [
+        kz_per_motion_state = getattr(self, "kz_per_motion_state", None)
+        if kz_per_motion_state is not None:
+            kz_per_motion_state = [
                 [kz.to(motion_sim_device) for kz in kz_per_nex]
-                for kz_per_nex in kz_per_motion
+                for kz_per_nex in kz_per_motion_state
             ]
+
+        return (
+            motion_sim_device,
+            image_ground_truth,
+            smaps,
+            ky_idx,
+            nex_idx,
+            ky_per_motion_state,
+            kz_idx,
+            kz_per_motion_state,
+        )
+
+    def _apply_or_import_motion(self):
+        (
+            motion_sim_device,
+            image_ground_truth,
+            smaps,
+            ky_idx,
+            nex_idx,
+            ky_per_motion_state,
+            kz_idx,
+            kz_per_motion_state,
+        ) = self._prepare_motion_simulator_inputs()
 
         motionSimulator = MotionSimulator(
             image_ground_truth,
             smaps,
             ky_idx,
             nex_idx,
-            ky_per_motion,
+            ky_per_motion_state,
             kz_idx=kz_idx,
-            kz_per_motion_state=kz_per_motion,
+            kz_per_motion_state=kz_per_motion_state,
             params=self.params,
             sp_device=self.sp_device,
             t_device=motion_sim_device,
         )
         
         if self.params.motion_simulation_type == 'as-it-is':
-            if self.params.data_type in ['real-world', 'raw-data']:
-                self.image_no_moco = self.image_ground_truth
+            self.image_no_moco = self.image_ground_truth
+        elif self.params.simulated_motion_type == "rigid":
+            if self.params.motion_state_mode == "per-shot":
+                motionSimulator._simulate_discrete_rigid_motion()
             else:
-                raise ValueError("Simulation type 'as-it-is' is only compatible with real-world or raw-data, which already contain motion. Please choose a different simulation type or data type.")
+                motionSimulator._simulate_realistic_rigid_motion()
         else:
-            if self.params.motion_simulation_type == 'no-motion-data':
-                motionSimulator._simulate_no_motion()
-                self.image_no_moco = self.image_ground_truth
-            else:      
-                if self.params.simulated_motion_type == "rigid":
-                    if self.params.motion_state_mode == "per-shot":
-                        motionSimulator._simulate_discrete_rigid_motion()
-                    elif self.params.motion_state_mode == "realistic":
-                        motionSimulator._simulate_realistic_rigid_motion()
-                    else:
-                        raise ValueError("Unknown motion_state_mode for rigid motion.")
-                elif self.params.simulated_motion_type == "non-rigid":
-                    if self.params.motion_state_mode == "per-shot":
-                        motionSimulator._simulate_discrete_non_rigid_motion()
-                    elif self.params.motion_state_mode == "realistic":
-                        motionSimulator._simulate_realistic_non_rigid_motion()
-                    else:
-                        raise ValueError("Unknown motion_state_mode for non-rigid motion.")
-                else:
-                    raise ValueError("Unknown motion_type")
-                self.kspace = motionSimulator._get_corrupted_kspace().to(self.t_device)
-                self.image_no_moco = motionSimulator._get_corrupted_image().to(self.t_device)
-                if hasattr(motionSimulator, "alpha_maps"):
-                    self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
+            if self.params.motion_state_mode == "per-shot":
+                motionSimulator._simulate_discrete_non_rigid_motion()
+            else:
+                motionSimulator._simulate_realistic_non_rigid_motion()
+        # The branches above are reached only for validated synthetic-motion configs.
+        if self.params.motion_simulation_type != 'as-it-is':
+            self.kspace = motionSimulator._get_corrupted_kspace().to(self.t_device)
+            self.image_no_moco = motionSimulator._get_corrupted_image().to(self.t_device)
+            if hasattr(motionSimulator, "alpha_maps"):
+                self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
 
             motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
             tz = getattr(motionSimulator, "tz", None)
@@ -184,57 +206,123 @@ class DataLoader:
             # Hide it from input plots to avoid duplicate rotational traces.
             phi_for_plot = None if (self.Nz > 1 and rz is not None) else phi
 
-            y_limits = compute_motion_y_limits(
-                motion_curve, tx=tx, ty=ty, phi=phi_for_plot, tz=tz, rx=rx, ry=ry, rz=rz
-            )
-            (
-                self.binned_indices,
-                self.motion_signal,
-                self.motion_labels,
-                self.ky_idx_chronological,
-                self.nex_idx_chronological,
-            ) = MotionBinner._bin_motion(
-                motion_curve, self.ky_idx, self.nex_idx, self.kz_idx, self.t_device, self.params,
-                tx=tx, ty=ty, phi=phi_for_plot, tz=tz, rx=rx, ry=ry, rz=rz,
-                y_limits=y_limits, return_debug_data=True,
-            )
-            self.motion_plot_context = {
-                "motion_curve": motion_curve,
-                "labels": self.motion_labels,
-                "ky_idx": self.ky_idx_chronological,
-                "nex_idx": self.nex_idx_chronological,
-                "kz_idx": getattr(self, "kz_idx", None),
-                "resolution_levels": self.params.ResolutionLevels,
-                "data_type": self.params.data_type,
-                "y_limits": y_limits,
-                "alpha_visual_scale": None,
+            self._motion_curve_for_binning = motion_curve
+            self._motion_plot_kwargs = {
+                "tx": tx,
+                "ty": ty,
+                "phi": phi_for_plot,
+                "tz": tz,
+                "rx": rx,
+                "ry": ry,
+                "rz": rz,
             }
-            if (
-                self.params.simulated_motion_type == "non-rigid"
-                and hasattr(self, "alpha_maps_true")
-                and self.alpha_maps_true is not None
-            ):
-                alpha = self.alpha_maps_true
-                if alpha.ndim >= 3 and alpha.shape[0] >= 2:
-                    alpha_axis0 = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
-                    alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
-                    # For 3D volumes, compute scale over the full volume.
-                    alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
-                    amp_max = float(torch.max(torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)).item())
-                    alpha_abs_max_x = float(torch.max(torch.abs(alpha_x)).item())
-                    alpha_abs_max_y = float(torch.max(torch.abs(alpha_y)).item())
-                    self.motion_plot_context["alpha_visual_scale"] = {
-                        "alpha_abs_max_x": max(alpha_abs_max_x, 1e-12),
-                        "alpha_abs_max_y": max(alpha_abs_max_y, 1e-12),
-                        "amp_max": max(amp_max, 1e-12),
-                    }
-            self._rebuild_binned_kz_from_motion_labels()
 
         return motionSimulator
 
+    def _build_motion_plot_context(
+        self,
+        motion_curve,
+        y_limits,
+        labels,
+        ky_idx_chronological,
+        kz_idx_chronological,
+        nex_idx_chronological,
+    ):
+        motion_plot_context = {
+            "motion_curve": motion_curve,
+            "labels": labels,
+            "ky_idx": ky_idx_chronological,
+            "nex_idx": nex_idx_chronological,
+            "kz_idx": kz_idx_chronological,
+            "resolution_levels": self.params.ResolutionLevels,
+            "data_type": self.params.data_type,
+            "y_limits": y_limits,
+            "alpha_visual_scale": None,
+        }
+
+        if (
+            self.params.simulated_motion_type == "non-rigid"
+            and hasattr(self, "alpha_maps_true")
+            and self.alpha_maps_true is not None
+        ):
+            alpha = self.alpha_maps_true
+            if alpha.ndim >= 3 and alpha.shape[0] >= 2:
+                alpha_axis0 = alpha[0].real if torch.is_complex(alpha[0]) else alpha[0]
+                alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
+                # For 3D volumes, compute scale over the full volume.
+                alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
+                amp_max = float(torch.max(torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)).item())
+                alpha_abs_max_x = float(torch.max(torch.abs(alpha_x)).item())
+                alpha_abs_max_y = float(torch.max(torch.abs(alpha_y)).item())
+                motion_plot_context["alpha_visual_scale"] = {
+                    "alpha_abs_max_x": max(alpha_abs_max_x, 1e-12),
+                    "alpha_abs_max_y": max(alpha_abs_max_y, 1e-12),
+                    "amp_max": max(amp_max, 1e-12),
+                }
+
+        return motion_plot_context
+
+    def _prepare_motion_plot_context(self):
+        motion_curve = self._motion_curve_for_binning
+        if motion_curve is None:
+            self.motion_plot_context = None
+            return
+
+        self.motion_plot_context = self._build_motion_plot_context(
+            motion_curve,
+            self._motion_plot_y_limits,
+            self.motion_labels,
+            self.ky_idx_chronological,
+            self.kz_idx_chronological,
+            self.nex_idx_chronological,
+        )
+
     def _build_binned_sampling_indices(self):
+        motion_curve = self._motion_curve_for_binning
+        plot_kwargs = self._motion_plot_kwargs
+
+        if motion_curve is not None:
+            # Cluster chronological readouts by motion state and keep the
+            # flattened ky/kz/nex traces for plotting/debug bookkeeping.
+            self._motion_plot_y_limits = compute_motion_plot_y_limits(motion_curve, **plot_kwargs)
+            (
+                self.binned_ky_indices,
+                self.binned_kz_indices,
+                self.motion_signal,
+                self.motion_labels,
+                self.ky_idx_chronological,
+                self.kz_idx_chronological,
+                self.nex_idx_chronological,
+            ) = MotionBinner._bin_motion(
+                motion_curve, self.ky_idx, self.kz_idx, self.nex_idx, self.t_device, self.params,
+                y_limits=self._motion_plot_y_limits, return_debug_data=True, **plot_kwargs,
+            )
+        else:
+            # Without motion-driven clustering, treat the chronological acquisition
+            # order itself as the effective per-state grouping.
+            self.ky_idx_chronological = self.ky_idx.reshape(-1)
+            self.nex_idx_chronological = self.nex_idx.reshape(-1)
+            kz_idx = getattr(self, "kz_idx", None)
+            self.kz_idx_chronological = None if kz_idx is None else kz_idx.reshape(-1)
+            self.binned_ky_indices = self._build_linewise_groups(
+                self.ky_idx_chronological, self.nex_idx_chronological
+            )
+            self.binned_kz_indices = (
+                None
+                if self.kz_idx_chronological is None
+                else self._build_linewise_groups(
+                    self.kz_idx_chronological, self.nex_idx_chronological
+                )
+            )
+            self.motion_signal = None
+            self.motion_labels = None
+            self.motion_plot_context = None
+            self._motion_plot_y_limits = None
+
+        # Reconstruction always consumes the grouped [Nex][Nmotion] view,
+        # whether those groups came from clustering or direct chronological order.
         self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
-            self.binned_indices, self.t_device, self.Nx, self.Ny,
+            self.binned_ky_indices, self.t_device, self.Nx, self.Ny,
             Nz=self.Nz, kspace_sampling_type=getattr(self.params, "kspace_sampling_type", "from-data"),
             binned_kz_indices=getattr(self, 'binned_kz_indices', None),  # [Nex][Nmotion]
         )
@@ -300,7 +388,7 @@ class DataLoader:
             )
 
     def _has_simulated_motion(self):
-        return self.params.motion_simulation_type not in {"no-motion-data", "as-it-is"}
+        return self.params.motion_simulation_type != "as-it-is"
 
     @staticmethod
     def _normalize_real_image(arr):
@@ -364,9 +452,9 @@ class DataLoader:
         (
             self.ky_idx,
             self.nex_idx,
-            self.ky_per_motion,
+            self.ky_per_motion_state,
             self.kz_idx,
-            self.kz_per_motion,
+            self.kz_per_motion_state,
         ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
 
     def _apply_resize_factor(self, img_np):
@@ -394,28 +482,6 @@ class DataLoader:
             img_np = skio.imread(path_to_image)
 
         img_np = self._normalize_real_image(img_np)
-        img_np = self._apply_resize_factor(img_np)
-        img_t = torch.from_numpy(img_np).to(self.t_device, dtype=torch.float64)
-        self._build_synthetic_kspace_from_reference_image(img_t)
-
-    def _load_from_dicom(self, path_to_dicom):
-        try:
-            import pydicom
-        except ImportError as e:
-            raise ImportError(
-                "pydicom is required for data_type='from_dicom'. "
-                "Install it with: pip install pydicom"
-            ) from e
-
-        ds = pydicom.dcmread(path_to_dicom)
-        px = ds.pixel_array.astype(np.float64, copy=False)
-        if px.ndim > 2:
-            # Use first frame if multi-frame DICOM is provided.
-            px = px[0]
-        slope = float(ds.RescaleSlope)
-        intercept = float(ds.RescaleIntercept)
-        px = px * slope + intercept
-        img_np = self._normalize_real_image(px)
         img_np = self._apply_resize_factor(img_np)
         img_t = torch.from_numpy(img_np).to(self.t_device, dtype=torch.float64)
         self._build_synthetic_kspace_from_reference_image(img_t)
@@ -551,9 +617,9 @@ class DataLoader:
         (
             self.ky_idx,
             self.nex_idx,
-            self.ky_per_motion,
+            self.ky_per_motion_state,
             self.kz_idx,
-            self.kz_per_motion,
+            self.kz_per_motion_state,
         ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
 
     def _build_linewise_groups(self, values, nex_idx):
@@ -562,66 +628,15 @@ class DataLoader:
             for nex in range(self.params.Nex)
         ]
 
-    def _rebuild_binned_kz_from_motion_labels(self):
-        kz_idx = getattr(self, "kz_idx", None)
-        labels = getattr(self, "motion_labels", None)
-        nex_idx = getattr(self, "nex_idx_chronological", None)
-
-        if kz_idx is None or labels is None or nex_idx is None or self.Nz <= 1:
-            self.binned_kz_indices = None
-            return
-
-        nbins = self.params.N_motion_states
-        self.binned_kz_indices = [
-            [kz_idx[(nex_idx == nex) & (labels == b)] for b in range(nbins)]
-            for nex in range(self.params.Nex)
-        ]
-
     def _configure_realworld_motion_inputs(self, motion_data, kz_all=None):
         self.kz_idx = kz_all
-
-        if self.params.motion_simulation_type == "as-it-is":
-            y_limits = compute_motion_y_limits(motion_data)
-            (
-                self.ky_per_motion,
-                self.motion_signal,
-                self.motion_labels,
-                self.ky_idx_chronological,
-                self.nex_idx_chronological,
-            ) = MotionBinner._bin_motion(
-                motion_data, self.ky_idx, self.nex_idx, self.kz_idx, self.t_device, self.params,
-                y_limits=y_limits, return_debug_data=True
-            )
-            self.motion_plot_context = {
-                "motion_curve": motion_data,
-                "labels": self.motion_labels,
-                "ky_idx": self.ky_idx_chronological,
-                "nex_idx": self.nex_idx_chronological,
-                "kz_idx": self.kz_idx,
-                "resolution_levels": self.params.ResolutionLevels,
-                "data_type": self.params.data_type,
-                "y_limits": y_limits,
-            }
-            self.binned_indices = self.ky_per_motion
-            self._rebuild_binned_kz_from_motion_labels()
-            return
-
-        self.ky_idx_chronological = self.ky_idx.reshape(-1)
-        self.nex_idx_chronological = self.nex_idx.reshape(-1)
-        self.ky_per_motion = self._build_linewise_groups(
-            self.ky_idx_chronological, self.nex_idx_chronological
+        self.ky_per_motion_state = self._build_linewise_groups(
+            self.ky_idx.reshape(-1), self.nex_idx.reshape(-1)
         )
-        self.binned_indices = self.ky_per_motion
-        self.motion_signal = None
-        self.motion_labels = None
-        self.motion_plot_context = None
-
-        if kz_all is None:
-            self.binned_kz_indices = None
-        else:
-            self.binned_kz_indices = self._build_linewise_groups(
-                kz_all.reshape(-1), self.nex_idx_chronological
-            )
+        self._motion_curve_for_binning = (
+            motion_data if self.params.motion_simulation_type == "as-it-is" else None
+        )
+        self._motion_plot_kwargs = {}
 
     def _resolve_rawdata_filenames(self):
         if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:

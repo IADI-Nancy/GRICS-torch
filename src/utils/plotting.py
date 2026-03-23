@@ -362,7 +362,7 @@ def _motion_value_norm(motion_cpu, y_limits=None):
     return Normalize(vmin=vmin, vmax=vmax), "viridis"
 
 
-def compute_motion_y_limits(
+def compute_motion_plot_y_limits(
     motion_curve,
     tx=None,
     ty=None,
