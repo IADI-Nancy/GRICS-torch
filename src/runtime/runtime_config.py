@@ -45,6 +45,15 @@ def _normalize_positive_int(value, name):
     return value
 
 
+def _normalize_synthetic_coil_count(value, name):
+    value = _normalize_positive_int(value, name)
+    if value % 4 != 0:
+        raise ValueError(
+            f"{name} must be divisible by 4 for synthetic coil-map generation."
+        )
+    return value
+
+
 _RIGID_MOTION_KEYS = {
     "num_motion_events",
     "max_tx",
@@ -130,6 +139,9 @@ _DATA_SOURCE_KEYS = {
     "SheppLoganFillFraction",
     "from_image",
     "image_resize_factor",
+    "rawdata_sensor_type",
+    "rawdata_ky_order_filename",
+    "realworld_ky_order_filename",
 }
 _SAMPLING_KEYS = {
     "kspace_sampling_type",
@@ -588,6 +600,13 @@ def _normalize_sampling_config(sampling, data_type):
 
 def _normalize_data_config(data):
     recon_dim = _normalize_data_dimension(data.reconstruction_dimension)
+
+    for coil_key in ("Ncoils_SheppLogan", "Ncoils_input"):
+        if coil_key in data.source_options:
+            data.source_options[coil_key] = _normalize_synthetic_coil_count(
+                data.source_options[coil_key],
+                coil_key,
+            )
 
     inferred_dim = None
     if "Nz_SheppLogan" in data.source_options:

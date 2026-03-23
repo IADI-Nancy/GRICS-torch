@@ -1,5 +1,6 @@
 [from_image]
 # Number of synthetic receiver coils used to generate k-space from input images.
+# Must be divisible by 4.
 Ncoils_input = 4
 # Multiplicative resize factor applied to loaded image before synthetic k-space generation.
 # 1.0 keeps original size; values <1 downsample; values >1 upsample.

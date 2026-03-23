@@ -52,6 +52,7 @@ class DataLoader:
         self.sp_device = sp_device
         self.t_device = t_device
         self.filename = filename
+        self.rawdata_filenames = None
         self.slice_idx = slice_idx
         self.motion_plot_context = None
         self._motion_curve_for_binning = None
@@ -70,7 +71,20 @@ class DataLoader:
             self.slice_idx = int(self.slice_idx)
 
         if self.params.data_type == "raw-data":
-            self._resolve_rawdata_filenames()
+            self.rawdata_filenames = self._resolve_rawdata_filenames()
+            if not getattr(self.params, "rawdata_sensor_type", None):
+                raise ValueError(
+                    "rawdata_sensor_type must be set for data_type='raw-data'."
+                )
+            if not getattr(self.params, "rawdata_ky_order_filename", None):
+                raise ValueError(
+                    "rawdata_ky_order_filename must be set for data_type='raw-data'."
+                )
+        if self.params.data_type == "real-world":
+            if not getattr(self.params, "realworld_ky_order_filename", None):
+                raise ValueError(
+                    "realworld_ky_order_filename must be set for data_type='real-world'."
+                )
 
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
@@ -96,7 +110,7 @@ class DataLoader:
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
-            path_to_ismrm, path_to_saec = self._resolve_rawdata_filenames()
+            path_to_ismrm, path_to_saec = self.rawdata_filenames
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
             self._load_from_image(self.filename)
@@ -154,6 +168,10 @@ class DataLoader:
         )
 
     def _apply_or_import_motion(self):
+        if self.params.motion_simulation_type == 'as-it-is':
+            self.image_no_moco = self.image_ground_truth
+            return None
+
         (
             motion_sim_device,
             image_ground_truth,
@@ -177,10 +195,8 @@ class DataLoader:
             sp_device=self.sp_device,
             t_device=motion_sim_device,
         )
-        
-        if self.params.motion_simulation_type == 'as-it-is':
-            self.image_no_moco = self.image_ground_truth
-        elif self.params.simulated_motion_type == "rigid":
+
+        if self.params.simulated_motion_type == "rigid":
             if self.params.motion_state_mode == "per-shot":
                 motionSimulator._simulate_discrete_rigid_motion()
             else:
@@ -190,53 +206,48 @@ class DataLoader:
                 motionSimulator._simulate_discrete_non_rigid_motion()
             else:
                 motionSimulator._simulate_realistic_non_rigid_motion()
-        # The branches above are reached only for validated synthetic-motion configs.
-        if self.params.motion_simulation_type != 'as-it-is':
-            self.kspace = motionSimulator._get_corrupted_kspace().to(self.t_device)
-            self.image_no_moco = motionSimulator._get_corrupted_image().to(self.t_device)
-            if hasattr(motionSimulator, "alpha_maps"):
-                self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
 
-            motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
-            tz = getattr(motionSimulator, "tz", None)
-            rx = getattr(motionSimulator, "rx", None)
-            ry = getattr(motionSimulator, "ry", None)
-            rz = getattr(motionSimulator, "rz", None)
-            # In 3D rigid mode, phi is a legacy compatibility alias (mapped to rz).
-            # Hide it from input plots to avoid duplicate rotational traces.
-            phi_for_plot = None if (self.Nz > 1 and rz is not None) else phi
+        self.kspace = motionSimulator._get_corrupted_kspace().to(self.t_device)
+        self.image_no_moco = motionSimulator._get_corrupted_image().to(self.t_device)
+        if hasattr(motionSimulator, "alpha_maps"):
+            self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
 
-            self._motion_curve_for_binning = motion_curve
-            self._motion_plot_kwargs = {
-                "tx": tx,
-                "ty": ty,
-                "phi": phi_for_plot,
-                "tz": tz,
-                "rx": rx,
-                "ry": ry,
-                "rz": rz,
-            }
+        motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
+        tz = getattr(motionSimulator, "tz", None)
+        rx = getattr(motionSimulator, "rx", None)
+        ry = getattr(motionSimulator, "ry", None)
+        rz = getattr(motionSimulator, "rz", None)
+        # In 3D rigid mode, phi is a legacy compatibility alias (mapped to rz).
+        # Hide it from input plots to avoid duplicate rotational traces.
+        phi_for_plot = None if (self.Nz > 1 and rz is not None) else phi
+
+        self._motion_curve_for_binning = motion_curve
+        self._motion_plot_kwargs = {
+            "tx": tx,
+            "ty": ty,
+            "phi": phi_for_plot,
+            "tz": tz,
+            "rx": rx,
+            "ry": ry,
+            "rz": rz,
+        }
 
         return motionSimulator
 
-    def _build_motion_plot_context(
-        self,
-        motion_curve,
-        y_limits,
-        labels,
-        ky_idx_chronological,
-        kz_idx_chronological,
-        nex_idx_chronological,
-    ):
+    def _prepare_motion_plot_context(self):
+        if self._motion_curve_for_binning is None:
+            self.motion_plot_context = None
+            return
+
         motion_plot_context = {
-            "motion_curve": motion_curve,
-            "labels": labels,
-            "ky_idx": ky_idx_chronological,
-            "nex_idx": nex_idx_chronological,
-            "kz_idx": kz_idx_chronological,
+            "motion_curve": self._motion_curve_for_binning,
+            "labels": self.motion_labels,
+            "ky_idx": self.ky_idx_chronological,
+            "nex_idx": self.nex_idx_chronological,
+            "kz_idx": self.kz_idx_chronological,
             "resolution_levels": self.params.ResolutionLevels,
             "data_type": self.params.data_type,
-            "y_limits": y_limits,
+            "y_limits": self._motion_plot_y_limits,
             "alpha_visual_scale": None,
         }
 
@@ -251,7 +262,11 @@ class DataLoader:
                 alpha_axis1 = alpha[1].real if torch.is_complex(alpha[1]) else alpha[1]
                 # For 3D volumes, compute scale over the full volume.
                 alpha_x, alpha_y = to_cartesian_components(alpha_axis0, alpha_axis1)
-                amp_max = float(torch.max(torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)).item())
+                amp_max = float(
+                    torch.max(
+                        torch.sqrt(alpha_axis0 * alpha_axis0 + alpha_axis1 * alpha_axis1)
+                    ).item()
+                )
                 alpha_abs_max_x = float(torch.max(torch.abs(alpha_x)).item())
                 alpha_abs_max_y = float(torch.max(torch.abs(alpha_y)).item())
                 motion_plot_context["alpha_visual_scale"] = {
@@ -260,31 +275,16 @@ class DataLoader:
                     "amp_max": max(amp_max, 1e-12),
                 }
 
-        return motion_plot_context
-
-    def _prepare_motion_plot_context(self):
-        motion_curve = self._motion_curve_for_binning
-        if motion_curve is None:
-            self.motion_plot_context = None
-            return
-
-        self.motion_plot_context = self._build_motion_plot_context(
-            motion_curve,
-            self._motion_plot_y_limits,
-            self.motion_labels,
-            self.ky_idx_chronological,
-            self.kz_idx_chronological,
-            self.nex_idx_chronological,
-        )
+        self.motion_plot_context = motion_plot_context
 
     def _build_binned_sampling_indices(self):
-        motion_curve = self._motion_curve_for_binning
-        plot_kwargs = self._motion_plot_kwargs
-
-        if motion_curve is not None:
+        if self._motion_curve_for_binning is not None:
             # Cluster chronological readouts by motion state and keep the
             # flattened ky/kz/nex traces for plotting/debug bookkeeping.
-            self._motion_plot_y_limits = compute_motion_plot_y_limits(motion_curve, **plot_kwargs)
+            self._motion_plot_y_limits = compute_motion_plot_y_limits(
+                self._motion_curve_for_binning, **self._motion_plot_kwargs
+            )
+            
             (
                 self.binned_ky_indices,
                 self.binned_kz_indices,
@@ -294,8 +294,15 @@ class DataLoader:
                 self.kz_idx_chronological,
                 self.nex_idx_chronological,
             ) = MotionBinner._bin_motion(
-                motion_curve, self.ky_idx, self.kz_idx, self.nex_idx, self.t_device, self.params,
-                y_limits=self._motion_plot_y_limits, return_debug_data=True, **plot_kwargs,
+                self._motion_curve_for_binning,
+                self.ky_idx,
+                self.kz_idx,
+                self.nex_idx,
+                self.t_device,
+                self.params,
+                y_limits=self._motion_plot_y_limits,
+                return_debug_data=True,
+                **self._motion_plot_kwargs,
             )
         else:
             # Without motion-driven clustering, treat the chronological acquisition
@@ -304,15 +311,17 @@ class DataLoader:
             self.nex_idx_chronological = self.nex_idx.reshape(-1)
             kz_idx = getattr(self, "kz_idx", None)
             self.kz_idx_chronological = None if kz_idx is None else kz_idx.reshape(-1)
-            self.binned_ky_indices = self._build_linewise_groups(
-                self.ky_idx_chronological, self.nex_idx_chronological
-            )
+            self.binned_ky_indices = [
+                [value.reshape(1) for value in self.ky_idx_chronological[self.nex_idx_chronological == nex]]
+                for nex in range(self.params.Nex)
+            ]
             self.binned_kz_indices = (
                 None
                 if self.kz_idx_chronological is None
-                else self._build_linewise_groups(
-                    self.kz_idx_chronological, self.nex_idx_chronological
-                )
+                else [
+                    [value.reshape(1) for value in self.kz_idx_chronological[self.nex_idx_chronological == nex]]
+                    for nex in range(self.params.Nex)
+                ]
             )
             self.motion_signal = None
             self.motion_labels = None
@@ -390,6 +399,7 @@ class DataLoader:
     def _has_simulated_motion(self):
         return self.params.motion_simulation_type != "as-it-is"
 
+    # For the image loaded from a file
     @staticmethod
     def _normalize_real_image(arr):
         arr = np.asarray(arr)
@@ -415,33 +425,52 @@ class DataLoader:
             indexing="ij",
         )
 
-        sigma = max(Nx, Ny) / 4.0
+        sigma_xy = max(Nx, Ny) / 4.0
         grid_size = math.ceil(math.sqrt(Ncoils))
         xs = torch.linspace(Nx / 4.0, 3.0 * Nx / 4.0, grid_size, device=self.t_device)
         ys = torch.linspace(Ny / 4.0, 3.0 * Ny / 4.0, grid_size, device=self.t_device)
         centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]
 
-        smaps_2d = torch.empty((Ncoils, Nx, Ny), dtype=torch.cdouble, device=self.t_device)
+        if int(Nz) > 1:
+            Z = torch.arange(1, Nz + 1, device=self.t_device, dtype=torch.float64)
+            Z = Z.view(1, 1, Nz)
+            sigma_z = max(float(Nz) / 2.5, 1.0)
+            z0 = (Nz + 1) / 2.0
+
+        smaps = torch.empty((Ncoils, Nx, Ny, Nz), dtype=torch.cdouble, device=self.t_device)
         for c, (x0, y0) in enumerate(centers):
-            profile = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2.0 * sigma ** 2))
+            profile_xy = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2.0 * sigma_xy ** 2))
+            if int(Nz) > 1:
+                profile_z = torch.exp(-((Z - z0) ** 2) / (2.0 * sigma_z ** 2))
+                profile = profile_xy.unsqueeze(-1) * profile_z
+            else:
+                profile = profile_xy.unsqueeze(-1)
             phase = (
                 torch.exp(1j * 2.0 * math.pi * torch.rand(1, device=self.t_device))
                 if random_phase else 1.0
             )
-            smaps_2d[c] = profile * phase
+            smaps[c] = profile * phase
 
-        smaps = smaps_2d.unsqueeze(-1).expand(Ncoils, Nx, Ny, Nz)
         self.smaps_generated = smaps
         return smaps
 
-    def _build_synthetic_kspace_from_reference_image(self, image_2d):
-        image_2d = image_2d.to(self.t_device, dtype=torch.float64)
-        Nx, Ny = image_2d.shape
-        Nz = 1
-        Ncoils = int(self.params.Ncoils_input)
+    def _build_synthetic_kspace_from_reference_image(self, image, Ncoils=None, random_phase=True):
+        image = image.to(self.t_device, dtype=torch.float64)
+        if image.ndim == 2:
+            reference = image.unsqueeze(-1)
+        elif image.ndim == 3:
+            reference = image
+        else:
+            raise ValueError(
+                f"Expected a 2D or 3D reference image, got shape {tuple(image.shape)}."
+            )
 
-        smaps = self._create_synthetic_coil_maps(Nx, Ny, Ncoils, Nz=Nz, random_phase=True)
-        ref = image_2d.unsqueeze(-1).expand(Nx, Ny, Nz).unsqueeze(0)  # (1, Nx, Ny, Nz)
+        Nx, Ny, Nz = reference.shape
+        if Ncoils is None:
+            Ncoils = int(self.params.Ncoils_input)
+
+        smaps = self._create_synthetic_coil_maps(Nx, Ny, Ncoils, Nz=Nz, random_phase=random_phase)
+        ref = reference.unsqueeze(0)  # (1, Nx, Ny, Nz)
         coil_imgs = ref * smaps  # (Ncoils, Nx, Ny, Nz)
         coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1).contiguous()
 
@@ -555,9 +584,7 @@ class DataLoader:
             phantom /= max_val
         return phantom
 
-    # Ncoils should be a perfect square (or close) for coil map generation
     def _generate_shepp_logan(self, N=128, Ncoils=4, Nz=1, random_phase=True):
-        # 1. Create phantom (Nx, Ny, Nz)
         fill_fraction = float(self.params.SheppLoganFillFraction)
         if int(Nz) > 1:
             phantom_np = self._build_shepp_logan_3d(N, Nz, fill_fraction)
@@ -567,72 +594,20 @@ class DataLoader:
             phantom_2d = torch.tensor(phantom_np_2d, dtype=torch.float64, device=self.t_device)
             phantom = phantom_2d.unsqueeze(-1).expand(N, N, Nz)  # (Nx, Ny, Nz)
         self.phantom_generated = phantom
-
-        # 2. Create coil sensitivity maps (Ncoils, Nx, Ny, Nz)
-        X, Y, Z = torch.meshgrid(
-            torch.arange(1, N + 1, device=self.t_device),
-            torch.arange(1, N + 1, device=self.t_device),
-            torch.arange(1, Nz + 1, device=self.t_device),
-            indexing="ij",
+        self._build_synthetic_kspace_from_reference_image(
+            phantom,
+            Ncoils=Ncoils,
+            random_phase=random_phase,
         )
-
-        sigma_xy = N / 4
-        # Large z-spread to keep meaningful sensitivity over the full slab.
-        sigma_z = max(float(Nz) / 2.5, 1.0)
-        z0 = (Nz + 1) / 2.0
-
-        # Coil centers on (approximately) square grid
-        grid_size = math.ceil(math.sqrt(Ncoils))
-        xs = torch.linspace(N / 4, 3 * N / 4, grid_size, device=self.t_device)
-        ys = torch.linspace(N / 4, 3 * N / 4, grid_size, device=self.t_device)
-        centers = [(x.item(), y.item()) for y in ys for x in xs][:Ncoils]
-
-        # Allocate coil maps directly in (Ncoils, Nx, Ny, Nz)
-        smaps = torch.empty((Ncoils, N, N, Nz), dtype=torch.cdouble, device=self.t_device)
-
-        for c, (x0, y0) in enumerate(centers):
-            profile_xy = torch.exp(-((X - x0) ** 2 + (Y - y0) ** 2) / (2 * sigma_xy ** 2))
-            profile_z = torch.exp(-((Z - z0) ** 2) / (2 * sigma_z ** 2))
-            profile = profile_xy * profile_z
-            phase = (
-                torch.exp(1j * 2 * math.pi * torch.rand(1, device=self.t_device))
-                if random_phase else 1.0
-            )
-            smaps[c] = profile * phase
-        self.smaps_generated = smaps
-
-        # 3. Generate coil images directly in (Ncoils, Nx, Ny, Nz)
-        phantom_for_coils = phantom.unsqueeze(0)          # (1, Nx, Ny, Nz)
-        coil_imgs = phantom_for_coils * smaps             # (Ncoils, Nx, Ny, Nz)
-        coil_imgs = coil_imgs.unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1) # add Nex dimension: (Ncoils, Nex, Nx, Ny, Nz)
-
-        coil_imgs = coil_imgs.contiguous()       # important for FFT speed
-
-        # 4. FFT → k-space (Ncoils, Nx, Ny, Nz)
-        self.kspace = fftnc(coil_imgs, dims=(-3, -2, -1))
-        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
-
-        # 5. Sampling
-        samplingSimulator = SamplingSimulator(self.Ny, self.params, self.t_device)
-        (
-            self.ky_idx,
-            self.nex_idx,
-            self.ky_per_motion_state,
-            self.kz_idx,
-            self.kz_per_motion_state,
-        ) = samplingSimulator._build_ky_and_nex(Nz=self.Nz)
-
-    def _build_linewise_groups(self, values, nex_idx):
-        return [
-            [value.reshape(1) for value in values[nex_idx == nex]]
-            for nex in range(self.params.Nex)
-        ]
 
     def _configure_realworld_motion_inputs(self, motion_data, kz_all=None):
         self.kz_idx = kz_all
-        self.ky_per_motion_state = self._build_linewise_groups(
-            self.ky_idx.reshape(-1), self.nex_idx.reshape(-1)
-        )
+        ky_idx = self.ky_idx.reshape(-1)
+        nex_idx = self.nex_idx.reshape(-1)
+        self.ky_per_motion_state = [
+            [value.reshape(1) for value in ky_idx[nex_idx == nex]]
+            for nex in range(self.params.Nex)
+        ]
         self._motion_curve_for_binning = (
             motion_data if self.params.motion_simulation_type == "as-it-is" else None
         )
@@ -650,10 +625,7 @@ class DataLoader:
             "'ismrmrd_file' and 'saec_file'."
         )
 
-    def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=None):
-        reader = RawDataReader(ismrmrd_file=path_to_ismrm, saec_file=path_to_saec, sensor_type="BELT", device="cpu")
-        data = reader._read_data_from_rawdata()
-
+    def _ingest_realworld_arrays(self, data, slice_idx=None):
         kspace_np = data['kspace']
         is_3d = self.params.data_dimension == "3D"
         if is_3d:
@@ -683,10 +655,22 @@ class DataLoader:
             self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
         self._configure_realworld_motion_inputs(motion_data, kz_all=kz_all)
 
-        SamplingSimulator._visualize_ky_order(
-            [self.ky_idx.detach().cpu()], Ny=self.Ny,
-            folder=self.params.initial_data_folder, fname=f"ky_order_rawdata_slice{slice_idx}.png"
+    def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=None):
+        reader = RawDataReader(
+            ismrmrd_file=path_to_ismrm,
+            saec_file=path_to_saec,
+            sensor_type=self.params.rawdata_sensor_type,
+            device="cpu",
         )
+        data = reader._read_data_from_rawdata()
+        self._ingest_realworld_arrays(data, slice_idx=slice_idx)
+
+        if self.params.debug_flag:
+            SamplingSimulator._visualize_ky_order(
+                [self.ky_idx.detach().cpu()], Ny=self.Ny,
+                folder=self.params.initial_data_folder,
+                fname=self.params.rawdata_ky_order_filename.format(slice_idx=slice_idx),
+            )
         
 
     def _load_realworld_data(self, path_to_data, slice_idx=None):
@@ -697,165 +681,120 @@ class DataLoader:
             data['idx_kz'] = f['idx_kz'][:]
             data['idx_nex'] = f['idx_nex'][:]
             data['kspace'] = f['kspace'][:]
+        self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        kspace_np = data['kspace']
-        is_3d = self.params.data_dimension == "3D"
-        if is_3d:
-            # 3D acquisition: keep all kz partitions for volumetric reconstruction.
-            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)
-        else:
-            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
-        self.params.Nex = int(self.kspace.shape[1])
-        self.params.NshotsPerNex = int(self.kspace.shape[3])
-        self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
-        if getattr(self.params, "motion_state_mode", None) == "per-shot":
-            self.params.N_motion_states = self.params.Nshots
-        self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
+        if self.params.debug_flag:
+            SamplingSimulator._visualize_ky_order(
+                [self.ky_idx.detach().cpu()], Ny=self.Ny,
+                folder=self.params.initial_data_folder,
+                fname=self.params.realworld_ky_order_filename.format(slice_idx=slice_idx),
+            )
 
-        if is_3d:
-            # 3D: use ALL (ky, kz) acquisitions for global respiratory binning
-            # so each readout is assigned to its actual respiratory state.
-            motion_data = torch.from_numpy(data['motion_data'].reshape(-1)).to(self.t_device)
-            self.ky_idx = torch.from_numpy(data['idx_ky'].reshape(-1)).to(self.t_device, dtype=torch.int64)
-            kz_all = torch.from_numpy(data['idx_kz'].reshape(-1)).to(self.t_device, dtype=torch.int64)
-            self.nex_idx = torch.from_numpy(data['idx_nex'].reshape(-1)).to(self.t_device, dtype=torch.int64)
-        else:
-            z_sel = slice_idx
-            motion_data = torch.from_numpy(data['motion_data'][z_sel, :]).to(self.t_device)
-            self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
-            kz_all = None
-            self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
-        self._configure_realworld_motion_inputs(motion_data, kz_all=kz_all)
+    @staticmethod
+    def _cupy_cleanup(cp):
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+        torch.cuda.empty_cache()
 
-        SamplingSimulator._visualize_ky_order(
-            [self.ky_idx.detach().cpu()], Ny=self.Ny,
-            folder=self.params.initial_data_folder, fname=f"ky_order_realworld_slice{slice_idx}.png"
-        )
+    @staticmethod
+    def _maps_numpy_to_torch(maps_np, device):
+        maps_np = maps_np.astype(np.complex128, copy=False)
+        maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
+        return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
+
+    def _resolved_espirit_device(self):
+        if self.sp_device is not None:
+            return self.sp_device
+        return sp.Device(0 if self.kspace.device.type == "cuda" else -1)
+
+    def _run_espirit_calibration_cpu(self, kspace_block, calib_width, kernel_width, sp_device=None):
+        if sp_device is None:
+            sp_device = self._resolved_espirit_device()
+        kspace_np = kspace_block.detach().cpu().numpy().astype(np.complex64, copy=False)
+        maps_np = spmri.app.EspiritCalib(
+            kspace_np,
+            calib_width=calib_width,
+            kernel_width=kernel_width,
+            max_iter=self.params.espirit_max_iter,
+            device=sp_device,
+        ).run()
+        return self._maps_numpy_to_torch(maps_np, self.kspace.device)
+
+    def _run_espirit_calibration_gpu(self, kspace_block, calib_width, kernel_width, sp_device):
+        import cupy as cp
+
+        kspace_cp = cp.asarray(kspace_block.contiguous(), dtype=cp.complex64)
+        maps_cp = spmri.app.EspiritCalib(
+            kspace_cp,
+            calib_width=calib_width,
+            kernel_width=kernel_width,
+            max_iter=self.params.espirit_max_iter,
+            device=sp_device,
+        ).run()
+        maps_cp = maps_cp.astype(cp.complex64, copy=False)
+        maps_cp = cp.ascontiguousarray(maps_cp)
+        maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
+        return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
+
+    def _run_espirit_calibration(self, kspace_block, calib_width, kernel_width):
+        use_gpu = self.kspace.device.type == "cuda"
+        sp_device = self._resolved_espirit_device()
+
+        if not use_gpu:
+            return self._run_espirit_calibration_cpu(
+                kspace_block, calib_width, kernel_width, sp_device=sp_device,
+            )
+
+        import cupy as cp
+
+        try:
+            return self._run_espirit_calibration_gpu(
+                kspace_block, calib_width, kernel_width, sp_device,
+            )
+        except cp.cuda.memory.OutOfMemoryError:
+            # Fallback to CPU calibration when GPU memory is insufficient.
+            self._cupy_cleanup(cp)
+            return self._run_espirit_calibration_cpu(
+                kspace_block, calib_width, kernel_width, sp_device=sp.Device(-1),
+            )
+        finally:
+            self._cupy_cleanup(cp)
 
     def _calc_espirit_maps(self):
-        acs = int(self.params.acs)
-        kernel_width = int(self.params.kernel_width)
-        espirit_max_iter = self.params.espirit_max_iter
-        sp_device = self.sp_device
-        kspace = self.kspace
-        device = kspace.device             # torch device of input
-        
-        use_gpu = device.type == "cuda"
-
-        if sp_device is None:
-            sp_device = sp.Device(0 if use_gpu else -1)
-
-        Ncha, _, Nx, Ny, Nz = kspace.shape
+        Ncha, _, Nx, Ny, Nz = self.kspace.shape
 
         # For measured data, calibrate maps from all repeats to avoid unstable
         # Nex-specific map estimates that can look noise-like in recon outputs.
-        if self.params.data_type in {"real-world", "raw-data"} and kspace.shape[1] > 1:
-            kspace_calib = torch.mean(kspace, dim=1)
+        if self.params.data_type in {"real-world", "raw-data"} and self.kspace.shape[1] > 1:
+            kspace_calib = torch.mean(self.kspace, dim=1)
         else:
-            kspace_calib = kspace[:, 0]
+            kspace_calib = self.kspace[:, 0]
 
         # Bound calibration settings by actual data size to avoid oversized
         # calibration matrices and excessive memory usage.
         if Nz > 1:
-            calib_width_eff = max(1, min(acs, Nx, Ny, Nz))
+            calib_width_eff = max(1, min(int(self.params.acs), Nx, Ny, Nz))
         else:
-            calib_width_eff = max(1, min(acs, Nx, Ny))
-        kernel_width_eff = max(1, min(kernel_width, calib_width_eff))
+            calib_width_eff = max(1, min(int(self.params.acs), Nx, Ny))
+        kernel_width_eff = max(1, min(int(self.params.kernel_width), calib_width_eff))
 
         # 3D calibration for volumetric data, 2D calibration for single-slice data.
         if Nz > 1:
-            # ---- GPU path ----
-            if use_gpu:
-                import cupy as cp
+            return self._run_espirit_calibration(
+                kspace_calib,
+                calib_width_eff,
+                kernel_width_eff,
+            )
 
-                try:
-                    # Use complex64 for calibration to reduce temporary GPU memory.
-                    kspace_cp = cp.asarray(kspace_calib[:, :, :, :].contiguous(), dtype=cp.complex64)
-                    maps_cp = spmri.app.EspiritCalib(
-                        kspace_cp,
-                        calib_width=calib_width_eff,
-                        kernel_width=kernel_width_eff,
-                        max_iter=espirit_max_iter,
-                        device=sp_device,
-                    ).run()
-                    maps_cp = maps_cp.astype(cp.complex64, copy=False)
-                    maps_cp = cp.ascontiguousarray(maps_cp)
-                    maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
-                    espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
-                except cp.cuda.memory.OutOfMemoryError:
-                    # Fallback to CPU calibration when GPU memory is insufficient.
-                    cp.get_default_memory_pool().free_all_blocks()
-                    cp.get_default_pinned_memory_pool().free_all_blocks()
-                    torch.cuda.empty_cache()
-
-                    kspace_np = kspace_calib[:, :, :, :].detach().cpu().numpy().astype(np.complex64, copy=False)
-                    maps_np = spmri.app.EspiritCalib(
-                        kspace_np,
-                        calib_width=calib_width_eff,
-                        kernel_width=kernel_width_eff,
-                        max_iter=espirit_max_iter,
-                        device=sp.Device(-1),
-                    ).run()
-                    maps_np = maps_np.astype(np.complex128, copy=False)
-                    maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
-                    espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
-                finally:
-                    cp.get_default_memory_pool().free_all_blocks()
-                    cp.get_default_pinned_memory_pool().free_all_blocks()
-                    torch.cuda.empty_cache()
-
-            # ---- CPU path ----
-            else:
-                kspace_np = kspace_calib[:, :, :, :].cpu().numpy().astype(np.complex64, copy=False)
-                maps_np = spmri.app.EspiritCalib(
-                    kspace_np,
-                    calib_width=calib_width_eff,
-                    kernel_width=kernel_width_eff,
-                    max_iter=espirit_max_iter,
-                    device=sp_device,
-                ).run()
-                maps_np = maps_np.astype(np.complex128, copy=False)
-                maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
-                espirit_maps = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
-
-            return espirit_maps
-
-        espirit_maps = torch.zeros((Ncha, Nx, Ny, Nz), dtype=torch.complex128, device=device)
+        espirit_maps = torch.zeros((Ncha, Nx, Ny, Nz), dtype=torch.complex128, device=self.kspace.device)
 
         # Legacy 2D slice calibration (single-slice data).
         for z in range(Nz):
-            if use_gpu:
-                import cupy as cp
-
-                kspace_cp = cp.asarray(kspace_calib[:, :, :, z].contiguous(), dtype=cp.complex64)
-                maps_cp = spmri.app.EspiritCalib(
-                    kspace_cp,
-                    calib_width=calib_width_eff,
-                    kernel_width=kernel_width_eff,
-                    max_iter=espirit_max_iter,
-                    device=sp_device,
-                ).run()
-                maps_cp = maps_cp.astype(cp.complex64, copy=False)
-                maps_cp = cp.ascontiguousarray(maps_cp)
-                maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
-            else:
-                kspace_np = kspace_calib[:, :, :, z].cpu().numpy().astype(np.complex64, copy=False)
-                maps_np = spmri.app.EspiritCalib(
-                    kspace_np,
-                    calib_width=calib_width_eff,
-                    kernel_width=kernel_width_eff,
-                    max_iter=espirit_max_iter,
-                    device=sp_device,
-                ).run()
-                maps_np = maps_np.astype(np.complex128, copy=False)
-                maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
-
-            espirit_maps[:, :, :, z] = torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
-
-        if use_gpu:
-            cp.get_default_memory_pool().free_all_blocks()
-            cp.get_default_pinned_memory_pool().free_all_blocks()
-            torch.cuda.empty_cache()
+            espirit_maps[:, :, :, z] = self._run_espirit_calibration(
+                kspace_calib[:, :, :, z],
+                calib_width_eff,
+                kernel_width_eff,
+            )
 
         return espirit_maps
 
@@ -874,7 +813,6 @@ class DataLoader:
             alpha_true = motionSimulator.alpha_maps.to(self.t_device)
             # Use exactly the signal/sampling that are fed to GN.
             signal_true = self.motion_signal.to(self.t_device)
-            sampling_true = self.sampling_idx
             nsamples_true = self.Nx * self.Ny * self.Nz
 
             motion_op_true = MotionOperator(
@@ -883,7 +821,7 @@ class DataLoader:
             )
 
             encoding_true = EncodingOperator(
-                self.smaps, nsamples_true, sampling_true, self.params.Nex, motion_op_true
+                self.smaps, nsamples_true, self.sampling_idx, self.params.Nex, motion_op_true
             )
 
             kspace_vec = self.kspace.reshape(self.Ncha, self.params.Nex, nsamples_true).flatten()
@@ -900,11 +838,10 @@ class DataLoader:
                 img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny, self.Nz)
             else:
                 img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
-            img_ref = self.image_ground_truth
 
-            if tuple(img_back.shape) == tuple(img_ref.shape):
-                num = torch.linalg.norm((img_back - img_ref).flatten())
-                den = torch.linalg.norm(img_ref.flatten()) + 1e-12
+            if tuple(img_back.shape) == tuple(self.image_ground_truth.shape):
+                num = torch.linalg.norm((img_back - self.image_ground_truth).flatten())
+                den = torch.linalg.norm(self.image_ground_truth.flatten()) + 1e-12
                 _ = (num / den).item()
 
             show_and_save_image(
