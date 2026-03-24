@@ -691,7 +691,7 @@ def _visualize_ky_order(ky_per_shot, ny, folder, fname="ky_sampling_order.png"):
     all_ky = torch.cat(ky_per_shot)
 
     order_map = torch.zeros(ny, dtype=torch.float64)
-    order_map[all_ky] = torch.linspace(0, 1, len(all_ky))
+    order_map[all_ky] = torch.linspace(0, 1, len(all_ky), dtype=torch.float64)
 
     cmap = plt.get_cmap("viridis")
     for ky in range(ny):
@@ -700,7 +700,8 @@ def _visualize_ky_order(ky_per_shot, ny, folder, fname="ky_sampling_order.png"):
     os.makedirs(folder, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.imshow(img.numpy())
-    ax.axis("off")
+    ax.set_xlabel("kx")
+    ax.set_ylabel("ky")
     ax.set_title("Ky Acquisition Order")
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(all_ky)))
