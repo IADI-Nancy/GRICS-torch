@@ -2,7 +2,7 @@
 # The rigid-motion amplitude values are taken from:
 # Topolnjak et al. Assessment of Subject Head Motion in Diffusion MRI.
 # doi: 10.1117/12.3006633
-# The used values are rigid_motion_amplitude_scale * median values. The extreme values are provided in the code comments for reference,
+# The used values are median values. The extreme values are provided in the code comments for reference,
 # but not used in the current config (a careful selection of motion parameters is required to ensure successful reconstruction)
 #
 # Motion simulation data dimensionality tag for compatibility checks.

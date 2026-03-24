@@ -7,12 +7,15 @@ motion_type = "rigid"
 motion_state_mode = "realistic"
 # Number of smooth motion events across the acquisition.
 num_motion_events = 4
+# Global scale factor for rigid-motion amplitudes.
+# 1.0 = reference values, 2.0 = double motion, 3.0 = triple motion, etc.
+rigid_motion_amplitude_scale = 1.0
 # Maximum x-translation amplitude in mm (converted to pixels using FoVxy_mm).
-max_tx = 4.0
+max_tx = 0.2
 # Maximum y-translation amplitude in mm (converted to pixels using FoVxy_mm).
-max_ty = 3.0
+max_ty = 2.0
 # Maximum in-plane rotation amplitude in degrees.
-max_phi = 10.0
+max_phi = 0.2
 # Maximum x-offset for rotation center in mm (converted using FoVxy_mm).
 max_center_x = 0
 # Maximum y-offset for rotation center in mm (converted using FoVxy_mm).

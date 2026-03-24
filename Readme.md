@@ -163,6 +163,7 @@ Adds no synthetic corruption and replaces the available motion signal with zeros
 
 Shot-wise rigid states:
 - one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
+- optional global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
 - random `(tx, ty, phi)` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case) per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
 
@@ -171,6 +172,7 @@ Shot-wise rigid states:
 Continuous rigid curve over full acquisition:
 - random event times over `Ny * Nex` lines
 - smooth raised-cosine transitions (`motion_tau`)
+- optional global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
 - random event amplitudes for `tx`, `ty`, `phi` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case)
 - data is then reclustered to `N_motion_states` from the simulated navigator signal (first principal component of the simulated rigid motion parameters)
 
@@ -180,8 +182,9 @@ For corruption, simulation uses one global state per acquired line (`Ny * Nz * N
 
 Shot-wise non-rigid with fixed spatial basis maps:
 - displacement field maps `alpha_x`, `alpha_y` (+ `alpha_z` for 3D) simulate respiration
-- one random scalar per shot (`S`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
-- displacement at state `m`: `[ux, uy, (uz)] = [alpha_x, alpha_y, (alpha_z)] * S[m]`
+- a per-shot Gaussian scale is configured with `nonrigid_discrete_s_scale`
+- one random scalar per shot (`s`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
+- displacement at state `m`: `[ux, uy, (uz)] = [alpha_x, alpha_y, (alpha_z)] * s[m]`
 
 ### `non-rigid` + `motion_state_mode = "realistic"`
 

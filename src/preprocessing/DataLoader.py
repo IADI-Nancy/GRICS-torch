@@ -189,39 +189,43 @@ class DataLoader:
 
         if self.params.simulated_motion_type == "rigid":
             if self.params.motion_state_mode == "per-shot":
-                motionSimulator._simulate_discrete_rigid_motion()
+                motionSimulator.simulate_discrete_rigid_motion()
             else:
-                motionSimulator._simulate_realistic_rigid_motion()
+                motionSimulator.simulate_realistic_rigid_motion()
         else:
             if self.params.motion_state_mode == "per-shot":
-                motionSimulator._simulate_discrete_non_rigid_motion()
+                motionSimulator.simulate_discrete_non_rigid_motion()
             else:
-                motionSimulator._simulate_realistic_non_rigid_motion()
+                motionSimulator.simulate_realistic_non_rigid_motion()
 
-        self.kspace = motionSimulator._get_corrupted_kspace().to(self.t_device)
-        self.image_no_moco = motionSimulator._get_corrupted_image().to(self.t_device)
+        self.kspace = motionSimulator.get_corrupted_kspace().to(self.t_device)
+        self.image_no_moco = motionSimulator.get_corrupted_image().to(self.t_device)
         if hasattr(motionSimulator, "alpha_maps"):
             self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
 
-        motion_curve, tx, ty, phi = motionSimulator._get_motion_information()
-        tz = getattr(motionSimulator, "tz", None)
-        rx = getattr(motionSimulator, "rx", None)
-        ry = getattr(motionSimulator, "ry", None)
-        rz = getattr(motionSimulator, "rz", None)
-        # In 3D rigid mode, phi is a legacy compatibility alias (mapped to rz).
-        # Hide it from input plots to avoid duplicate rotational traces.
-        phi_for_plot = None if (self.Nz > 1 and rz is not None) else phi
+        if self.params.simulated_motion_type == "rigid":
+            if self.Nz > 1:
+                motion_curve, tx, ty, tz, rx, ry, rz = motionSimulator.get_rigid_motion_information_3d()
+                self._motion_plot_kwargs = {
+                    "tx": tx,
+                    "ty": ty,
+                    "tz": tz,
+                    "rx": rx,
+                    "ry": ry,
+                    "rz": rz,
+                }
+            else:
+                motion_curve, tx, ty, phi = motionSimulator.get_rigid_motion_information_2d()
+                self._motion_plot_kwargs = {
+                    "tx": tx,
+                    "ty": ty,
+                    "phi": phi,
+                }
+        else:
+            motion_curve, _ = motionSimulator.get_nonrigid_motion_information()
+            self._motion_plot_kwargs = {}
 
         self._motion_curve_for_binning = motion_curve
-        self._motion_plot_kwargs = {
-            "tx": tx,
-            "ty": ty,
-            "phi": phi_for_plot,
-            "tz": tz,
-            "rx": rx,
-            "ry": ry,
-            "rz": rz,
-        }
 
         return motionSimulator
 

@@ -54,19 +54,59 @@ def _normalize_synthetic_coil_count(value, name):
     return value
 
 
+def _require_dict_value(dct, name, context):
+    if name not in dct:
+        raise ValueError(f"{name} must be provided in the {context} config.")
+    return dct[name]
+
+
+def _normalize_required_float(dct, name, context, *, min_value=None, max_value=None):
+    value = float(_require_dict_value(dct, name, context))
+    if min_value is not None and value < min_value:
+        raise ValueError(f"{name} must be >= {min_value}.")
+    if max_value is not None and value > max_value:
+        raise ValueError(f"{name} must be <= {max_value}.")
+    dct[name] = value
+    return value
+
+
+def _normalize_required_positive_float(dct, name, context):
+    value = float(_require_dict_value(dct, name, context))
+    if value <= 0:
+        raise ValueError(f"{name} must be > 0.")
+    dct[name] = value
+    return value
+
+
+def _normalize_required_positive_int(dct, name, context):
+    value = _normalize_positive_int(_require_dict_value(dct, name, context), name)
+    dct[name] = value
+    return value
+
+
 _RIGID_MOTION_KEYS = {
     "num_motion_events",
+    "rigid_motion_amplitude_scale",
     "max_tx",
     "max_ty",
     "max_phi",
     "max_center_x",
     "max_center_y",
+    "max_tx_3d",
+    "max_ty_3d",
+    "max_tz_3d",
+    "max_rx_3d",
+    "max_ry_3d",
+    "max_rz_3d",
+    "max_center_x_3d",
+    "max_center_y_3d",
+    "max_center_z_3d",
     "motion_tau",
-    "rigid_motion_amplitude_scale",
 }
 
 _NONRIGID_MOTION_KEYS = {
     "nonrigid_motion_amplitude",
+    "nonrigid_discrete_s_scale",
     "nonrigid_resp_cycles_min",
     "nonrigid_resp_cycles_max",
     "nonrigid_diaphragm_level",
@@ -646,7 +686,22 @@ def _normalize_data_config(data):
             )
 
 
-def _normalize_motion_config(motion):
+def _normalize_required_motion_source_options(data, names):
+    for name in names:
+        _normalize_required_positive_float(data.source_options, name, "data source")
+
+
+def _normalize_required_motion_parameters(motion, names, *, positive_names=(), nonnegative_names=()):
+    for name in names:
+        if name in positive_names:
+            _normalize_required_positive_float(motion.parameters, name, "motion")
+        elif name in nonnegative_names:
+            _normalize_required_float(motion.parameters, name, "motion", min_value=0.0)
+        else:
+            _normalize_required_float(motion.parameters, name, "motion")
+
+
+def _normalize_motion_config(motion, data):
     if motion.reconstruction_motion_type is None:
         raise ValueError("reconstruction_motion_type must be provided.")
     motion.reconstruction_motion_type = _normalize_motion_type(motion.reconstruction_motion_type)
@@ -688,29 +743,100 @@ def _normalize_motion_config(motion):
             )
         motion.motion_state_mode = None
 
-    if motion.motion_simulation_type in {"rigid", "discrete-rigid"}:
-        rigid_amp_scale = float(motion.parameters.get("rigid_motion_amplitude_scale", 1.0))
-        if rigid_amp_scale < 0:
-            raise ValueError("rigid_motion_amplitude_scale must be >= 0.")
-        motion.parameters["rigid_motion_amplitude_scale"] = rigid_amp_scale
+    if motion.motion_simulation_type == "as-it-is":
+        return
 
-    if motion.motion_simulation_type == "non-rigid":
-        if "nonrigid_resp_cycles_min" not in motion.parameters:
-            raise ValueError(
-                "nonrigid_resp_cycles_min must be specified for realistic non-rigid motion simulation."
+    if data.data_dimension not in {"2D", "3D"}:
+        raise ValueError("data_dimension must be resolved before motion config normalization.")
+
+    if motion.motion_simulation_type in {"rigid", "discrete-rigid"}:
+        if "rigid_motion_amplitude_scale" in motion.parameters:
+            _normalize_required_float(
+                motion.parameters,
+                "rigid_motion_amplitude_scale",
+                "motion",
+                min_value=0.0,
             )
-        if "nonrigid_resp_cycles_max" not in motion.parameters:
-            raise ValueError(
-                "nonrigid_resp_cycles_max must be specified for realistic non-rigid motion simulation."
+
+        if motion.motion_state_mode == "realistic":
+            _normalize_required_positive_int(motion.parameters, "num_motion_events", "motion")
+            _normalize_required_positive_int(motion.parameters, "motion_tau", "motion")
+
+        if data.data_dimension == "2D":
+            _normalize_required_motion_source_options(data, ("FoVxy_mm",))
+            _normalize_required_motion_parameters(
+                motion,
+                ("max_tx", "max_ty", "max_phi", "max_center_x", "max_center_y"),
             )
-        cycles_min = float(motion.parameters["nonrigid_resp_cycles_min"])
-        cycles_max = float(motion.parameters["nonrigid_resp_cycles_max"])
-        if cycles_min <= 0 or cycles_max <= 0:
-            raise ValueError("nonrigid_resp_cycles_min/max must be > 0.")
-        if cycles_min > cycles_max:
-            cycles_min, cycles_max = cycles_max, cycles_min
-        motion.parameters["nonrigid_resp_cycles_min"] = cycles_min
-        motion.parameters["nonrigid_resp_cycles_max"] = cycles_max
+        else:
+            _normalize_required_motion_source_options(data, ("FoVxy_mm", "FoVz_mm"))
+            _normalize_required_motion_parameters(
+                motion,
+                (
+                    "max_tx_3d",
+                    "max_ty_3d",
+                    "max_tz_3d",
+                    "max_rx_3d",
+                    "max_ry_3d",
+                    "max_rz_3d",
+                    "max_center_x_3d",
+                    "max_center_y_3d",
+                    "max_center_z_3d",
+                ),
+            )
+
+    if motion.motion_simulation_type in {"non-rigid", "discrete-non-rigid"}:
+        _normalize_required_motion_parameters(
+            motion,
+            (
+                "nonrigid_diaphragm_level",
+                "nonrigid_diaphragm_sharpness",
+                "nonrigid_lateral_sigma_lr",
+                "nonrigid_lateral_sigma_ap",
+                "nonrigid_lr_fraction",
+                "nonrigid_ap_fraction",
+                "nonrigid_anterior_bias",
+                "nonrigid_inferior_gain",
+                "nonrigid_top_decay",
+            ),
+            positive_names=("nonrigid_lateral_sigma_lr", "nonrigid_lateral_sigma_ap"),
+        )
+        _normalize_required_float(
+            motion.parameters,
+            "nonrigid_anterior_bias",
+            "motion",
+            min_value=0.0,
+            max_value=1.0,
+        )
+
+        if motion.motion_state_mode == "per-shot":
+            _normalize_required_motion_parameters(
+                motion,
+                ("nonrigid_discrete_s_scale",),
+                nonnegative_names=("nonrigid_discrete_s_scale",),
+            )
+
+        if motion.motion_state_mode == "realistic":
+            _normalize_required_float(
+                motion.parameters,
+                "nonrigid_motion_amplitude",
+                "motion",
+                min_value=0.0,
+            )
+            cycles_min = _normalize_required_positive_float(
+                motion.parameters,
+                "nonrigid_resp_cycles_min",
+                "motion",
+            )
+            cycles_max = _normalize_required_positive_float(
+                motion.parameters,
+                "nonrigid_resp_cycles_max",
+                "motion",
+            )
+            if cycles_min > cycles_max:
+                raise ValueError(
+                    "nonrigid_resp_cycles_min must be <= nonrigid_resp_cycles_max."
+                )
 
 
 def _normalize_reconstruction_config(reconstruction, motion, sampling):
@@ -740,7 +866,7 @@ def _resolve_configs(configs):
     _normalize_runtime_config(configs.runtime, configs.data.data_type)
     _normalize_sampling_config(configs.sampling, configs.data.data_type)
     _normalize_data_config(configs.data)
-    _normalize_motion_config(configs.motion)
+    _normalize_motion_config(configs.motion, configs.data)
     _normalize_reconstruction_config(configs.reconstruction, configs.motion, configs.sampling)
     _ensure_output_folders(configs.paths)
     return configs
