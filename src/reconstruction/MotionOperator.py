@@ -83,7 +83,7 @@ class MotionOperator:
             Ux = Xp - X
             Uy = Yp - Y
 
-            motion_op = MotionOperator._create_sparse_motion_operator(Ux, Uy)
+            motion_op = MotionOperator._create_sparse_motion_operator_2d(Ux, Uy)
             self.sparseMotionOperator.append(motion_op)
 
     @staticmethod
@@ -402,7 +402,7 @@ class MotionOperator:
             for motion_state in range(n_states):
                 ux = alpha_x * signal[motion_state]
                 uy = alpha_y * signal[motion_state]
-                motion_op = MotionOperator._create_sparse_motion_operator(ux, uy)
+                motion_op = MotionOperator._create_sparse_motion_operator_2d(ux, uy)
                 self.sparseMotionOperator.append(motion_op)
 
 
@@ -413,7 +413,7 @@ class MotionOperator:
     # ---------------------------------------------------------------------------------
 
     @staticmethod
-    def _create_sparse_motion_operator(Ux, Uy):
+    def _create_sparse_motion_operator_2d(Ux, Uy):
         """
         PyTorch version of MATLAB _create_sparse_motion_operator.
         Produces a sparse linear interpolation matrix M for the displacement fields Ux, Uy.

@@ -56,7 +56,6 @@ The `data_type` selected in `load_config(...)` controls how input data is built 
 
 ### `shepp-logan`
 
-Synthetic phantom data generated in `DataLoader.generate_shepp_logan(...)`.
 Required config files:
 - `config/shepp_logan_2d.toml` (or `config/shepp_logan_3d.toml` for 3D data)
 - a sampling simulation config file
@@ -72,18 +71,9 @@ Required config files:
 - a sampling simulation config file
 - a motion simulation config file
 
-### `from_dicom`
-
-Loaded from a DICOM image (`pydicom`) and converted to synthetic multi-coil k-space using generated coil maps.
-
-Required config files:
-- `config/from_image.toml`
-- a sampling simulation config file
-- a motion simulation config file
-
 ### `real-world`
 
-Loaded via `DataLoader.load_realworld_data(...)` from HDF5 with datasets:
+Loaded from HDF5 with datasets:
 - `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
 - `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
 - `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
@@ -155,10 +145,6 @@ Implemented in `src/preprocessing/MotionSimulator.py`.
 No synthetic corruption added. Only valid for `real-world`/`raw-data` (already motion-corrupted).
 `motion_state_mode` must not be set for this mode.
 
-### `no-motion-data`
-
-Adds no synthetic corruption and replaces the available motion signal with zeros. Use this if you want to reconstruct with the same algorithm but without motion correction.
-
 ### `rigid` + `motion_state_mode = "per-shot"`
 
 Shot-wise rigid states:
@@ -198,7 +184,7 @@ For corruption, simulation uses one state per acquired line (`Ny * Nz * Nex` sta
 
 ## Motion Binning and Reconstruction States
 
-After loading or simulation, the motion curve is clustered with k-means (`MotionBinner.bin_motion`) into reconstruction states.
+After loading or simulation, the motion curve is clustered with k-means into reconstruction states.
 
 Key points:
 - simulation state count and reconstruction state count can differ.
@@ -209,7 +195,7 @@ State-count rules are set in `runtime_config.refresh_derived(...)`:
 - `motion_state_mode = "per-shot"`: `N_motion_states = Nshots`
 - `simulated_motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
 - `simulated_motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
-- `as-it-is` and `no-motion-data`: `N_motion_states` stays the manual reconstruction value
+- `as-it-is`: `N_motion_states` stays the manual reconstruction value
 
 For loaded `real-world` / `raw-data` with an explicit per-shot synthetic simulation mode, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
 
