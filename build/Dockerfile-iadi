@@ -3,10 +3,7 @@
 # # -------------------------------------------------------------------
 FROM ghcr.io/iadi-nancy/grics-torch:1.0.0 
 
-RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL\n\
-Defaults    env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY"\n\
-Defaults    env_keep += "PATH"' >> /etc/sudoers \
-	&& sed -i '/^Defaults\tsecure_path.*$/ d' /etc/sudoers \
+RUN echo 'Defaults    env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY"' >> /etc/sudoers \
 	&& echo '[distutils]\n\
 index-servers =\n\
     pypi\n\

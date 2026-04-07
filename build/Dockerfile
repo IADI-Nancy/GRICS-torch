@@ -81,8 +81,8 @@ RUN git clone https://github.com/IADI-Nancy/wrapperHDF5.git /opt/wrapperHDF5
 ENV PYTHONPATH=/opt/wrapperHDF5
 # -------------------------------------------------------------------
 
-RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL\n\
-Defaults    env_keep += "PATH"' >> /etc/sudoers \
+RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers \
+    && echo 'Defaults    env_keep += "PATH"' >> /etc/sudoers \
 	&& sed -i '/^Defaults\tsecure_path.*$/ d' /etc/sudoers
 
 COPY startup.sh /tmp

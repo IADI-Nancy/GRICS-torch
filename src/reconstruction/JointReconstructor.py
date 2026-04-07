@@ -492,8 +492,9 @@ class JointReconstructor:
                     best_image = Data_res["ReconstructedImage"].clone()
                     best_motion = Data_res["MotionModel"].clone()
 
-                    # Final resolution level acts as an image-only polish stage.
-                    if idx_res == len(ResLevels) - 1:
+                    # Only the final GN iteration of the final resolution level is image-only.
+                    # Earlier iterations at the finest resolution still run the motion update.
+                    if idx_res == len(ResLevels) - 1 and it == GN_iter - 1:
                         fp_elapsed = time.perf_counter() - fp_t0
                         _append_run_log(
                             run_log,
