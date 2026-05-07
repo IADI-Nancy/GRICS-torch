@@ -25,13 +25,14 @@ from src.utils.nonrigid_display import to_cartesian_components
 
 
 class DataLoader:
-    def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None):
+    def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None, external_smaps=None):
         self._init_runtime_state(
             params=params,
             sp_device=sp_device,
             t_device=t_device,
             filename=filename,
             slice_idx=slice_idx,
+            external_smaps=external_smaps,
         )
         self._validate_inputs()
         self._load_source_data()
@@ -47,11 +48,12 @@ class DataLoader:
 
         del motionSimulator
 
-    def _init_runtime_state(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None):
+    def _init_runtime_state(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None, external_smaps=None):
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
         self.filename = filename
+        self.external_smaps = external_smaps
         self.rawdata_filenames = None
         self.slice_idx = slice_idx
         self.motion_plot_context = None
@@ -113,11 +115,32 @@ class DataLoader:
         # This avoids an eager full-volume clone in the common case where the source tensor is not modified in-place.
         self.kspace_nomotion = self.kspace
 
-        # Calculate ESPIRiT maps and input image
-        self.smaps = self._calc_espirit_maps()
+        # Use externally supplied coil maps when available; otherwise calculate ESPIRiT maps.
+        self.smaps = (
+            self._prepare_external_smaps()
+            if self.external_smaps is not None
+            else self._calc_espirit_maps()
+        )
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
         self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
         del img_cplx
+
+    def _prepare_external_smaps(self):
+        smaps = self.external_smaps
+        if not isinstance(smaps, torch.Tensor):
+            smaps = torch.as_tensor(smaps)
+
+        if smaps.ndim == 3:
+            smaps = smaps.unsqueeze(-1)
+
+        expected_shape = (self.Ncha, self.Nx, self.Ny, self.Nz)
+        if tuple(smaps.shape) != expected_shape:
+            raise ValueError(
+                "external_smaps must have shape "
+                f"{expected_shape}, got {tuple(smaps.shape)}."
+            )
+
+        return smaps.to(self.kspace.device, dtype=torch.complex128)
 
     def _prepare_motion_simulator_inputs(self):
         motion_sim_device = self.t_device
