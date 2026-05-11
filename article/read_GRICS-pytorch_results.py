@@ -28,6 +28,7 @@ def extract_torch_reconstruction_time(log_text):
         r"Elapsed time:\s*([\d.]+)\s*s",
         r"Reconstruction time\s*=\s*([\d.]+)",
         r"Total elapsed time\s*=\s*([\d.]+)",
+        r"Total time of reconstruction run:\s*([\d.]+)\s*s?",
     ]
 
     for pattern in patterns:

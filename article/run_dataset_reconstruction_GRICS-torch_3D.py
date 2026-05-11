@@ -1,3 +1,4 @@
+from curses import raw
 import sys
 from pathlib import Path
 if "__file__" in globals():
@@ -8,18 +9,6 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 import os
 import re
-
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["BLIS_NUM_THREADS"] = "1"
-os.environ["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "1"
-os.environ["SimpleITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = "1"
-os.environ["KMP_BLOCKTIME"] = "0"
-os.environ["OMP_DYNAMIC"] = "FALSE"
-os.environ["MKL_DYNAMIC"] = "FALSE"
 
 import h5py
 import numpy as np
@@ -34,14 +23,16 @@ from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.runtime_setup import initialize_runtime
 
-article_dataset_folder = "/home/pyuser/wkdir/data/GRICS-torch/article_dataset"
-GRICS_plusplus_path = "/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database/GRICS-BELT"
+article_dataset_folder = "/home/pyuser/wkdir/data/GRICS-torch/article_dataset_3D"
+GRICS_plusplus_path = "/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database/GRICS-BELT-3D"
 jupyter_notebook_flag = False
-Ncores = 128
 
 import os
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+
+import matplotlib.pyplot as plt
 
 
 def _read_h5_kspace_shape(h5_file):
@@ -49,41 +40,57 @@ def _read_h5_kspace_shape(h5_file):
         return tuple(f["kspace"].shape)
 
 
-def load_grics_plusplus_sensitivity_maps(grics_plusplus_root, h5_file, slice_idx, device):
+def load_grics_plusplus_sensitivity_maps(grics_plusplus_root, h5_file, device):
     subject = Path(h5_file).stem
-    slice_folder = f"Siemens_SingleImage_slice{slice_idx + 1:03d}_image01"
+
     sensitivity_file = (
         Path(grics_plusplus_root)
         / subject
-        / slice_folder
         / "SensitivityMaps.dat"
     )
 
     if not sensitivity_file.is_file():
         raise FileNotFoundError(f"Missing GRICS++ sensitivity maps: {sensitivity_file}")
 
-    Ncoils, _, Nx, Ny, Nslices = _read_h5_kspace_shape(h5_file)
-    if slice_idx >= Nslices:
-        raise IndexError(
-            f"slice_idx {slice_idx} is outside h5 kspace slice count {Nslices}."
-        )
+    Ncoils, _, Nx, Ny, Nz = _read_h5_kspace_shape(h5_file)
 
-    raw = np.fromfile(sensitivity_file, dtype="<f4")
-    expected_size = 2 * Ny * Nx * Ncoils
+    raw = np.fromfile(sensitivity_file, dtype="<f8")
+    expected_size = 2 * Ny * Nx * Nz * Ncoils
+
     if raw.size != expected_size:
         raise ValueError(
             f"{sensitivity_file} contains {raw.size} floats, expected "
-            f"{expected_size} for [2, Ny={Ny}, Nx={Nx}, Ncoils={Ncoils}]."
+            f"{expected_size} for [2, Ny={Ny}, Nx={Nx}, Nz={Nz}, Ncoils={Ncoils}]."
         )
 
-    maps_ri = raw.reshape((2, Ny, Nx, Ncoils), order="F")
-    maps_np = maps_ri[0] + 1j * maps_ri[1]
-    maps_np = np.transpose(maps_np, (2, 1, 0))[:, :, :, None]
+    raw_complex = raw[0::2] + 1j * raw[1::2]
+
+    # GRICS++ writes: c, e2, e0, e1, with e1 fastest.
+    maps_np = raw_complex.reshape((Ncoils, Nz, Nx, Ny), order="C")
+    maps_np = np.transpose(maps_np, (0, 2, 3, 1))  # [Ncoils, Nx, Ny, Nz]
+
+
+    # Save central slice of coil 0 absolute sensitivity map
+    central_slice = maps_np[0, :, :, Nz // 2]
+
+    output_dir = Path(subject_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=200)
+    ax.imshow(np.abs(central_slice), cmap="gray")
+    ax.axis("off")
+    fig.tight_layout(pad=0)
+    fig.savefig(
+        output_dir / "SensitivityMap_coil000_central_slice.png",
+        bbox_inches="tight",
+        pad_inches=0,
+    )
+    plt.close(fig)
+
     return torch.from_numpy(np.ascontiguousarray(maps_np)).to(
         device=device,
         dtype=torch.complex128,
     )
-
 
 def _tensor_to_numpy(value):
     if value is None:
@@ -134,19 +141,14 @@ def save_physiological_data(output_dir, data):
 
 
 
-def run_one_slice(
+def run_one_subject(
     h5_file,
     subject_dir,
-    slice_idx,
-    barrier,
     jupyter_notebook_flag=False,
 ):
 
     import time
     import torch
-
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
 
     from src.runtime.runtime_config import load_config
     from src.runtime.runtime_setup import initialize_runtime
@@ -161,15 +163,13 @@ def run_one_slice(
     "MKL:", os.environ.get("MKL_NUM_THREADS"),
 )
 
-    # GRICS++-style slice folder
-    slice_folder = f"Siemens_SingleImage_slice{slice_idx + 1:03d}_image01"
-    output_dir = Path(subject_dir) / slice_folder
+    output_dir = Path(subject_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     print(output_dir)
 
     params = load_config(
         data_type="real-world",
-        reconstruction_config="config/reconstruction/nonrigid_2d.toml",
+        reconstruction_config="config/reconstruction/nonrigid_3d.toml",
         overrides={
             "jupyter_notebook_flag": jupyter_notebook_flag,
 
@@ -179,10 +179,9 @@ def run_one_slice(
             # Log directly inside final slice folder
             "logs_folder": str(output_dir) + "/",
 
-            # Optional but recommended if you really want CPU-only slice parallelism
-            "runtime_device": "cpu",
+            "runtime_device": "gpu",
 
-            "N_motion_states": 1,  # important for fair comparison with GRICS++
+            "N_motion_states": 16,  # important for fair comparison with GRICS++
             "debug_flag": False,
             "verbose": False,
             "print_to_console": False,
@@ -193,7 +192,6 @@ def run_one_slice(
     external_smaps = load_grics_plusplus_sensitivity_maps(
         GRICS_plusplus_path,
         h5_file,
-        slice_idx,
         t_device,
     )
 
@@ -202,7 +200,6 @@ def run_one_slice(
         t_device=t_device,
         sp_device=sp_device,
         filename=h5_file,
-        slice_idx=slice_idx,
         external_smaps=external_smaps,
     )
     save_physiological_data(output_dir, data)
@@ -216,10 +213,6 @@ def run_one_slice(
         motion_plot_context=data.motion_plot_context,
     )
 
-    # Synchronize all slice processes here
-    print(f"Slice {slice_idx + 1:03d} ready, waiting at barrier...")
-    barrier.wait()
-
     # All slices start reconstruction after this point
     t0 = time.time()
     image, alpha = reconstructor.run()
@@ -228,7 +221,7 @@ def run_one_slice(
     torch.save(image, output_dir / "GricsRecon.pt")
     torch.save(alpha, output_dir / "GricsAlphaMaps.pt")
 
-    return slice_idx, elapsed_time
+    return elapsed_time
 
 
 
@@ -236,117 +229,28 @@ def run_one_slice(
 
 # Main part
 
-T2_H5_PATTERN = "[0-9][0-9][0-9][0-9]_T2_[sm].h5"
-T2_SUBJECT_PATTERN = re.compile(r"^\d{4}_T2_[sm]$")
+T1_H5_PATTERN = "[0-9][0-9][0-9][0-9]_T1_[sm].h5"
+T1_SUBJECT_PATTERN = re.compile(r"^\d{4}_T1_[sm]$")
 
-files = sorted(Path(article_dataset_folder).glob(T2_H5_PATTERN))
-
-start_subject = "0072_T2_s"
-start_processing = False
+files = sorted(Path(article_dataset_folder).glob(T1_H5_PATTERN))
 
 for f in files:
     subject = f.stem
 
-    if not T2_SUBJECT_PATTERN.match(subject):
+    if not T1_SUBJECT_PATTERN.match(subject):
         continue
-
-    if subject == start_subject:
-        start_processing = True
-
-    if not start_processing:
-        continue
-
 
     print(subject)
 
-    subject_dir = Path(article_dataset_folder + "_nomoco") / subject #
+    subject_dir = Path(article_dataset_folder) / subject # + "_nomoco"
     subject_dir.mkdir(parents=True, exist_ok=True)
 
-    Nsli = 68 if subject == "0080_T2_s" else 60
-    max_workers = Nsli
+    elapsed_time = run_one_subject(
+        h5_file=str(f),
+        subject_dir=str(subject_dir),
+        jupyter_notebook_flag=jupyter_notebook_flag,
+    )
 
-    with Manager() as manager:
-        barrier = manager.Barrier(Nsli)
-
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(
-                    run_one_slice,
-                    str(f),
-                    str(subject_dir),
-                    slice_idx,
-                    barrier,
-                    jupyter_notebook_flag,
-                )
-                for slice_idx in range(Nsli)
-            ]
-
-            for future in as_completed(futures):
-                slice_idx, elapsed_time = future.result()
-                print(f"{subject} slice {slice_idx + 1:03d}: {elapsed_time:.2f} s")
+    print(f"{subject} : {elapsed_time:.2f} s")
 
 
-
-
-
-
-
-
-
-# params = load_config(
-#     data_type="real-world",
-#     reconstruction_config="config/reconstruction/nonrigid_2d.toml",
-#     overrides={
-#         "jupyter_notebook_flag": jupyter_notebook_flag,
-#     },
-# )
-# sp_device, t_device = initialize_runtime(params)
-
-
-# files = list(Path(article_dataset_folder).glob("*.h5"))
-
-# for f in files:
-#     subject = Path(f.name).stem
-#     print(subject)
-#     subject_dir = Path(article_dataset_folder) / subject
-#     subject_dir.mkdir(parents=True, exist_ok=True)
-#     if subject=="0080_T2_s":
-#         Nsli = 68
-#     else:
-#         Nsli = 60
-#     print("[Demo B] Loading data and building operators...")
-#     for slice_idx in range(Nsli):
-#         data = DataLoader(
-#             params=params,
-#             t_device=t_device,
-#             sp_device=sp_device,
-#             filename=f,
-#             slice_idx=slice_idx
-#         )
-#         print("[Demo B] Starting reconstruction...")
-#         recon = JointReconstructor(
-#             data.kspace,
-#             data.smaps,
-#             data.sampling_idx,
-#             motion_signal=data.motion_signal,
-#             params=params,
-#             motion_plot_context=data.motion_plot_context,
-#         )
-#         t0 = time.time()
-#         image, alpha = recon.run()
-#         print(f"Elapsed time: {time.time() - t0:.2f} s")
-#         # Save the results
-#         slice_folder = f"Siemens_SingleImage_slice{slice_idx:03d}_image01"
-#         output_dir = Path(subject_dir) / slice_folder
-#         output_dir.mkdir(parents=True, exist_ok=True)
-#         # Save PyTorch tensors
-#         torch.save(recon, output_dir / "GricsRecon.pt")
-#         torch.save(alpha, output_dir / "GricsAlphaMaps.pt")
-
-#         # Copy log file
-#         log_file = Path(log_file)
-#         if log_file.exists():
-#             shutil.copy(log_file, output_dir / "joint_reconstruction.log")
-#         else:
-#             print(f"Warning: log file not found: {log_file}")
-        
