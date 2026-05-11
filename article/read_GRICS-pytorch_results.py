@@ -7,6 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from pathlib import Path
+from results_helpers import append_subject_metric, save_alpha_maps_if_available
 from sharpness_index import sharpness_index
 
 
@@ -15,6 +16,7 @@ no_correction_path = "/home/pyuser/wkdir/data/GRICS-torch/article_dataset_nomoco
 
 reconstruction_times_file = Path(GRICS_torch_path) / "reconstruction_times.txt"
 sharpness_enhansement_file = Path(GRICS_torch_path) / "sharpness_enhansement.txt"
+sharpness_corrected_file = Path(GRICS_torch_path) / "sharpness_corrected.txt"
  
 Nsli_max = 120
 
@@ -83,6 +85,7 @@ def load_torch_recon(file_recon):
 # Clear output files
 reconstruction_times_file.write_text("")
 sharpness_enhansement_file.write_text("")
+sharpness_corrected_file.write_text("")
 
 
 for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
@@ -91,6 +94,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
 
     total_times = []
     sharpness_enhansement = []
+    sharpness_corrected = []
 
     print(f"Processing subject: {subject_dir.name}")
 
@@ -103,6 +107,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
 
         file_log = slice_dir / "joint_reconstruction.log"
         file_grics_torch = slice_dir / "GricsRecon.pt"
+        file_alpha_torch = slice_dir / "GricsAlphaMaps.pt"
 
         if not file_log.exists():
             print(f"Missing log: {file_log}")
@@ -146,6 +151,12 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
         fig.savefig(output_file, bbox_inches="tight", pad_inches=0)
         plt.close(fig)
 
+        save_alpha_maps_if_available(
+            file_alpha_torch,
+            GricsRecon_torch,
+            slice_dir,
+        )
+
         # Sharpness index
         sharpness_idc_torch = sharpness_index(
             torch.from_numpy(np.abs(GricsRecon_torch))
@@ -161,18 +172,28 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
             / (sharpness_idc_torch + sharpness_idc_nomoco)
         )
 
+        sharpness_corrected.append(float(sharpness_idc_torch))
         sharpness_enhansement.append(float(enhancement))
 
     if total_times:
-        with open(reconstruction_times_file, "a") as f:
-            f.write(f"{max(total_times)}\n")
+        append_subject_metric(reconstruction_times_file, subject_dir.name, max(total_times))
     else:
-        with open(reconstruction_times_file, "a") as f:
-            f.write("nan\n")
+        append_subject_metric(reconstruction_times_file, subject_dir.name, "nan")
 
     if sharpness_enhansement:
-        with open(sharpness_enhansement_file, "a") as f:
-            f.write(f"{np.mean(sharpness_enhansement)}\n")
+        append_subject_metric(
+            sharpness_enhansement_file,
+            subject_dir.name,
+            np.mean(sharpness_enhansement),
+        )
     else:
-        with open(sharpness_enhansement_file, "a") as f:
-            f.write("nan\n")
+        append_subject_metric(sharpness_enhansement_file, subject_dir.name, "nan")
+
+    if sharpness_corrected:
+        append_subject_metric(
+            sharpness_corrected_file,
+            subject_dir.name,
+            np.mean(sharpness_corrected),
+        )
+    else:
+        append_subject_metric(sharpness_corrected_file, subject_dir.name, "nan")

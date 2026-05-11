@@ -8,11 +8,13 @@ import torch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from results_helpers import append_subject_metric, save_grics_3d_alpha_maps_if_available
 
 GRICS_plusplus_path = "/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database/GRICS-BELT-3D"
 no_correction_path = "/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database/GRICS-BELT-3D-nomoco/"
 reconstruction_times_file = GRICS_plusplus_path + '/' + "reconstruction_times.txt"
 sharpness_enhansement_file = GRICS_plusplus_path + '/' + "sharpness_enhansement.txt"
+sharpness_corrected_file = GRICS_plusplus_path + '/' + "sharpness_corrected.txt"
 Nsli_max = 120
 
 def extract_matrix_size(log_text):
@@ -70,6 +72,8 @@ with open(reconstruction_times_file, "w") as f:
     pass  # clears the file once at the beginning
 with open(sharpness_enhansement_file, "w") as f:
     pass  # clears the file once at the beginning
+with open(sharpness_corrected_file, "w") as f:
+    pass  # clears the file once at the beginning
 
 # loop over subjects
 for path_grics in sorted(Path(GRICS_plusplus_path).iterdir()):
@@ -86,6 +90,7 @@ for path_grics in sorted(Path(GRICS_plusplus_path).iterdir()):
 
     # Read the GRICS reconstructed image
     file_grics = path_grics / "GricsRecon.dat.0000"
+    file_alpha = path_grics / "GricsAlphaMapsLR.dat.0000"
     file_no_moco = Path(no_correction_path) / path_grics.name / "GricsRecon.dat.0000"
 
     GricsRecon_grics = load_bin(file_grics, "complex-float", (Nz, Ny, Nx))
@@ -101,18 +106,36 @@ for path_grics in sorted(Path(GRICS_plusplus_path).iterdir()):
     fig.savefig(output_file, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
 
+    save_grics_3d_alpha_maps_if_available(
+        file_alpha,
+        GricsRecon_grics,
+        Nz,
+        Ny,
+        Nx,
+        path_grics,
+    )
+
     # Add reconstruction time into the file
     total_time = extract_total_time(log)
     sharpness_enhansement = []
+    sharpness_corrected = []
     for i_slice in range(GricsRecon_grics.shape[0]):
         sharpness_idc_grics = sharpness_index(torch.from_numpy(np.abs(GricsRecon_grics[i_slice])))
         sharpness_idc_nomoco = sharpness_index(torch.from_numpy(np.abs(GricsRecon_nomoco[i_slice])))
+        sharpness_corrected.append(float(sharpness_idc_grics))
         sharpness_enhansement.append(200 * (sharpness_idc_grics - sharpness_idc_nomoco) / (sharpness_idc_grics + sharpness_idc_nomoco))
         
 
 
-    with open(reconstruction_times_file, "a") as f:
-        f.write(f"{total_time}\n")
-    with open(sharpness_enhansement_file, "a") as f:
-        f.write(f"{sum(sharpness_enhansement) / len(sharpness_enhansement)}\n")
+    append_subject_metric(reconstruction_times_file, path_grics.name, total_time)
+    append_subject_metric(
+        sharpness_enhansement_file,
+        path_grics.name,
+        sum(sharpness_enhansement) / len(sharpness_enhansement),
+    )
+    append_subject_metric(
+        sharpness_corrected_file,
+        path_grics.name,
+        sum(sharpness_corrected) / len(sharpness_corrected),
+    )
         

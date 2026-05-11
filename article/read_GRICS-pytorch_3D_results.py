@@ -8,6 +8,7 @@ import torch
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from results_helpers import append_subject_metric, save_alpha_maps_if_available
 from sharpness_index import sharpness_index
 
 
@@ -16,6 +17,7 @@ no_correction_path = "/home/pyuser/wkdir/data/GRICS-torch/article_dataset_3D_nom
 
 reconstruction_times_file = Path(GRICS_torch_path) / "reconstruction_times.txt"
 sharpness_enhansement_file = Path(GRICS_torch_path) / "sharpness_enhansement.txt"
+sharpness_corrected_file = Path(GRICS_torch_path) / "sharpness_corrected.txt"
 
 
 def extract_torch_reconstruction_time(log_text):
@@ -66,7 +68,7 @@ def load_torch_recon(file_recon):
     return recon.numpy()
 
 
-def mean_sharpness_enhancement(recon_torch, recon_nomoco):
+def mean_sharpness_metrics(recon_torch, recon_nomoco):
     if recon_torch.shape != recon_nomoco.shape:
         raise ValueError(
             "Corrected and NoMoCo volumes have different shapes: "
@@ -74,6 +76,7 @@ def mean_sharpness_enhancement(recon_torch, recon_nomoco):
         )
 
     sharpness_enhansement = []
+    sharpness_corrected = []
 
     for i_slice in range(recon_torch.shape[2]):
         sharpness_idc_torch = sharpness_index(
@@ -89,14 +92,16 @@ def mean_sharpness_enhancement(recon_torch, recon_nomoco):
             / (sharpness_idc_torch + sharpness_idc_nomoco)
         )
 
+        sharpness_corrected.append(float(sharpness_idc_torch))
         sharpness_enhansement.append(float(enhancement))
 
-    return float(np.mean(sharpness_enhansement))
+    return float(np.mean(sharpness_enhansement)), float(np.mean(sharpness_corrected))
 
 
 # Clear output files
 reconstruction_times_file.write_text("")
 sharpness_enhansement_file.write_text("")
+sharpness_corrected_file.write_text("")
 
 
 for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
@@ -107,6 +112,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
 
     file_log = subject_dir / "joint_reconstruction.log"
     file_grics_torch = subject_dir / "GricsRecon.pt"
+    file_alpha_torch = subject_dir / "GricsAlphaMaps.pt"
     file_no_moco = Path(no_correction_path) / subject_dir.name / "GricsRecon.pt"
 
     total_time = None
@@ -119,16 +125,20 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
 
     if not file_grics_torch.exists():
         print(f"Missing recon: {file_grics_torch}")
-        reconstruction_times_file.open("a").write("nan\n")
-        sharpness_enhansement_file.open("a").write("nan\n")
+        append_subject_metric(reconstruction_times_file, subject_dir.name, "nan")
+        append_subject_metric(sharpness_enhansement_file, subject_dir.name, "nan")
+        append_subject_metric(sharpness_corrected_file, subject_dir.name, "nan")
         continue
 
     if not file_no_moco.exists():
         print(f"Missing NoMoCo file: {file_no_moco}")
-        reconstruction_times_file.open("a").write(
-            f"{total_time if total_time is not None else 'nan'}\n"
+        append_subject_metric(
+            reconstruction_times_file,
+            subject_dir.name,
+            total_time if total_time is not None else "nan",
         )
-        sharpness_enhansement_file.open("a").write("nan\n")
+        append_subject_metric(sharpness_enhansement_file, subject_dir.name, "nan")
+        append_subject_metric(sharpness_corrected_file, subject_dir.name, "nan")
         continue
 
     GricsRecon_torch = load_torch_recon(file_grics_torch)
@@ -144,12 +154,29 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
     fig.savefig(output_file, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
 
-    sharpness_enhansement = mean_sharpness_enhancement(
+    save_alpha_maps_if_available(
+        file_alpha_torch,
+        GricsRecon_torch,
+        subject_dir,
+    )
+
+    sharpness_enhansement, sharpness_corrected = mean_sharpness_metrics(
         GricsRecon_torch,
         GricsRecon_nomoco,
     )
 
-    reconstruction_times_file.open("a").write(
-        f"{total_time if total_time is not None else 'nan'}\n"
+    append_subject_metric(
+        reconstruction_times_file,
+        subject_dir.name,
+        total_time if total_time is not None else "nan",
     )
-    sharpness_enhansement_file.open("a").write(f"{sharpness_enhansement}\n")
+    append_subject_metric(
+        sharpness_enhansement_file,
+        subject_dir.name,
+        sharpness_enhansement,
+    )
+    append_subject_metric(
+        sharpness_corrected_file,
+        subject_dir.name,
+        sharpness_corrected,
+    )
