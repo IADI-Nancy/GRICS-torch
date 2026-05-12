@@ -159,7 +159,7 @@ class DataLoader:
         )
 
     def _apply_or_import_motion(self):
-        if self.params.motion_simulation_type == 'as-it-is':
+        if self.params.motion_simulation_model_mode == 'as-it-is':
             self.image_no_moco = self.image_ground_truth
             return None
 
@@ -391,7 +391,7 @@ class DataLoader:
             )
 
     def _has_simulated_motion(self):
-        return self.params.motion_simulation_type != "as-it-is"
+        return self.params.motion_simulation_model_mode != "as-it-is"
 
     # For the image loaded from a file
     @staticmethod
@@ -603,7 +603,7 @@ class DataLoader:
             for nex in range(self.params.Nex)
         ]
         self._motion_curve_for_binning = (
-            motion_data if self.params.motion_simulation_type == "as-it-is" else None
+            motion_data if self.params.motion_simulation_model_mode == "as-it-is" else None
         )
         self._motion_plot_kwargs = {}
 

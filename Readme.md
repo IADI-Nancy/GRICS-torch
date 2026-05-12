@@ -131,8 +131,10 @@ Independent random permutation per `nex`, then split into `NshotsPerNex` chunks.
 ## Motion Simulation Modes
 
 Configured with:
-- `simulated_motion_type`: `"rigid"` or `"non-rigid"`
+- `motion_simulation_model_mode`: `"rigid-realistic"`, `"rigid-per-shot"`, `"non-rigid-realistic"`, `"non-rigid-per-shot"`, or `"as-it-is"`
 - `motion_state_mode`: `"realistic"` or `"per-shot"`
+
+`simulated_motion_type` is derived from `motion_simulation_model_mode` for internal/backward-compatible code paths (`"rigid"` or `"non-rigid"`), so experiment scripts should not set both values independently.
 
 Reconstruction uses a separate parameter:
 - `reconstruction_motion_type`: `"rigid"` or `"non-rigid"`
