@@ -77,13 +77,26 @@ class MotionSimulator:
         if motion_type is None:
             motion_type = self.params.simulated_motion_type
 
-        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz)
-        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.sampling_idx, self.params.Nex, self.MotionOperator)
+        motion_operator = MotionOperator(
+            self.Nx,
+            self.Ny,
+            alpha,
+            motion_type,
+            centers=centers,
+            motion_signal=motion_signal,
+            Nz=self.Nz,
+            release_operators_after_use=True,
+        )
+        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.sampling_idx, self.params.Nex, motion_operator)
         kspace_corruped = E.forward(self.image)
         self.kspace = kspace_corruped.reshape(self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nz)
+        del E, motion_operator, kspace_corruped
 
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
         self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
+        del img_cplx
+        if self.t_device is not None and str(self.t_device).startswith("cuda"):
+            torch.cuda.empty_cache()
 
     # =============================================================================
     # ============================== RIGID MOTION =================================

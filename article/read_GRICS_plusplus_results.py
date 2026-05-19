@@ -14,6 +14,7 @@ GRICS_plusplus_path = "/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database/GRICS
 no_correction_path = "/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database/NoMoCo/"
 reconstruction_times_file = GRICS_plusplus_path + '/' + "reconstruction_times.txt"
 sharpness_enhansement_file = GRICS_plusplus_path + '/' + "sharpness_enhansement.txt"
+sharpness_uncorrected_file = GRICS_plusplus_path + '/' + "sharpness_uncorrected.txt"
 sharpness_corrected_file = GRICS_plusplus_path + '/' + "sharpness_corrected.txt"
 Nsli_max = 120
 
@@ -72,6 +73,8 @@ with open(reconstruction_times_file, "w") as f:
     pass  # clears the file once at the beginning
 with open(sharpness_enhansement_file, "w") as f:
     pass  # clears the file once at the beginning
+with open(sharpness_uncorrected_file, "w") as f:
+    pass  # clears the file once at the beginning
 with open(sharpness_corrected_file, "w") as f:
     pass  # clears the file once at the beginning
 
@@ -79,6 +82,7 @@ with open(sharpness_corrected_file, "w") as f:
 for path_grics in sorted(Path(GRICS_plusplus_path).iterdir()):
     total_times = []
     sharpness_enhansement = []
+    sharpness_uncorrected = []
     sharpness_corrected = []
     for i in range(1, Nsli_max + 1):
         folder_name = f"Siemens_SingleImage_slice{i:03d}_image01"
@@ -122,6 +126,7 @@ for path_grics in sorted(Path(GRICS_plusplus_path).iterdir()):
         total_times.append(extract_total_time(log))
         sharpness_idc_grics = sharpness_index(torch.from_numpy(np.abs(GricsRecon_grics)))
         sharpness_idc_nomoco = sharpness_index(torch.from_numpy(np.abs(GricsRecon_nomoco)))
+        sharpness_uncorrected.append(float(sharpness_idc_nomoco))
         sharpness_corrected.append(float(sharpness_idc_grics))
         sharpness_enhansement.append(200 * (sharpness_idc_grics - sharpness_idc_nomoco) / (sharpness_idc_grics + sharpness_idc_nomoco))
 
@@ -131,6 +136,11 @@ for path_grics in sorted(Path(GRICS_plusplus_path).iterdir()):
         sharpness_enhansement_file,
         path_grics.name,
         sum(sharpness_enhansement) / len(sharpness_enhansement),
+    )
+    append_subject_metric(
+        sharpness_uncorrected_file,
+        path_grics.name,
+        sum(sharpness_uncorrected) / len(sharpness_uncorrected),
     )
     append_subject_metric(
         sharpness_corrected_file,

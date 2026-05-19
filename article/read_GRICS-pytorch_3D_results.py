@@ -17,6 +17,7 @@ no_correction_path = "/home/pyuser/wkdir/data/GRICS-torch/article_dataset_3D_nom
 
 reconstruction_times_file = Path(GRICS_torch_path) / "reconstruction_times.txt"
 sharpness_enhansement_file = Path(GRICS_torch_path) / "sharpness_enhansement.txt"
+sharpness_uncorrected_file = Path(GRICS_torch_path) / "sharpness_uncorrected.txt"
 sharpness_corrected_file = Path(GRICS_torch_path) / "sharpness_corrected.txt"
 
 
@@ -76,6 +77,7 @@ def mean_sharpness_metrics(recon_torch, recon_nomoco):
         )
 
     sharpness_enhansement = []
+    sharpness_uncorrected = []
     sharpness_corrected = []
 
     for i_slice in range(recon_torch.shape[2]):
@@ -92,15 +94,21 @@ def mean_sharpness_metrics(recon_torch, recon_nomoco):
             / (sharpness_idc_torch + sharpness_idc_nomoco)
         )
 
+        sharpness_uncorrected.append(float(sharpness_idc_nomoco))
         sharpness_corrected.append(float(sharpness_idc_torch))
         sharpness_enhansement.append(float(enhancement))
 
-    return float(np.mean(sharpness_enhansement)), float(np.mean(sharpness_corrected))
+    return (
+        float(np.mean(sharpness_enhansement)),
+        float(np.mean(sharpness_uncorrected)),
+        float(np.mean(sharpness_corrected)),
+    )
 
 
 # Clear output files
 reconstruction_times_file.write_text("")
 sharpness_enhansement_file.write_text("")
+sharpness_uncorrected_file.write_text("")
 sharpness_corrected_file.write_text("")
 
 
@@ -127,6 +135,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
         print(f"Missing recon: {file_grics_torch}")
         append_subject_metric(reconstruction_times_file, subject_dir.name, "nan")
         append_subject_metric(sharpness_enhansement_file, subject_dir.name, "nan")
+        append_subject_metric(sharpness_uncorrected_file, subject_dir.name, "nan")
         append_subject_metric(sharpness_corrected_file, subject_dir.name, "nan")
         continue
 
@@ -138,6 +147,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
             total_time if total_time is not None else "nan",
         )
         append_subject_metric(sharpness_enhansement_file, subject_dir.name, "nan")
+        append_subject_metric(sharpness_uncorrected_file, subject_dir.name, "nan")
         append_subject_metric(sharpness_corrected_file, subject_dir.name, "nan")
         continue
 
@@ -160,7 +170,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
         subject_dir,
     )
 
-    sharpness_enhansement, sharpness_corrected = mean_sharpness_metrics(
+    sharpness_enhansement, sharpness_uncorrected, sharpness_corrected = mean_sharpness_metrics(
         GricsRecon_torch,
         GricsRecon_nomoco,
     )
@@ -174,6 +184,11 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
         sharpness_enhansement_file,
         subject_dir.name,
         sharpness_enhansement,
+    )
+    append_subject_metric(
+        sharpness_uncorrected_file,
+        subject_dir.name,
+        sharpness_uncorrected,
     )
     append_subject_metric(
         sharpness_corrected_file,

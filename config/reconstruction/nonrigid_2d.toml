@@ -5,13 +5,13 @@ reconstruction_dimension = "2D"
 motion_type = "non-rigid"
 # Manual number of motion states used for reconstruction.
 # This value is selected only if manual mode is selected (i.e., no motion simulation override).
-N_motion_states = 4
+N_motion_states = 16
 # Apply extra scaling to motion updates during GN iterations.
 use_scaled_motion_update = false
 # Multi-resolution scale factors (relative to full resolution).
-ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
+ResolutionLevels = [0.25, 0.5, 1.0]
 # Number of GN iterations for each resolution level.
-GN_iterations_per_level = [4, 4, 4, 1]
+GN_iterations_per_level = [10, 4, 4]
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
@@ -28,13 +28,13 @@ cg_reg_scale_num_probes = 8
 # Image reconstruction regularization weight.
 lambda_r = 5.0e-2
 # Maximum CG/GN inner iterations for image update.
-max_iter_recon = 50
+max_iter_recon = 96
 # Convergence tolerance for image update.
 tol_recon = 1.0e-3
 
 # Motion reconstruction regularization weight.
 lambda_m = 10.0
 # Maximum CG/GN inner iterations for motion update.
-max_iter_motion = 10
+max_iter_motion = 64
 # Convergence tolerance for motion update.
 tol_motion = 1.0e-2

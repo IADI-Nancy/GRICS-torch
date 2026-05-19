@@ -182,7 +182,7 @@ def run_one_slice(
             # Optional but recommended if you really want CPU-only slice parallelism
             "runtime_device": "cpu",
 
-            "N_motion_states": 1,  # important for fair comparison with GRICS++
+            "N_motion_states": 16,  # important for fair comparison with GRICS++
             "debug_flag": False,
             "verbose": False,
             "print_to_console": False,
@@ -259,7 +259,7 @@ for f in files:
 
     print(subject)
 
-    subject_dir = Path(article_dataset_folder + "_nomoco") / subject #
+    subject_dir = Path(article_dataset_folder) / subject # + "_nomoco"
     subject_dir.mkdir(parents=True, exist_ok=True)
 
     Nsli = 68 if subject == "0080_T2_s" else 60

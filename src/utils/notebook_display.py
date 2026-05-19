@@ -29,7 +29,7 @@ def _first_existing_glob(folder, *patterns):
 
 
 def _infer_has_ground_truth(params):
-    return params.motion_simulation_type != "as-it-is"
+    return params.motion_simulation_model_mode != "as-it-is"
 
 
 def _display_image_row(image_paths, subtitles, title=None, figsize=None):

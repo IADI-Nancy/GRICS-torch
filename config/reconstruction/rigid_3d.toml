@@ -22,7 +22,7 @@ cg_max_stag_steps = 8
 # Extra CG steps after the first stopping criterion is met.
 cg_max_more_steps = 6
 # Estimate regularization scaling internally from probes.
-cg_use_reg_scale_proxy = true
+cg_use_reg_scale_proxy = false
 # Number of probes for regularization scaling estimate.
 cg_reg_scale_num_probes = 8
 

@@ -14,7 +14,7 @@ Translational and rotational motion derivatives:
 
 
 class MotionOperator:
-    def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None, Nz=1):
+    def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None, Nz=1, release_operators_after_use=False):
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = int(Nz)
@@ -23,6 +23,7 @@ class MotionOperator:
         self.motion_type = motion_type
         self.centers = centers
         self.motion_signal = motion_signal
+        self.release_operators_after_use = release_operators_after_use
         if motion_type == 'rigid':
             self._initialize_rigid_motion_operator()
         elif motion_type == 'non-rigid':
@@ -31,7 +32,24 @@ class MotionOperator:
             raise ValueError(f"Unknown motion type: {motion_type}")    
 
     def _get_sparse_operator(self, motion_state):
-        return self.sparseMotionOperator[motion_state]
+        motion_op = self.sparseMotionOperator[motion_state]
+        if motion_op is not None:
+            return motion_op
+
+        if self.motion_type == 'rigid':
+            motion_op = self._build_rigid_sparse_operator(motion_state)
+        elif self.motion_type == 'non-rigid':
+            motion_op = self._build_non_rigid_sparse_operator(motion_state)
+        else:
+            raise ValueError(f"Unknown motion type: {self.motion_type}")
+
+        if not self.release_operators_after_use:
+            self.sparseMotionOperator[motion_state] = motion_op
+        return motion_op
+
+    def clear_sparse_operator(self, motion_state):
+        if self.release_operators_after_use:
+            self.sparseMotionOperator[motion_state] = None
     
     # ---------------------------------------------------------
     # Rigid motion
@@ -58,33 +76,11 @@ class MotionOperator:
         coords_y = torch.arange(Ny, device=self.device, dtype=torch.float64)
         self.X, self.Y = torch.meshgrid(coords_x, coords_y, indexing="ij")
 
-        xs = torch.arange(Nx, device=self.device, dtype=torch.float64)
-        ys = torch.arange(Ny, device=self.device, dtype=torch.float64)
-        X, Y = torch.meshgrid(xs, ys, indexing="ij")
+        self.sparseMotionOperator = [None for _ in range(alpha.shape[1])]
 
-        self.sparseMotionOperator = []
-
-        for motion_state in range(alpha.shape[1]):
-            tx = alpha[0, motion_state]
-            ty = alpha[1, motion_state]
-            phi = alpha[2, motion_state]
-            cx = centers[0, motion_state]
-            cy = centers[1, motion_state]
-
-            cos_phi = torch.cos(phi)
-            sin_phi = torch.sin(phi)
-
-            Xc = X - cx
-            Yc = Y - cy
-
-            Xp = cx + cos_phi * Xc - sin_phi * Yc + tx
-            Yp = cy + sin_phi * Xc + cos_phi * Yc + ty
-
-            Ux = Xp - X
-            Uy = Yp - Y
-
-            motion_op = MotionOperator._create_sparse_motion_operator_2d(Ux, Uy)
-            self.sparseMotionOperator.append(motion_op)
+        if not self.release_operators_after_use:
+            for motion_state in range(alpha.shape[1]):
+                self.sparseMotionOperator[motion_state] = self._build_rigid_sparse_operator_2d(motion_state)
 
     @staticmethod
     def _rotation_matrix_3d(rx, ry, rz):
@@ -134,40 +130,68 @@ class MotionOperator:
         coords_z = torch.arange(Nz, device=self.device, dtype=torch.float64)
         self.X, self.Y, self.Z = torch.meshgrid(coords_x, coords_y, coords_z, indexing="ij")
 
-        X, Y, Z = self.X, self.Y, self.Z
-        self.sparseMotionOperator = []
+        self.sparseMotionOperator = [None for _ in range(alpha.shape[1])]
 
         n_params = int(alpha.shape[0])
         if n_params != 6:
             raise ValueError("3D rigid motion expects alpha with 6 params [tx, ty, tz, rx, ry, rz].")
 
-        for motion_state in range(alpha.shape[1]):
-            tx = alpha[0, motion_state]
-            ty = alpha[1, motion_state]
-            tz = alpha[2, motion_state]
-            rx = alpha[3, motion_state]
-            ry = alpha[4, motion_state]
-            rz = alpha[5, motion_state]
+        if not self.release_operators_after_use:
+            for motion_state in range(alpha.shape[1]):
+                self.sparseMotionOperator[motion_state] = self._build_rigid_sparse_operator_3d(motion_state)
 
-            cx = centers[0, motion_state]
-            cy = centers[1, motion_state]
-            cz = centers[2, motion_state]
+    def _build_rigid_sparse_operator(self, motion_state):
+        if self.Nz > 1:
+            return self._build_rigid_sparse_operator_3d(motion_state)
+        return self._build_rigid_sparse_operator_2d(motion_state)
 
-            r = MotionOperator._rotation_matrix_3d(rx, ry, rz).to(dtype=X.dtype, device=self.device)
-            xc = X - cx
-            yc = Y - cy
-            zc = Z - cz
+    def _build_rigid_sparse_operator_2d(self, motion_state):
+        tx = self.alpha[0, motion_state]
+        ty = self.alpha[1, motion_state]
+        phi = self.alpha[2, motion_state]
+        cx = self.centers[0, motion_state]
+        cy = self.centers[1, motion_state]
 
-            xp = r[0, 0] * xc + r[0, 1] * yc + r[0, 2] * zc + cx + tx
-            yp = r[1, 0] * xc + r[1, 1] * yc + r[1, 2] * zc + cy + ty
-            zp = r[2, 0] * xc + r[2, 1] * yc + r[2, 2] * zc + cz + tz
+        cos_phi = torch.cos(phi)
+        sin_phi = torch.sin(phi)
 
-            ux = xp - X
-            uy = yp - Y
-            uz = zp - Z
+        Xc = self.X - cx
+        Yc = self.Y - cy
 
-            motion_op = MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
-            self.sparseMotionOperator.append(motion_op)
+        Xp = cx + cos_phi * Xc - sin_phi * Yc + tx
+        Yp = cy + sin_phi * Xc + cos_phi * Yc + ty
+
+        Ux = Xp - self.X
+        Uy = Yp - self.Y
+
+        return MotionOperator._create_sparse_motion_operator_2d(Ux, Uy)
+
+    def _build_rigid_sparse_operator_3d(self, motion_state):
+        tx = self.alpha[0, motion_state]
+        ty = self.alpha[1, motion_state]
+        tz = self.alpha[2, motion_state]
+        rx = self.alpha[3, motion_state]
+        ry = self.alpha[4, motion_state]
+        rz = self.alpha[5, motion_state]
+
+        cx = self.centers[0, motion_state]
+        cy = self.centers[1, motion_state]
+        cz = self.centers[2, motion_state]
+
+        r = MotionOperator._rotation_matrix_3d(rx, ry, rz).to(dtype=self.X.dtype, device=self.device)
+        xc = self.X - cx
+        yc = self.Y - cy
+        zc = self.Z - cz
+
+        xp = r[0, 0] * xc + r[0, 1] * yc + r[0, 2] * zc + cx + tx
+        yp = r[1, 0] * xc + r[1, 1] * yc + r[1, 2] * zc + cy + ty
+        zp = r[2, 0] * xc + r[2, 1] * yc + r[2, 2] * zc + cz + tz
+
+        ux = xp - self.X
+        uy = yp - self.Y
+        uz = zp - self.Z
+
+        return MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
 
     # ------------------------ Geometric derivatives ----------------------------
 
@@ -378,32 +402,35 @@ class MotionOperator:
     def _initialize_non_rigid_motion_operator(self):
         alpha = self.alpha
         signal = torch.as_tensor(self.motion_signal, device=self.device, dtype=alpha.dtype)
+        self.motion_signal = signal
 
-        self.sparseMotionOperator = []
         n_states = signal.numel()
+        self.sparseMotionOperator = [None for _ in range(n_states)]
         if self.Nz > 1:
             if alpha.ndim != 4 or alpha.shape[0] < 3:
                 raise ValueError("3D non-rigid motion expects alpha with shape (3, Nx, Ny, Nz).")
-            alpha_x = alpha[0]
-            alpha_y = alpha[1]
-            alpha_z = alpha[2]
-            for motion_state in range(n_states):
-                ux = alpha_x * signal[motion_state]
-                uy = alpha_y * signal[motion_state]
-                uz = alpha_z * signal[motion_state]
-                motion_op = MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
-                self.sparseMotionOperator.append(motion_op)
+            if not self.release_operators_after_use:
+                for motion_state in range(n_states):
+                    self.sparseMotionOperator[motion_state] = self._build_non_rigid_sparse_operator(motion_state)
         else:
             # Axis convention:
             # alpha[0] -> Ux -> axis 0 displacement (rows)
             # alpha[1] -> Uy -> axis 1 displacement (cols)
-            alpha_x = alpha[0]
-            alpha_y = alpha[1]
-            for motion_state in range(n_states):
-                ux = alpha_x * signal[motion_state]
-                uy = alpha_y * signal[motion_state]
-                motion_op = MotionOperator._create_sparse_motion_operator_2d(ux, uy)
-                self.sparseMotionOperator.append(motion_op)
+            if not self.release_operators_after_use:
+                for motion_state in range(n_states):
+                    self.sparseMotionOperator[motion_state] = self._build_non_rigid_sparse_operator(motion_state)
+
+    def _build_non_rigid_sparse_operator(self, motion_state):
+        signal = self.motion_signal[motion_state]
+        if self.Nz > 1:
+            ux = self.alpha[0] * signal
+            uy = self.alpha[1] * signal
+            uz = self.alpha[2] * signal
+            return MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
+
+        ux = self.alpha[0] * signal
+        uy = self.alpha[1] * signal
+        return MotionOperator._create_sparse_motion_operator_2d(ux, uy)
 
 
 

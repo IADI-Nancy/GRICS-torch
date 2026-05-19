@@ -16,6 +16,7 @@ no_correction_path = "/home/pyuser/wkdir/data/GRICS-torch/article_dataset_nomoco
 
 reconstruction_times_file = Path(GRICS_torch_path) / "reconstruction_times.txt"
 sharpness_enhansement_file = Path(GRICS_torch_path) / "sharpness_enhansement.txt"
+sharpness_uncorrected_file = Path(GRICS_torch_path) / "sharpness_uncorrected.txt"
 sharpness_corrected_file = Path(GRICS_torch_path) / "sharpness_corrected.txt"
  
 Nsli_max = 120
@@ -85,6 +86,7 @@ def load_torch_recon(file_recon):
 # Clear output files
 reconstruction_times_file.write_text("")
 sharpness_enhansement_file.write_text("")
+sharpness_uncorrected_file.write_text("")
 sharpness_corrected_file.write_text("")
 
 
@@ -94,6 +96,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
 
     total_times = []
     sharpness_enhansement = []
+    sharpness_uncorrected = []
     sharpness_corrected = []
 
     print(f"Processing subject: {subject_dir.name}")
@@ -172,6 +175,7 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
             / (sharpness_idc_torch + sharpness_idc_nomoco)
         )
 
+        sharpness_uncorrected.append(float(sharpness_idc_nomoco))
         sharpness_corrected.append(float(sharpness_idc_torch))
         sharpness_enhansement.append(float(enhancement))
 
@@ -191,9 +195,15 @@ for subject_dir in sorted(Path(GRICS_torch_path).iterdir()):
 
     if sharpness_corrected:
         append_subject_metric(
+            sharpness_uncorrected_file,
+            subject_dir.name,
+            np.mean(sharpness_uncorrected),
+        )
+        append_subject_metric(
             sharpness_corrected_file,
             subject_dir.name,
             np.mean(sharpness_corrected),
         )
     else:
+        append_subject_metric(sharpness_uncorrected_file, subject_dir.name, "nan")
         append_subject_metric(sharpness_corrected_file, subject_dir.name, "nan")

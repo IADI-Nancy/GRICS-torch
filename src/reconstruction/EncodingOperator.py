@@ -53,6 +53,9 @@ class EncodingOperator:
                     # Sampling operator
                     KspaceData[coil, nex, SamplingIndices] = WarpedImageFT.flatten()[SamplingIndices]
 
+            self.motionOperator.clear_sparse_operator(motion_state)
+            del MotionOp
+
         return KspaceData.flatten()
 
         
@@ -99,6 +102,8 @@ class EncodingOperator:
 
                 # Accumulate into full image
                 Image[nex] += Unwarped
+                self.motionOperator.clear_sparse_operator(motion_state)
+                del MotionOp
 
         return Image.flatten()
     
