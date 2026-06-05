@@ -81,6 +81,40 @@ RUN git clone https://github.com/IADI-Nancy/wrapperHDF5.git /opt/wrapperHDF5
 ENV PYTHONPATH=/opt/wrapperHDF5
 # -------------------------------------------------------------------
 
+# -------------------------------------------------------------------
+# Install siemens_to_ismrmrd from PR#139 / v1.2.13
+# -------------------------------------------------------------------
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
+    && apt update \
+    && apt install -y --no-install-recommends \
+        libboost-all-dev \
+        libpugixml-dev \
+        libhdf5-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/ismrmrd/ismrmrd.git /opt/ismrmrd_cpp \
+ && cd /opt/ismrmrd_cpp \
+ && git checkout v1.14.2 \
+ && mkdir build && cd build \
+ && cmake -D CMAKE_BUILD_TYPE=Release -D USE_HDF5_DATASET_SUPPORT=ON .. \
+ && make -j$(nproc) \
+ && make install \
+ && ldconfig
+
+RUN git clone https://github.com/ismrmrd/siemens_to_ismrmrd.git /opt/siemens_to_ismrmrd \
+ && cd /opt/siemens_to_ismrmrd \
+ && git checkout v1.2.13 \
+ && mkdir build && cd build \
+ && cmake -D CMAKE_BUILD_TYPE=Release .. \
+ && make -j$(nproc) \
+ && make install \
+ && ldconfig
+ 
+ #--------------------------------------------------------------------
+
 RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers \
     && echo 'Defaults    env_keep += "PATH"' >> /etc/sudoers \
 	&& sed -i '/^Defaults\tsecure_path.*$/ d' /etc/sudoers
