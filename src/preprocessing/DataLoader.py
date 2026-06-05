@@ -8,14 +8,13 @@ from skimage import io as skio
 from skimage.transform import resize
 import math
 import h5py
-import sigpy as sp
-import sigpy.mri as spmri
 
 from src.preprocessing.RawDataReader import RawDataReader
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.MotionBinner import MotionBinner
+from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
@@ -92,6 +91,7 @@ class DataLoader:
         self._motion_plot_kwargs = {}
         self._motion_plot_y_limits = None
         self.kz_idx_chronological = None
+        self.reference_kspace = None
 
     def _validate_inputs(self):
         if self.params.data_type != "shepp-logan" and self.filename is None:
@@ -136,6 +136,7 @@ class DataLoader:
             self.slice_idx = 0
 
     def _load_source_data(self):
+        print(f"[DataLoader] Reading source data (data_type={self.params.data_type})...")
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self._generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
@@ -157,8 +158,12 @@ class DataLoader:
         # This avoids an eager full-volume clone in the common case where the source tensor is not modified in-place.
         self.kspace_nomotion = self.kspace
 
-        # Calculate ESPIRiT maps and input image
-        self.smaps = self._calc_espirit_maps()
+        # Calculate coil sensitivity maps and input image
+        method = getattr(self.params, "coil_sensitivity_method", "espirit")
+        print(f"[DataLoader] Calculating coil sensitivity maps (method={method})...")
+        self.smaps = CoilSensitivityCalculator(self.params, sp_device=self.sp_device).calculate(
+            self.kspace, reference_kspace=self.reference_kspace,
+        )
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
         self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
         del img_cplx
@@ -218,6 +223,10 @@ class DataLoader:
             kz_per_motion_state,
         ) = self._prepare_motion_simulator_inputs()
 
+        print(
+            "[DataLoader] Starting motion simulation "
+            f"(type={self.params.simulated_motion_type}, mode={self.params.motion_state_mode})..."
+        )
         motionSimulator = MotionSimulator(
             image_ground_truth,
             smaps,
@@ -389,6 +398,8 @@ class DataLoader:
         s = torch.clamp(s.real if torch.is_complex(s) else s, min=self.params.kspace_norm_eps)
         self.kspace_scale = float(s.item())
         self.kspace = self.kspace / self.kspace_scale
+        if self.reference_kspace is not None:
+            self.reference_kspace = self.reference_kspace / self.kspace_scale
         print(
             f"[DataLoader] k-space normalized ({self.params.kspace_norm_mode}), "
             f"scale={self.kspace_scale:.6e}"
@@ -732,6 +743,14 @@ class DataLoader:
             self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)
         else:
             self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
+
+        reference_np = data.get('reference_kspace')
+        if reference_np is None:
+            self.reference_kspace = None
+        elif is_3d:
+            self.reference_kspace = torch.from_numpy(reference_np).to(self.t_device, dtype=torch.cdouble)
+        else:
+            self.reference_kspace = torch.from_numpy(reference_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
@@ -780,6 +799,8 @@ class DataLoader:
             data['idx_kz'] = f['idx_kz'][:]
             data['idx_nex'] = f['idx_nex'][:]
             data['kspace'] = f['kspace'][:]
+            if 'reference_kspace' in f:
+                data['reference_kspace'] = f['reference_kspace'][:]
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
         if self.params.debug_flag:
@@ -788,114 +809,6 @@ class DataLoader:
                 folder=self.params.initial_data_folder,
                 fname=f"ky_order_realworld_slice{slice_idx}.png",
             )
-
-    @staticmethod
-    def _cupy_cleanup(cp):
-        cp.get_default_memory_pool().free_all_blocks()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
-        torch.cuda.empty_cache()
-
-    @staticmethod
-    def _maps_numpy_to_torch(maps_np, device):
-        maps_np = maps_np.astype(np.complex128, copy=False)
-        maps_t = torch.from_numpy(np.stack([maps_np.real, maps_np.imag], axis=-1))
-        return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(device)
-
-    def _resolved_espirit_device(self):
-        if self.sp_device is not None:
-            return self.sp_device
-        return sp.Device(0 if self.kspace.device.type == "cuda" else -1)
-
-    def _run_espirit_calibration_cpu(self, kspace_block, calib_width, kernel_width, sp_device=None):
-        if sp_device is None:
-            sp_device = self._resolved_espirit_device()
-        kspace_np = kspace_block.detach().cpu().numpy().astype(np.complex64, copy=False)
-        maps_np = spmri.app.EspiritCalib(
-            kspace_np,
-            calib_width=calib_width,
-            kernel_width=kernel_width,
-            max_iter=self.params.espirit_max_iter,
-            device=sp_device,
-        ).run()
-        return self._maps_numpy_to_torch(maps_np, self.kspace.device)
-
-    def _run_espirit_calibration_gpu(self, kspace_block, calib_width, kernel_width, sp_device):
-        import cupy as cp
-
-        kspace_cp = cp.asarray(kspace_block.contiguous(), dtype=cp.complex64)
-        maps_cp = spmri.app.EspiritCalib(
-            kspace_cp,
-            calib_width=calib_width,
-            kernel_width=kernel_width,
-            max_iter=self.params.espirit_max_iter,
-            device=sp_device,
-        ).run()
-        maps_cp = maps_cp.astype(cp.complex64, copy=False)
-        maps_cp = cp.ascontiguousarray(maps_cp)
-        maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
-        return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
-
-    def _run_espirit_calibration(self, kspace_block, calib_width, kernel_width):
-        use_gpu = self.kspace.device.type == "cuda"
-        sp_device = self._resolved_espirit_device()
-
-        if not use_gpu:
-            return self._run_espirit_calibration_cpu(
-                kspace_block, calib_width, kernel_width, sp_device=sp_device,
-            )
-
-        import cupy as cp
-
-        try:
-            return self._run_espirit_calibration_gpu(
-                kspace_block, calib_width, kernel_width, sp_device,
-            )
-        except cp.cuda.memory.OutOfMemoryError:
-            # Fallback to CPU calibration when GPU memory is insufficient.
-            self._cupy_cleanup(cp)
-            return self._run_espirit_calibration_cpu(
-                kspace_block, calib_width, kernel_width, sp_device=sp.Device(-1),
-            )
-        finally:
-            self._cupy_cleanup(cp)
-
-    def _calc_espirit_maps(self):
-        Ncha, _, Nx, Ny, Nz = self.kspace.shape
-
-        # For measured data, calibrate maps from all repeats to avoid unstable
-        # Nex-specific map estimates that can look noise-like in recon outputs.
-        if self.params.data_type in {"real-world", "raw-data", "siemens-saec"} and self.kspace.shape[1] > 1:
-            kspace_calib = torch.mean(self.kspace, dim=1)
-        else:
-            kspace_calib = self.kspace[:, 0]
-
-        # Bound calibration settings by actual data size to avoid oversized
-        # calibration matrices and excessive memory usage.
-        if Nz > 1:
-            calib_width_eff = max(1, min(int(self.params.acs), Nx, Ny, Nz))
-        else:
-            calib_width_eff = max(1, min(int(self.params.acs), Nx, Ny))
-        kernel_width_eff = max(1, min(int(self.params.kernel_width), calib_width_eff))
-
-        # 3D calibration for volumetric data, 2D calibration for single-slice data.
-        if Nz > 1:
-            return self._run_espirit_calibration(
-                kspace_calib,
-                calib_width_eff,
-                kernel_width_eff,
-            )
-
-        espirit_maps = torch.zeros((Ncha, Nx, Ny, Nz), dtype=torch.complex128, device=self.kspace.device)
-
-        # Legacy 2D slice calibration (single-slice data).
-        for z in range(Nz):
-            espirit_maps[:, :, :, z] = self._run_espirit_calibration(
-                kspace_calib[:, :, :, z],
-                calib_width_eff,
-                kernel_width_eff,
-            )
-
-        return espirit_maps
 
     def _debug_check_true_motion_image_reconstruction(self, motionSimulator):
         # This consistency check is meaningful only for simulated non-rigid data.

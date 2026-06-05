@@ -32,10 +32,21 @@ kspace_norm_mode = "rms"
 kspace_norm_eps = 1.0e-12
 
 [coil_sensitivity]
+# Coil sensitivity method: "espirit" or "odille-spline".
+coil_sensitivity_method = "odille-spline"
 # Width of auto-calibration signal region for ESPIRiT.
 acs = 48
+# Number of central ky lines used for coil maps when no explicit calibration lines exist.
+coil_sensitivity_calibration_lines = 48
 # ESPIRiT kernel width.
 kernel_width = 12
+# ESPIRiT power-method iterations.
+espirit_max_iter = 100
+# Spline smoothing weights for the Odille-style coil sensitivity estimator.
+spline_magnitude_smoothing = 1000.0
+spline_phase_smoothing = 1000.0
+# Lower bound for odille-spline sensitivity normalization.
+coil_sensitivity_eps = 1.0e-8
 
 [raw_data]
 # Physiological sensor channel to read from the SAEC file.

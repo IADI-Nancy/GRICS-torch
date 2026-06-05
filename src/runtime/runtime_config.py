@@ -141,7 +141,6 @@ _NONRIGID_MOTION_KEYS = {
 
 _CODE_DEFAULTS = {
     "use_scaled_motion_update": False,
-    "espirit_max_iter": 100,
     "cg_true_residual_interval": 10,
     "jupyter_notebook_flag": False,
 }
@@ -263,6 +262,30 @@ def _normalize_motion_simulation_model_mode(raw_type):
     if key not in _MOTION_SIM_MODEL_MODES:
         raise ValueError(f"Unsupported motion_simulation_model_mode: {raw_type}")
     return key
+
+
+def _normalize_coil_sensitivity_config(cfg):
+    method = str(cfg["coil_sensitivity_method"]).strip().lower()
+    if method not in {"espirit", "odille-spline"}:
+        raise ValueError("coil_sensitivity_method must be 'espirit' or 'odille-spline'.")
+    cfg["coil_sensitivity_method"] = method
+
+    for key in (
+        "acs",
+        "kernel_width",
+        "espirit_max_iter",
+        "coil_sensitivity_calibration_lines",
+    ):
+        cfg[key] = _normalize_positive_int(cfg[key], key)
+
+    for key in ("spline_magnitude_smoothing", "spline_phase_smoothing"):
+        cfg[key] = float(cfg[key])
+        if cfg[key] < 0:
+            raise ValueError(f"{key} must be >= 0.")
+
+    cfg["coil_sensitivity_eps"] = float(cfg["coil_sensitivity_eps"])
+    if cfg["coil_sensitivity_eps"] <= 0:
+        raise ValueError("coil_sensitivity_eps must be > 0.")
 
 
 def _simulation_model_mode_from_motion_model(motion_type, motion_state_mode):
@@ -996,6 +1019,7 @@ def load_config(
     _prune_irrelevant_motion_parameters(cfg)
     _apply_notebook_output_defaults(cfg, overrides)
     _apply_display_defaults(cfg, cfg["data_type"])
+    _normalize_coil_sensitivity_config(cfg)
 
     configs = ConfigBundle.from_flat_dict(cfg)
     configs = _resolve_configs(configs)

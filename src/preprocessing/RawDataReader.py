@@ -26,6 +26,13 @@ def _is_non_imaging(acq):
     )
 
 
+def _is_parallel_calibration(acq):
+    return (
+        _has_ismrmrd_flag(acq, "ACQ_IS_PARALLEL_CALIBRATION")
+        or _has_ismrmrd_flag(acq, "ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING")
+    )
+
+
 class RawDataReader:
 
     def __init__(self, ismrmrd_file, saec_file, sensor_type='BELT', device="cpu"):
@@ -120,6 +127,8 @@ class RawDataReader:
             self._raw_n_slices = N_SLI
 
             kspace = None
+            reference_kspace = None
+            reference_line_seen = None
             nex_values_seen = set()
             timestamps = []
             z_indices = []
@@ -154,6 +163,16 @@ class RawDataReader:
                         dtype=torch.complex128,
                         device=self.device,
                     )
+                    reference_kspace = torch.zeros(
+                        (ncha, 1, nsamp, Ny, z_size),
+                        dtype=torch.complex128,
+                        device=self.device,
+                    )
+                    reference_line_seen = torch.zeros(
+                        (Ny, z_size),
+                        dtype=torch.bool,
+                        device=self.device,
+                    )
 
                 timestamps.append(ts)
                 z_indices.append(z)
@@ -163,11 +182,25 @@ class RawDataReader:
                 nex_values_seen.add(nex)
                 kspace[:, nex, :, ky, z] = acq_data
 
+                if _is_parallel_calibration(acq):
+                    if reference_line_seen[ky, z]:
+                        raise ValueError(
+                            "Duplicate parallel-calibration acquisition found for "
+                            f"ky={ky}, z={z} in acquisition {i}. "
+                            "Expected at most one calibration line per (ky, z)."
+                        )
+                    reference_kspace[:, 0, :, ky, z] = acq_data
+                    reference_line_seen[ky, z] = True
+
             if kspace is None or len(timestamps) == 0:
                 raise ValueError("No acquisitions were mapped into the output tensor.")
 
             timestamps = torch.tensor(timestamps, device=self.device)
             timestamps = (timestamps - timestamps[-1]) * 2.5e-3
+
+            if reference_line_seen is None or not torch.any(reference_line_seen):
+                reference_kspace = None
+            self.reference_kspace = reference_kspace
 
             nex_values = torch.tensor(sorted(nex_values_seen), device=self.device, dtype=torch.int64)
 
@@ -285,6 +318,7 @@ class RawDataReader:
 
         kspace, time_kspace, z_indices, idx_ky, idx_kz, idx_nex, nex_source, nex_values = \
             self._extract_mri_data()
+        reference_kspace = getattr(self, "reference_kspace", None)
 
         respiratory_interpolated = self._interp1d_torch(
             time_saec, resp, time_kspace)
@@ -300,8 +334,10 @@ class RawDataReader:
             )
 
         kspace = self._remove_oversampling(kspace)
+        if reference_kspace is not None:
+            reference_kspace = self._remove_oversampling(reference_kspace)
 
-        return {
+        data = {
             "kspace": kspace.detach().cpu().numpy(),
             "motion_data": motion_data.detach().cpu().numpy(),
             "idx_ky": line_idx_y.detach().cpu().numpy(),
@@ -310,6 +346,9 @@ class RawDataReader:
             "nex_source": nex_source,
             "nex_values": nex_values.detach().cpu().numpy(),
         }
+        if reference_kspace is not None:
+            data["reference_kspace"] = reference_kspace.detach().cpu().numpy()
+        return data
 
 
     def _read_data_from_rawdata(self, h5filename=None, slice_idx=None):
@@ -330,6 +369,8 @@ class RawDataReader:
                 "idx_kz": data["idx_kz"][[slice_idx], :],
                 "idx_nex": data["idx_nex"][[slice_idx], :],
             }
+            if "reference_kspace" in data:
+                data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]
 
         if h5filename is None:
             base = os.path.splitext(os.path.basename(self.ismrmrd_file))[0]
@@ -344,6 +385,8 @@ class RawDataReader:
             f.create_dataset('idx_kz', data=data['idx_kz'])
             f.create_dataset('idx_nex', data=data['idx_nex'])
             f.create_dataset('kspace', data=data['kspace'])
+            if 'reference_kspace' in data:
+                f.create_dataset('reference_kspace', data=data['reference_kspace'])
             f.create_dataset('nex_values', data=data['nex_values'])
             f.attrs['nex_source'] = data['nex_source']
 
