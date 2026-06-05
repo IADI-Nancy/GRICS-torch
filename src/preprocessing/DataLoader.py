@@ -1,6 +1,8 @@
 import numpy as np
 import os
+import subprocess
 import torch
+from typing import Dict, Optional, Sequence, Union
 from skimage.data import shepp_logan_phantom
 from skimage import io as skio
 from skimage.transform import resize
@@ -25,7 +27,30 @@ from src.utils.nonrigid_display import to_cartesian_components
 
 
 class DataLoader:
-    def __init__(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None):
+    def __init__(
+        self,
+        params,
+        sp_device=None,
+        t_device=None,
+        filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None,
+        slice_idx=None,
+    ):
+        """
+        Load source data and prepare reconstruction inputs.
+
+        Args:
+            params: Runtime/config parameters.
+            sp_device: SigPy device.
+            t_device: Torch device.
+            filename: Source filename(s). For data_type="raw-data", this must be
+                either a 2-item tuple/list ``(ismrmrd_file, saec_file)`` or a dict
+                with keys ``"ismrmrd_file"`` and ``"saec_file"``. For
+                data_type="siemens-saec", this must be a 2-item tuple/list
+                ``(siemens_raw_file, saec_file)`` or a dict with keys
+                ``"siemens_file"`` and ``"saec_file"``. Other data types use a
+                single path string when a filename is required.
+            slice_idx: Slice/partition to load for 2D real-world/raw-data/siemens-saec inputs.
+        """
         self._init_runtime_state(
             params=params,
             sp_device=sp_device,
@@ -47,12 +72,20 @@ class DataLoader:
 
         del motionSimulator
 
-    def _init_runtime_state(self, params, sp_device=None, t_device=None, filename=None, slice_idx=None):
+    def _init_runtime_state(
+        self,
+        params,
+        sp_device=None,
+        t_device=None,
+        filename=None,
+        slice_idx=None,
+    ):
         self.params = params
         self.sp_device = sp_device
         self.t_device = t_device
         self.filename = filename
         self.rawdata_filenames = None
+        self.siemens_saec_filenames = None
         self.slice_idx = slice_idx
         self.motion_plot_context = None
         self._motion_curve_for_binning = None
@@ -65,7 +98,7 @@ class DataLoader:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
 
         is_3d = getattr(self.params, "data_dimension", None) == "3D"
-        supports_slice_idx = self.params.data_type in {"real-world", "raw-data"}
+        supports_slice_idx = self.params.data_type in {"real-world", "raw-data", "siemens-saec"}
 
         if self.slice_idx is not None:
             self.slice_idx = int(self.slice_idx)
@@ -77,9 +110,16 @@ class DataLoader:
                     "rawdata_sensor_type must be set for data_type='raw-data'."
                 )
 
+        if self.params.data_type == "siemens-saec":
+            self.siemens_saec_filenames = self._resolve_siemens_saec_filenames()
+            if not getattr(self.params, "rawdata_sensor_type", None):
+                raise ValueError(
+                    "rawdata_sensor_type must be set for data_type='siemens-saec'."
+                )
+
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
-                "slice_idx is only supported for 2D real-world or raw-data inputs. "
+                "slice_idx is only supported for 2D real-world, raw-data, or siemens-saec inputs. "
                 f"Do not provide slice_idx when data_type='{self.params.data_type}'."
             )
 
@@ -88,7 +128,7 @@ class DataLoader:
 
         if is_3d and self.slice_idx is not None:
             raise ValueError(
-                "slice_idx is only supported for 2D real-world or raw-data inputs. "
+                "slice_idx is only supported for 2D real-world, raw-data, or siemens-saec inputs. "
                 "Do not provide slice_idx when data_dimension='3D'."
             )
 
@@ -102,6 +142,10 @@ class DataLoader:
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
             path_to_ismrm, path_to_saec = self.rawdata_filenames
+            self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
+        elif self.params.data_type == 'siemens-saec':
+            path_to_siemens, path_to_saec = self.siemens_saec_filenames
+            path_to_ismrm = self._convert_siemens_to_ismrmrd(path_to_siemens)
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
             self._load_from_image(self.filename)
@@ -619,6 +663,67 @@ class DataLoader:
             "'ismrmrd_file' and 'saec_file'."
         )
 
+    def _resolve_siemens_saec_filenames(self):
+        if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
+            return self.filename
+        if isinstance(self.filename, dict):
+            siemens_file = (
+                self.filename.get("siemens_file")
+                or self.filename.get("siemens_raw_file")
+                or self.filename.get("dat_file")
+            )
+            return siemens_file, self.filename.get("saec_file")
+
+        raise ValueError(
+            "For data_type='siemens-saec', filename must be a 2-item tuple/list "
+            "(siemens_raw_file, saec_file) or a dict with keys "
+            "'siemens_file' and 'saec_file'."
+        )
+
+    def _convert_siemens_to_ismrmrd(self, path_to_siemens):
+        if path_to_siemens is None:
+            raise ValueError("Missing Siemens raw data file for data_type='siemens-saec'.")
+
+        path_to_siemens = os.fspath(path_to_siemens)
+        if not os.path.exists(path_to_siemens):
+            raise FileNotFoundError(f"Siemens raw data file does not exist: {path_to_siemens}")
+
+        output_folder = os.fspath(self.params.initial_data_folder)
+        os.makedirs(output_folder, exist_ok=True)
+        base = os.path.splitext(os.path.basename(path_to_siemens))[0]
+        output_path = os.path.join(output_folder, f"{base}_meas2.mrd")
+
+        cmd = [
+            "siemens_to_ismrmrd",
+            "-f",
+            path_to_siemens,
+            "-z",
+            "2",
+            "-o",
+            output_path,
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "siemens_to_ismrmrd executable was not found. Install it or use "
+                "data_type='raw-data' with an already converted ISMRMRD file."
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            details = "\n".join(part for part in [exc.stdout, exc.stderr] if part)
+            raise RuntimeError(
+                "siemens_to_ismrmrd failed while converting Siemens raw data "
+                f"with command: {' '.join(cmd)}\n{details}"
+            ) from exc
+
+        if not os.path.exists(output_path):
+            raise RuntimeError(
+                "siemens_to_ismrmrd finished without creating the expected file: "
+                f"{output_path}"
+            )
+
+        return output_path
+
     def _ingest_realworld_arrays(self, data, slice_idx=None):
         kspace_np = data['kspace']
         is_3d = self.params.data_dimension == "3D"
@@ -759,7 +864,7 @@ class DataLoader:
 
         # For measured data, calibrate maps from all repeats to avoid unstable
         # Nex-specific map estimates that can look noise-like in recon outputs.
-        if self.params.data_type in {"real-world", "raw-data"} and self.kspace.shape[1] > 1:
+        if self.params.data_type in {"real-world", "raw-data", "siemens-saec"} and self.kspace.shape[1] > 1:
             kspace_calib = torch.mean(self.kspace, dim=1)
         else:
             kspace_calib = self.kspace[:, 0]
