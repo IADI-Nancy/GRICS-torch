@@ -90,7 +90,7 @@ class RespiratoryDataReader:
             timestamp_in_sec = (np.float64(timestamp) - np.float64(sequence_stop)) / ticksTo1s
             timestamps_in_sec.append(timestamp_in_sec)
 
-        return np.asarray(timestamps_in_sec), respiratory_data
+        return timestamps_in_sec, respiratory_data
 
     @staticmethod
     def _detect_marmot_displacement(timestamps, respiratory_data_filtered_lp, respiratory_data_filtered_hp, i_MARMOT):
@@ -191,7 +191,7 @@ class RespiratoryDataReader:
                     title="Filtered respiratory signal",
                 )
 
-            return respiratory_data_filtered
+            return timestamps, respiratory_data_filtered
 
         elif sersor_type == '1MARMOT' : # not tested
             respiratory_data_filtered = []
@@ -208,13 +208,15 @@ class RespiratoryDataReader:
             sensor_idx = np.argmax(max_sigma)
             respiratory_data_MARMOT = respiratory_data_filtered[sensor_idx]
             respiratory_data_MARMOT = respiratory_data_MARMOT / np.std(respiratory_data_MARMOT)
+
+            timestamps_MARMOT = timestamps[sensor_idx]
                     
-            return np.squeeze(respiratory_data_MARMOT)
+            return np.squeeze(timestamps_MARMOT), np.squeeze(respiratory_data_MARMOT)
         else:
             Warning("Physiological sensor type is not correct")
 
     @staticmethod
     def _read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
         timestamps_saec, respiratory_data_saec = RespiratoryDataReader._get_respiration_from_saec(saec_filename, sensor_type)
-        respiratory_data_filtered = RespiratoryDataReader._get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
-        return np.squeeze(timestamps_saec), np.squeeze(respiratory_data_filtered)
+        timestamps, respiratory_data_filtered = RespiratoryDataReader._get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
+        return timestamps, respiratory_data_filtered

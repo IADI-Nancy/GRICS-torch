@@ -116,6 +116,9 @@ class RawDataReader:
                 Nz = 1
                 z_size = N_SLI
 
+            self._raw_uses_kz_as_volume_axis = use_kz_as_volume_axis
+            self._raw_n_slices = N_SLI
+
             kspace = None
             nex_values_seen = set()
             timestamps = []
@@ -208,9 +211,28 @@ class RawDataReader:
         return y_new
 
 
-    def _reshape_data_slicewise(self, respiratory_data_interpolated, z_indices, idx_ky, idx_kz, idx_nex):
+    def _reshape_data_slicewise(
+        self,
+        respiratory_data_interpolated,
+        z_indices,
+        idx_ky,
+        idx_kz,
+        idx_nex,
+        group_by_z_index=True,
+    ):
 
         device = respiratory_data_interpolated.device
+
+        if not group_by_z_index:
+            # 3D slab acquisition: the tensor volume axis is kz, but the scanner
+            # has one slice. Keep all kz partitions in a single slice row so the
+            # real-world arrays describe one acquisition with many kz samples.
+            return (
+                respiratory_data_interpolated.reshape(1, -1),
+                idx_ky.reshape(1, -1),
+                idx_kz.reshape(1, -1),
+                idx_nex.reshape(1, -1),
+            )
 
         N_SLI = int(torch.max(z_indices).item()) + 1
 
@@ -269,7 +291,13 @@ class RawDataReader:
 
         motion_data, line_idx_y, line_idx_z, line_idx_nex = \
             self._reshape_data_slicewise(
-                respiratory_interpolated, z_indices, idx_ky, idx_kz, idx_nex)
+                respiratory_interpolated,
+                z_indices,
+                idx_ky,
+                idx_kz,
+                idx_nex,
+                group_by_z_index=not getattr(self, "_raw_uses_kz_as_volume_axis", False),
+            )
 
         kspace = self._remove_oversampling(kspace)
 
