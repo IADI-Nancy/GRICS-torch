@@ -41,14 +41,14 @@ class DataLoader:
             params: Runtime/config parameters.
             sp_device: SigPy device.
             t_device: Torch device.
-            filename: Source filename(s). For data_type="raw-data", this must be
+            filename: Source filename(s). For data_type="ismrmrd-saec", this must be
                 either a 2-item tuple/list ``(ismrmrd_file, saec_file)`` or a dict
                 with keys ``"ismrmrd_file"`` and ``"saec_file"``. For
                 data_type="siemens-saec", this must be a 2-item tuple/list
                 ``(siemens_raw_file, saec_file)`` or a dict with keys
                 ``"siemens_file"`` and ``"saec_file"``. Other data types use a
                 single path string when a filename is required.
-            slice_idx: Slice/partition to load for 2D real-world/raw-data/siemens-saec inputs.
+            slice_idx: Slice/partition to load for 2D preprocessed-real/ismrmrd-saec/siemens-saec inputs.
         """
         self._init_runtime_state(
             params=params,
@@ -98,16 +98,16 @@ class DataLoader:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
 
         is_3d = getattr(self.params, "data_dimension", None) == "3D"
-        supports_slice_idx = self.params.data_type in {"real-world", "raw-data", "siemens-saec"}
+        supports_slice_idx = self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
 
         if self.slice_idx is not None:
             self.slice_idx = int(self.slice_idx)
 
-        if self.params.data_type == "raw-data":
+        if self.params.data_type == "ismrmrd-saec":
             self.rawdata_filenames = self._resolve_rawdata_filenames()
             if not getattr(self.params, "rawdata_sensor_type", None):
                 raise ValueError(
-                    "rawdata_sensor_type must be set for data_type='raw-data'."
+                    "rawdata_sensor_type must be set for data_type='ismrmrd-saec'."
                 )
 
         if self.params.data_type == "siemens-saec":
@@ -119,7 +119,7 @@ class DataLoader:
 
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
-                "slice_idx is only supported for 2D real-world, raw-data, or siemens-saec inputs. "
+                "slice_idx is only supported for 2D preprocessed-real, ismrmrd-saec, or siemens-saec inputs. "
                 f"Do not provide slice_idx when data_type='{self.params.data_type}'."
             )
 
@@ -128,7 +128,7 @@ class DataLoader:
 
         if is_3d and self.slice_idx is not None:
             raise ValueError(
-                "slice_idx is only supported for 2D real-world, raw-data, or siemens-saec inputs. "
+                "slice_idx is only supported for 2D preprocessed-real, ismrmrd-saec, or siemens-saec inputs. "
                 "Do not provide slice_idx when data_dimension='3D'."
             )
 
@@ -139,9 +139,9 @@ class DataLoader:
         print(f"[DataLoader] Reading source data (data_type={self.params.data_type})...")
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
             self._generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
-        elif self.params.data_type == 'real-world': # Real-world data with acquisition order and motion data
+        elif self.params.data_type == 'preprocessed-real': # Preprocessed real data with acquisition order and motion data
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
-        elif self.params.data_type == 'raw-data': # Real-world data with acquisition order and motion data, loaded from raw data files
+        elif self.params.data_type == 'ismrmrd-saec': # Preprocessed real data with acquisition order and motion data, loaded from raw data files
             path_to_ismrm, path_to_saec = self.rawdata_filenames
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'siemens-saec':
@@ -669,7 +669,7 @@ class DataLoader:
             return self.filename.get("ismrmrd_file"), self.filename.get("saec_file")
 
         raise ValueError(
-            "For data_type='raw-data', filename must be a 2-item tuple/list "
+            "For data_type='ismrmrd-saec', filename must be a 2-item tuple/list "
             "(ismrmrd_file, saec_file) or a dict with keys "
             "'ismrmrd_file' and 'saec_file'."
         )
@@ -718,7 +718,7 @@ class DataLoader:
         except FileNotFoundError as exc:
             raise RuntimeError(
                 "siemens_to_ismrmrd executable was not found. Install it or use "
-                "data_type='raw-data' with an already converted ISMRMRD file."
+                "data_type='ismrmrd-saec' with an already converted ISMRMRD file."
             ) from exc
         except subprocess.CalledProcessError as exc:
             details = "\n".join(part for part in [exc.stdout, exc.stderr] if part)

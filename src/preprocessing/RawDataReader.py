@@ -259,7 +259,7 @@ class RawDataReader:
         if not group_by_z_index:
             # 3D slab acquisition: the tensor volume axis is kz, but the scanner
             # has one slice. Keep all kz partitions in a single slice row so the
-            # real-world arrays describe one acquisition with many kz samples.
+            # preprocessed-real arrays describe one acquisition with many kz samples.
             return (
                 respiratory_data_interpolated.reshape(1, -1),
                 idx_ky.reshape(1, -1),

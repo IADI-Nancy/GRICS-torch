@@ -505,7 +505,7 @@ def _load_base_config_dict(
                 "from_image_config is required when data_type is 'from_image'."
             )
         cfg.update(_load_toml_flat(from_image_config))
-    elif data_type in {"real-world", "raw-data", "siemens-saec"}:
+    elif data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
         pass
     else:
         raise ValueError(f"Unsupported data_type: {data_type}")
@@ -575,9 +575,9 @@ def _resolve_sampling_origin(cfg, data_type):
         return False
 
     _drop_keys(cfg, {"kspace_sampling_type", "NshotsPerNex", "Nex", "Nshots"})
-    if data_type not in {"real-world", "raw-data", "siemens-saec"}:
+    if data_type not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
         raise ValueError(
-            "Sampling configuration is required when data_type is not 'real-world'/'raw-data'/'siemens-saec'. "
+            "Sampling configuration is required when data_type is not 'preprocessed-real'/'ismrmrd-saec'/'siemens-saec'. "
             "Provide sampling_config or kspace_sampling_type (+ Nex/NshotsPerNex)."
         )
     return True
@@ -585,7 +585,7 @@ def _resolve_sampling_origin(cfg, data_type):
 
 def _require_motion_input_for_simulated_sources(cfg, *, motion_simulation_config):
     if (
-        cfg.get("data_type") not in {"real-world", "raw-data", "siemens-saec"}
+        cfg.get("data_type") not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
         and motion_simulation_config is None
         and cfg.get("motion_simulation_model_mode") is None
         and cfg.get("motion_state_mode") is None
@@ -622,10 +622,10 @@ def _resolve_motion_simulation(cfg, *, sampling_from_data, motion_simulation_con
     _apply_motion_simulation_model_mode_derivatives(cfg)
     if (
         cfg["motion_simulation_model_mode"] == "as-it-is"
-        and cfg.get("data_type") not in {"real-world", "raw-data", "siemens-saec"}
+        and cfg.get("data_type") not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
     ):
         raise ValueError(
-            "motion_simulation_model_mode='as-it-is' is only valid for real-world, raw-data, or siemens-saec inputs."
+            "motion_simulation_model_mode='as-it-is' is only valid for preprocessed-real, ismrmrd-saec, or siemens-saec inputs."
         )
 
 
@@ -661,12 +661,12 @@ def _apply_notebook_output_defaults(cfg, overrides):
 
 def _apply_display_defaults(cfg, data_type):
     if "flip_for_display" not in cfg:
-        cfg["flip_for_display"] = data_type in {"real-world", "raw-data", "siemens-saec"}
+        cfg["flip_for_display"] = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
 
 
 def _normalize_runtime_config(runtime, data_type):
     if runtime.flip_for_display is None:
-        runtime.flip_for_display = data_type in {"real-world", "raw-data", "siemens-saec"}
+        runtime.flip_for_display = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
     if runtime.clean_output_folders_before_run is None:
         runtime.clean_output_folders_before_run = True
     if runtime.jupyter_notebook_flag is None:
@@ -688,7 +688,7 @@ def _normalize_runtime_config(runtime, data_type):
 
 def _normalize_sampling_config(sampling, data_type):
     if sampling.kspace_sampling_type is None:
-        if data_type in {"real-world", "raw-data", "siemens-saec"}:
+        if data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
             sampling.kspace_sampling_type = "from-data"
         else:
             sampling.kspace_sampling_type = "linear"

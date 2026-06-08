@@ -71,32 +71,42 @@ Required config files:
 - a sampling simulation config file
 - a motion simulation config file
 
-### `real-world`
+### `preprocessed-real`
 
-Loaded from HDF5 with datasets:
+Loaded from a preprocessed HDF5 file with datasets:
 - `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
 - `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
 - `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 - `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 - `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 
-For 2D `real-world` and `raw-data`, the `slice_idx` argument of `DataLoader` selects the slice/partition to load (default: `0` if omitted).
+For 2D `preprocessed-real`, `ismrmrd-saec`, and `siemens-saec`, the `slice_idx` argument of `DataLoader` selects the slice/partition to load (default: `0` if omitted).
 For synthetic data and for all 3D data, do not provide `slice_idx`; the loader raises an error if it is set.
 
 No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
 
-### `raw-data`
+### `ismrmrd-saec`
 
 Loaded from raw scanner and physiological files using `RawDataReader`:
 - the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
 - physiological data file in SAEC [2, 3] format (`saec_file`)
 
-The reader will convert these files to the format corresponding to the 'real-world' mode.
+The reader converts these files to the arrays used by the `preprocessed-real` mode.
+The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
+
+### `siemens-saec`
+
+Loaded from Siemens raw scanner data and physiological files:
+- Siemens raw data file (`siemens_file`, `siemens_raw_file`, or `dat_file`)
+- physiological data file in SAEC [2, 3] format (`saec_file`)
+
+The loader first converts the Siemens raw file to ISMRMRD using the `siemens_to_ismrmrd` executable, then reads the result with the same path used by `ismrmrd-saec`.
 The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
 
 When `debug_flag=true`, the loader also writes acquisition-order debug plots into `initial_data_folder` using hardcoded filenames:
-- raw-data: `ky_order_rawdata_slice{slice_idx}.png`
-- real-world: `ky_order_realworld_slice{slice_idx}.png`
+- ismrmrd-saec: `ky_order_rawdata_slice{slice_idx}.png`
+- siemens-saec: `ky_order_rawdata_slice{slice_idx}.png`
+- preprocessed-real: `ky_order_realworld_slice{slice_idx}.png`
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -144,7 +154,7 @@ Implemented in `src/preprocessing/MotionSimulator.py`.
 
 ### `as-it-is`
 
-No synthetic corruption added. Only valid for `real-world`/`raw-data` (already motion-corrupted).
+No synthetic corruption added. Only valid for `preprocessed-real`/`ismrmrd-saec`/`siemens-saec` (already motion-corrupted).
 `motion_state_mode` must not be set for this mode.
 
 ### `rigid` + `motion_state_mode = "per-shot"`
@@ -199,7 +209,7 @@ State-count rules are set in `runtime_config.refresh_derived(...)`:
 - `simulated_motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
 - `as-it-is`: `N_motion_states` stays the manual reconstruction value
 
-For loaded `real-world` / `raw-data` with an explicit per-shot synthetic simulation mode, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
+For loaded `preprocessed-real` / `ismrmrd-saec` / `siemens-saec` with an explicit per-shot synthetic simulation mode, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
 
 Note: you can override the reconstruction state count:
 
@@ -207,7 +217,7 @@ Example:
 
 ```python
 params = load_config(
-    data_type="real-world",
+    data_type="preprocessed-real",
     reconstruction_config="config/reconstruction/nonrigid_2d.toml",
     N_motion_states=6,
 )
