@@ -16,6 +16,7 @@ class ConjugateGradientSolver:
         reg_lambda=0.0,
         regularizer="Tikhonov",
         regularization_shape=None,
+        regularization_spatial_dims=None,
         verbose=False,
         early_stopping=True,
         true_residual_interval=10,
@@ -33,6 +34,12 @@ class ConjugateGradientSolver:
         self.lambda_ = reg_lambda
         self.regularizer = regularizer
         self.regularization_shape = regularization_shape
+        self.regularization_spatial_dims = regularization_spatial_dims
+        if self.regularizer in ("Tikhonov_gradient", "Tikhonov_laplacian"):
+            if self.regularization_shape is None:
+                raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
+            if self.regularization_spatial_dims is None:
+                raise ValueError(f"regularization_spatial_dims must be set for {self.regularizer} regularization.")
         self.verbose = verbose
         self.early_stopping = early_stopping
         self.true_residual_interval = true_residual_interval
@@ -106,11 +113,13 @@ class ConjugateGradientSolver:
         if self.regularization_shape is None:
             raise ValueError("regularization_shape must be set for Tikhonov_gradient _regularization.")
         field = x.view(*self.regularization_shape)
-        n_spatial = len(self.regularization_shape) - 1  # first dim is component
+        spatial_dims = self.regularization_spatial_dims
+        if spatial_dims is None:
+            raise ValueError("regularization_spatial_dims must be set for Tikhonov_gradient regularization.")
         result = torch.zeros_like(field)
 
-        # Compute -div(grad(field)) along every spatial dimension.
-        for d in range(1, n_spatial + 1):
+        # Compute -div(grad(field)) along selected spatial dimensions.
+        for d in spatial_dims:
             # Forward difference along dimension d (zero-gradient boundary).
             df = torch.zeros_like(field)
             slc_src = [slice(None)] * field.ndim
@@ -138,52 +147,34 @@ class ConjugateGradientSolver:
         return result.reshape(-1)
     
     def _laplacian_op(self, x):
+        if self.regularization_shape is None:
+            raise ValueError("regularization_shape must be set for Tikhonov_laplacian regularization.")
         field = x.view(*self.regularization_shape)
-        n_spatial = len(self.regularization_shape) - 1  # first dim is component
+        spatial_dims = self.regularization_spatial_dims
+        if spatial_dims is None:
+            raise ValueError("regularization_spatial_dims must be set for Tikhonov_laplacian regularization.")
 
         # Guard: need at least 2 pixels in every spatial dimension.
-        for d in range(1, n_spatial + 1):
+        for d in spatial_dims:
             if field.shape[d] < 2:
                 return torch.zeros_like(field).reshape(-1)
 
-        # N-dimensional Laplacian with linear-extrapolation ghost boundaries
-        # (MATLAB del2 style).  Pad each spatial dim by 1 on each side.
-        pad_shape = list(field.shape)
-        for d in range(1, n_spatial + 1):
-            pad_shape[d] += 2
-        pad = torch.zeros(pad_shape, dtype=field.dtype, device=field.device)
-
-        # Copy interior.
-        interior = [slice(None)] + [slice(1, -1)] * n_spatial
-        pad[tuple(interior)] = field
-
-        # Fill ghost faces, edges, corners by linear extrapolation per axis.
-        for d in range(1, n_spatial + 1):
-            # Low face ghost:  pad[..., 0, ...] = 2*field[..., 0, ...] - field[..., 1, ...]
-            lo_pad = [slice(1, -1)] * (n_spatial + 1); lo_pad[0] = slice(None); lo_pad[d] = 0
-            lo_f0  = [slice(None)] * (n_spatial + 1)
-            for dd in range(1, n_spatial + 1):
-                lo_f0[dd] = slice(1, -1) if dd != d else 0
-            lo_f1 = list(lo_f0); lo_f1[d] = 1
-            pad[tuple(lo_pad)] = 2 * pad[tuple(lo_f0)] - pad[tuple(lo_f1)]
-
-            # High face ghost:
-            hi_pad = [slice(1, -1)] * (n_spatial + 1); hi_pad[0] = slice(None); hi_pad[d] = -1
-            hi_f0  = [slice(None)] * (n_spatial + 1)
-            for dd in range(1, n_spatial + 1):
-                hi_f0[dd] = slice(1, -1) if dd != d else -2
-            hi_f1 = list(hi_f0); hi_f1[d] = -3
-            pad[tuple(hi_pad)] = 2 * pad[tuple(hi_f0)] - pad[tuple(hi_f1)]
-
-        # Stencil: sum of neighbours minus 2*n_spatial * center, divided by n_spatial.
-        lap = -2 * n_spatial * pad[tuple(interior)].clone()
-        for d in range(1, n_spatial + 1):
-            lo = list(interior); lo[d] = slice(0, -2)
-            hi = list(interior); hi[d] = slice(2, None)
-            lap += pad[tuple(lo)] + pad[tuple(hi)]
-        lap = lap / float(n_spatial)
-
-        return (-lap).reshape(-1)
+        result = torch.zeros_like(field)
+        for d in spatial_dims:
+            prev_idx = [slice(None)] * field.ndim
+            curr_idx = [slice(None)] * field.ndim
+            next_idx = [slice(None)] * field.ndim
+            inner_idx = [slice(None)] * field.ndim
+            prev_idx[d] = slice(None, -2)
+            curr_idx[d] = slice(1, -1)
+            next_idx[d] = slice(2, None)
+            inner_idx[d] = slice(1, -1)
+            result[tuple(inner_idx)] += (
+                -field[tuple(prev_idx)]
+                + 2 * field[tuple(curr_idx)]
+                - field[tuple(next_idx)]
+            )
+        return result.reshape(-1)
 
 
     # --------------------------------------------------------------

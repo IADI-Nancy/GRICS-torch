@@ -43,6 +43,12 @@ class JointReconstructor:
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
         self.motion_signal = motion_signal.to(self.device)
+        if self.motion_signal.ndim != 2:
+            raise ValueError(
+                "motion_signal must have shape [Nstate, Nsensor]. "
+                f"Got {tuple(self.motion_signal.shape)}."
+            )
+        self.Nphysio = int(self.motion_signal.shape[1])
         self.motion_plot_context = motion_plot_context or {}
         self._last_image_cg_info = None
         self._last_motion_cg_info = None
@@ -80,6 +86,13 @@ class JointReconstructor:
                     xv = x.permute(0, 3, 1, 2).unsqueeze(0)
                     out = F.interpolate(xv, size=(nz_new, nx_new, ny_new), mode="trilinear", align_corners=False)
                     return out[0].permute(0, 2, 3, 1)  # [C, Nx, Ny, Nz]
+                elif x.ndim == 5:
+                    # [C, Nx, Ny, Nz, S] -> [C, Nx_new, Ny_new, Nz_new, S]
+                    c, s = x.shape[0], x.shape[-1]
+                    xv = x.permute(0, 4, 1, 2, 3).reshape(c * s, x.shape[1], x.shape[2], x.shape[3])
+                    xv = xv.permute(0, 3, 1, 2).unsqueeze(0)
+                    out = F.interpolate(xv, size=(nz_new, nx_new, ny_new), mode="trilinear", align_corners=False)
+                    return out[0].permute(0, 2, 3, 1).reshape(c, s, nx_new, ny_new, nz_new).permute(0, 2, 3, 4, 1)
                 else:
                     raise ValueError(f"Unexpected shape {x.shape} for 3D resize.")
 
@@ -96,6 +109,16 @@ class JointReconstructor:
                     rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
                     out_list.append(rc[0, 0])
                 return torch.stack(out_list, dim=0)
+            elif x.ndim == 4 and x.shape[-1] != 1:
+                # [C, Nx, Ny, S] -> [C, Nx_new, Ny_new, S]
+                c, s = x.shape[0], x.shape[-1]
+                xv = x.permute(0, 3, 1, 2).reshape(c * s, x.shape[1], x.shape[2])
+                out_list = []
+                for idx in range(c * s):
+                    xc = xv[idx].unsqueeze(0).unsqueeze(0)
+                    rc = F.interpolate(xc, size=new_size, mode="bilinear", align_corners=False)
+                    out_list.append(rc[0, 0])
+                return torch.stack(out_list, dim=0).reshape(c, s, new_size[0], new_size[1]).permute(0, 2, 3, 1)
             elif x.ndim == 4 and x.shape[-1] == 1:
                 # 2D-with-single-z convention: [C, Nx, Ny, 1] -> [C, Nx_new, Ny_new, 1]
                 C = x.shape[0]
@@ -304,7 +327,7 @@ class JointReconstructor:
     def _n_motion_params(self, Data_res):
         if self.params.reconstruction_motion_type == "rigid":
             return self.Nalpha * self.params.N_motion_states
-        return self.Nalpha * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
+        return self.Nalpha * self.Nphysio * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
     def _solve_motion(self, Data_res, residual):
         Nparams = self._n_motion_params(Data_res)
@@ -314,13 +337,13 @@ class JointReconstructor:
 
         if self.params.reconstruction_motion_type == "non-rigid":
             reg_shape = (
-                (self.Nalpha, Data_res["Nx"], Data_res["Ny"], int(Data_res.get("Nz", 1)))
+                (self.Nalpha, Data_res["Nx"], Data_res["Ny"], int(Data_res.get("Nz", 1)), self.Nphysio)
                 if int(Data_res.get("Nz", 1)) > 1
-                else (self.Nalpha, Data_res["Nx"], Data_res["Ny"])
+                else (self.Nalpha, Data_res["Nx"], Data_res["Ny"], self.Nphysio)
             )
             solver = ConjugateGradientSolver(
                 J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov_gradient",
-                regularization_shape=reg_shape, verbose=self.params.verbose,
+                regularization_shape=reg_shape, regularization_spatial_dims=(1, 2, 3) if int(Data_res.get("Nz", 1)) > 1 else (1, 2), verbose=self.params.verbose,
                 early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
                 max_stag_steps=self.params.cg_max_stag_steps, max_more_steps=self.params.cg_max_more_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
@@ -346,9 +369,9 @@ class JointReconstructor:
             motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_motion_states)
         else:
             if int(Data_res.get("Nz", 1)) > 1:
-                motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+                motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"], self.Nphysio)
             else:
-                motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"])
+                motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"], self.Nphysio)
         return motion_perturb
     
     def _prepare_resolution_level(self, idx_res, r):
@@ -372,10 +395,10 @@ class JointReconstructor:
             elif self.params.reconstruction_motion_type == "non-rigid":
                 if int(Data_res.get("Nz", 1)) > 1:
                     Data_res["MotionModel"] = torch.zeros(
-                        (self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]), device=self.device
+                        (self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"], self.Nphysio), device=self.device
                     )
                 else:
-                    Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"]), device=self.device)
+                    Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"], self.Nphysio), device=self.device)
         return Data_res
 
     @staticmethod

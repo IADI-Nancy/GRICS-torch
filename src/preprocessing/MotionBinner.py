@@ -55,7 +55,10 @@ class MotionBinner:
 
         Nbins = params.N_motion_states
         Nex = params.Nex
-        num_motion_samples = int(motion_curve.numel())
+        if motion_curve.ndim != 2:
+            raise ValueError("motion_curve must have shape [Nreadout, Nsensor].")
+        motion_features = motion_curve
+        num_motion_samples = int(motion_features.shape[0])
 
         if num_motion_samples < 1:
             raise ValueError("motion_curve must contain at least one sample.")
@@ -66,7 +69,7 @@ class MotionBinner:
             )
 
         # ---- K-means clustering (global, across all Nex) ----
-        labels, centers = _kmeans_torch(motion_curve.unsqueeze(1), Nbins)
+        labels, centers = _kmeans_torch(motion_features, Nbins)
 
         ky_idx = MotionBinner._flatten_index_tensor(ky_idx, "ky_idx")
         kz_idx = None if kz_idx is None else MotionBinner._flatten_index_tensor(kz_idx, "kz_idx")
@@ -119,10 +122,10 @@ class MotionBinner:
             return (
                 binned_ky_indices,
                 binned_kz_indices,
-                centers.squeeze(1),
+                centers,
                 labels,
                 ky_idx,
                 kz_idx,
                 nex_idx,
             )
-        return binned_ky_indices, binned_kz_indices, centers.squeeze(1)
+        return binned_ky_indices, binned_kz_indices, centers

@@ -85,6 +85,19 @@ class RespiratoryDataReader:
                 _, sequence_stop, _ = \
                     RespiratoryDataReader._find_longest_valid_sequence(value.SeqStart.timestamp.values, value.SeqStop.timestamp.values)
 
+        if not respiratory_data:
+            raise ValueError(
+                f"No respiratory data found in SAEC file '{filename}' for sensor_type='{sensor_type}'. "
+                "For BELT data the file must contain a SAEC_RESP group; for MARMOT data "
+                "it must contain MARMOT groups with non-empty ACC data."
+            )
+
+        if 'sequence_stop' not in locals():
+            raise ValueError(
+                f"No Siemens sequence trigger found in SAEC file '{filename}'. "
+                "Expected a SAEC_TRIGGER_SIEMENS group with SeqStart/SeqStop timestamps."
+            )
+
         timestamps_in_sec = []
         for timestamp in timestampsSAEC:
             timestamp_in_sec = (np.float64(timestamp) - np.float64(sequence_stop)) / ticksTo1s
@@ -118,7 +131,6 @@ class RespiratoryDataReader:
                 sigma = sigma_tmp
 
             dif_norm = np.sqrt(np.sum(np.power(abs(MARMOT_dif),2))) / len(MARMOT_dif) / sigma 
-            print(str(i_MARMOT+1) + '\t' + str(i+1) + '\t' + str(dif_norm))
             displaced[i] = 1 if dif_norm < threshold else 0
         return displaced
 
@@ -181,8 +193,6 @@ class RespiratoryDataReader:
             correction = -(a2 * timestamps**2 + a1 * timestamps + a0)
             respiratory_data_filtered = respiratory_data_filtered + correction
 
-            sigma = np.std(respiratory_data_filtered)
-
             if path_to_graph is not None:
                 save_line_plot(
                     timestamps,
@@ -194,6 +204,12 @@ class RespiratoryDataReader:
             return timestamps, respiratory_data_filtered
 
         elif sersor_type == '1MARMOT' : # not tested
+            if len(respiratory_data) == 0:
+                raise ValueError(
+                    "No MARMOT respiratory data was available after reading the SAEC file. "
+                    "Check rawdata_sensor_type, or use rawdata_sensor_type='BELT' for SAEC_RESP data."
+                )
+
             respiratory_data_filtered = []
             max_sigma = np.zeros(len(respiratory_data))
             tracks = np.zeros(len(respiratory_data))
@@ -212,8 +228,46 @@ class RespiratoryDataReader:
             timestamps_MARMOT = timestamps[sensor_idx]
                     
             return np.squeeze(timestamps_MARMOT), np.squeeze(respiratory_data_MARMOT)
+        elif sersor_type in {"ALL_MARMOTS", "ALL_MARMOTs"}:
+            if len(respiratory_data) == 0:
+                raise ValueError(
+                    "No MARMOT respiratory data was available after reading the SAEC file. "
+                    "Check rawdata_sensor_type, or use rawdata_sensor_type='BELT' for SAEC_RESP data."
+                )
+
+            respiratory_data_filtered = []
+            max_sigma = np.zeros(len(respiratory_data))
+            tracks = np.zeros(len(respiratory_data), dtype=int)
+            for i_sensor in range(len(respiratory_data)):
+                respiratory_data_filtered_hp, sigma = RespiratoryDataReader._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
+                track_idx = int(np.argmax(sigma))
+                max_sigma[i_sensor] = sigma[track_idx]
+                tracks[i_sensor] = track_idx
+                respiratory_data_filtered.append(respiratory_data_filtered_hp[:, track_idx])
+
+            sensors = np.arange(len(respiratory_data))[max_sigma != 0]
+            if sensors.size == 0:
+                raise ValueError(
+                    "No valid MARMOT accelerometer tracks were detected. "
+                    "All candidate tracks were rejected as displaced or unusable."
+                )
+
+            timestamps_MARMOT = []
+            respiratory_data_MARMOT = []
+            for sensor_idx in sensors:
+                signal = respiratory_data_filtered[sensor_idx]
+                sigma = np.std(signal)
+                if sigma == 0:
+                    continue
+                timestamps_MARMOT.append(np.squeeze(timestamps[sensor_idx]))
+                respiratory_data_MARMOT.append(np.squeeze(signal / sigma))
+
+            if not respiratory_data_MARMOT:
+                raise ValueError("No ALL_MARMOTS signal had non-zero variance after filtering.")
+
+            return timestamps_MARMOT, respiratory_data_MARMOT
         else:
-            Warning("Physiological sensor type is not correct")
+            raise ValueError(f"Physiological sensor type is not correct: {sersor_type!r}")
 
     @staticmethod
     def _read_and_process_data(saec_filename, sensor_type, path_to_graph=None):

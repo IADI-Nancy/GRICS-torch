@@ -438,10 +438,26 @@ def save_clustered_motion_plots(
     norm_color = BoundaryNorm(np.arange(-0.5, nbins + 0.5, 1), cluster_cmap.N)
 
     motion_cpu = motion_curve.detach().cpu()
+    if motion_cpu.ndim != 2:
+        raise ValueError("motion_curve must have shape [Nreadout, Nsensor].")
+    motion_display_cpu = motion_cpu
     labels_cpu = labels.detach().cpu()
     ky_idx_cpu = ky_idx.detach().cpu()
     nex_cpu = nex_idx.detach().cpu()
-    time_idx = torch.arange(len(motion_cpu))
+    time_idx = torch.arange(motion_display_cpu.shape[0])
+
+    def _scatter_motion_channels(ax, x_values, mask, *, marker):
+        for channel_idx in range(motion_display_cpu.shape[1]):
+            ax.scatter(
+                x_values[mask],
+                motion_display_cpu[mask, channel_idx],
+                c=labels_cpu[mask],
+                s=12,
+                cmap=cluster_cmap,
+                norm=norm_color,
+                marker=marker,
+                alpha=0.85,
+            )
 
     def _add_rigid_param_legends(ax, handle_by_name):
         translation_names = [name for name in ["tx", "ty", "tz"] if name in handle_by_name]
@@ -496,13 +512,10 @@ def save_clustered_motion_plots(
 
     for nex in torch.unique(nex_cpu):
         mask = nex_cpu == nex
-        ax.scatter(
-            time_idx[mask],
-            motion_cpu[mask],
-            c=labels_cpu[mask],
-            s=12,
-            cmap=cluster_cmap,
-            norm=norm_color,
+        _scatter_motion_channels(
+            ax,
+            time_idx,
+            mask,
             marker=markers[int(nex) % len(markers)],
         )
     ax.set_xlabel("Time / acquisition order")
@@ -532,13 +545,10 @@ def save_clustered_motion_plots(
 
         for ax, nex in zip(axes, unique_nex):
             mask = nex_cpu == nex
-            ax.scatter(
-                ky_idx_cpu[mask],
-                motion_cpu[mask],
-                c=labels_cpu[mask],
-                s=12,
-                cmap=cluster_cmap,
-                norm=norm_color,
+            _scatter_motion_channels(
+                ax,
+                ky_idx_cpu,
+                mask,
                 marker=markers[int(nex) % len(markers)],
             )
             ax.set_ylabel("Motion curve value")

@@ -108,11 +108,20 @@ def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, 
         return
 
     alpha = Data_res["MotionModel"]
-    if alpha.ndim not in (3, 4) or alpha.shape[0] < 2:
+    if alpha.shape[0] < 2:
         return
 
-    save_nonrigid_alpha_plots(
-        alpha, Data_res["ReconstructedImage"][0],
-        f"level{level_idx}", debug_folder,
-        flip_vertical=flip_for_display,
-    )
+    image = Data_res["ReconstructedImage"][0]
+    if alpha.ndim in (3, 4) and not (alpha.ndim == 4 and image.ndim == 2):
+        save_nonrigid_alpha_plots(
+            alpha, image,
+            f"level{level_idx}", debug_folder,
+            flip_vertical=flip_for_display,
+        )
+    elif alpha.ndim in (4, 5):
+        for sensor_idx in range(alpha.shape[-1]):
+            save_nonrigid_alpha_plots(
+                alpha[..., sensor_idx], image,
+                f"level{level_idx}_sensor{sensor_idx + 1}", debug_folder,
+                flip_vertical=flip_for_display,
+            )

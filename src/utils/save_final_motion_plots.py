@@ -6,19 +6,27 @@ from src.utils.plotting import (
 
 
 def save_final_nonrigid_alpha_maps(motion_model, reconstructed_image, results_folder, flip_for_display=True, motion_plot_context=None):
-    if motion_model is None or motion_model.ndim not in (3, 4) or motion_model.shape[0] < 2:
+    if motion_model is None or motion_model.shape[0] < 2:
         return
 
     context = motion_plot_context or {}
     scale = context.get("alpha_visual_scale", None)
-    save_nonrigid_alpha_plots(
-        motion_model, reconstructed_image,
-        "final", results_folder,
-        flip_vertical=flip_for_display,
-        abs_max_x=None if scale is None else scale.get("alpha_abs_max_x"),
-        abs_max_y=None if scale is None else scale.get("alpha_abs_max_y"),
-        amp_max=None if scale is None else scale.get("amp_max"),
-    )
+
+    def _save(alpha, base_name):
+        save_nonrigid_alpha_plots(
+            alpha, reconstructed_image,
+            base_name, results_folder,
+            flip_vertical=flip_for_display,
+            abs_max_x=None if scale is None else scale.get("alpha_abs_max_x"),
+            abs_max_y=None if scale is None else scale.get("alpha_abs_max_y"),
+            amp_max=None if scale is None else scale.get("amp_max"),
+        )
+
+    if motion_model.ndim in (3, 4) and not (motion_model.ndim == 4 and reconstructed_image.ndim == 2):
+        _save(motion_model, "final")
+    elif motion_model.ndim in (4, 5):
+        for sensor_idx in range(motion_model.shape[-1]):
+            _save(motion_model[..., sensor_idx], f"final_sensor{sensor_idx + 1}")
 
 
 def save_final_rigid_motion_plots(motion_model, motion_plot_context, results_folder, n_motion_states, resolution_levels, data_type):

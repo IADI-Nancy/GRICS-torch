@@ -24,7 +24,22 @@ class MotionPerturbationSimulator:
         self.SamplingIndices = SamplingIndices
         self.image = image
         self.motionOperator = motionOperator
-        self.Nalpha = motionOperator.alpha.shape[0]  # number of motion parameters (t_x, t_y, phi)
+        self.Nalpha = motionOperator.alpha.shape[0]  # number of displacement or rigid parameters
+        if motionOperator.motion_type == "non-rigid":
+            if getattr(motionOperator, "Nz", 1) > 1:
+                if motionOperator.alpha.ndim != 5:
+                    raise ValueError(
+                        "3D non-rigid alpha must have shape [Nalpha, Nx, Ny, Nz, Nsensor]. "
+                        f"Got {tuple(motionOperator.alpha.shape)}."
+                    )
+            elif motionOperator.alpha.ndim != 4:
+                raise ValueError(
+                    "2D non-rigid alpha must have shape [Nalpha, Nx, Ny, Nsensor]. "
+                    f"Got {tuple(motionOperator.alpha.shape)}."
+                )
+            self.Nphysio = int(motionOperator.alpha.shape[-1])
+        else:
+            self.Nphysio = 1
 
     def _gradient_2d(self, img):
         # Central differences in the interior, one-sided at boundaries.
@@ -75,14 +90,19 @@ class MotionPerturbationSimulator:
             MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_motion_states)
         else:
             if is_3d:
-                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, Nz)
+                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, Nz, self.Nphysio)
             else:
-                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
+                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, self.Nphysio)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
                 device=self.device,
                 dtype=MotionModelPerturbation.dtype,
             )
+            if motion_signal.ndim != 2:
+                raise ValueError(
+                    "non-rigid motion_signal must have shape [Nstate, Nsensor]. "
+                    f"Got {tuple(motion_signal.shape)}."
+                )
         # output k-space residual
         ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
                                      dtype=torch.complex128,
@@ -118,10 +138,15 @@ class MotionPerturbationSimulator:
                         dux, duy = self.motionOperator._apply_J(MotionModelPerturbation[:, motion_state], motion_state)
                 else:
                     # Non-rigid model is modulated by the state-dependent motion signal.
-                    dux = MotionModelPerturbation[0] * motion_signal[motion_state]
-                    duy = MotionModelPerturbation[1] * motion_signal[motion_state]
                     if is_3d:
-                        duz = MotionModelPerturbation[2] * motion_signal[motion_state]
+                        weights = motion_signal[motion_state].reshape(1, 1, 1, -1)
+                        dux = torch.sum(MotionModelPerturbation[0] * weights, dim=-1)
+                        duy = torch.sum(MotionModelPerturbation[1] * weights, dim=-1)
+                        duz = torch.sum(MotionModelPerturbation[2] * weights, dim=-1)
+                    else:
+                        weights = motion_signal[motion_state].reshape(1, 1, -1)
+                        dux = torch.sum(MotionModelPerturbation[0] * weights, dim=-1)
+                        duy = torch.sum(MotionModelPerturbation[1] * weights, dim=-1)
 
                 # 4) optical-flow first-order perturbation
                 if is_3d:
@@ -172,14 +197,19 @@ class MotionPerturbationSimulator:
                                             device=self.device)
         else:
             if is_3d:
-                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, Nz), dtype=torch.complex128, device=self.device)
+                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, Nz, self.Nphysio), dtype=torch.complex128, device=self.device)
             else:
-                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny), dtype=torch.complex128, device=self.device)
+                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, self.Nphysio), dtype=torch.complex128, device=self.device)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
                 device=self.device,
                 dtype=MotionModelPerturbation.dtype,
             )
+            if motion_signal.ndim != 2:
+                raise ValueError(
+                    "non-rigid motion_signal must have shape [Nstate, Nsensor]. "
+                    f"Got {tuple(motion_signal.shape)}."
+                )
 
         for motion_state in range(N_motion_states):
             
@@ -241,10 +271,15 @@ class MotionPerturbationSimulator:
                         MotionModelPerturbation[:, motion_state] += self.motionOperator._apply_JH(du_x, du_y, motion_state)
                 else:
                     # Adjoint of multiplication by motion_signal is multiplication by its complex conjugate.
-                    MotionModelPerturbation[0] += du_x * motion_signal[motion_state]
-                    MotionModelPerturbation[1] += du_y * motion_signal[motion_state]
                     if is_3d:
-                        MotionModelPerturbation[2] += du_z * motion_signal[motion_state]
+                        weights = motion_signal[motion_state].conj().reshape(1, 1, 1, -1)
+                        MotionModelPerturbation[0] += du_x.unsqueeze(-1) * weights
+                        MotionModelPerturbation[1] += du_y.unsqueeze(-1) * weights
+                        MotionModelPerturbation[2] += du_z.unsqueeze(-1) * weights
+                    else:
+                        weights = motion_signal[motion_state].conj().reshape(1, 1, -1)
+                        MotionModelPerturbation[0] += du_x.unsqueeze(-1) * weights
+                        MotionModelPerturbation[1] += du_y.unsqueeze(-1) * weights
             
         return MotionModelPerturbation.flatten()
     

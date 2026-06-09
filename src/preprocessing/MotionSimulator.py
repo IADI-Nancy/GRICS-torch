@@ -453,16 +453,17 @@ class MotionSimulator:
         # One Gaussian temporal coefficient per shot drives the non-rigid field amplitude.
         s_scale = float(require_motion_param(self.params, "nonrigid_discrete_s_scale"))
         s = s_scale * torch.randn(n_shots, device=self.t_device)
+        s = s.reshape(-1, 1)
 
-        alpha_maps = self._create_discrete_non_rigid_alpha_fields()
+        alpha_maps = self._create_discrete_non_rigid_alpha_fields().unsqueeze(-1)
         self.alpha_maps = alpha_maps
 
         if self.params.debug_flag:
-            save_nonrigid_alpha_plots(alpha_maps, self.image[0], "simulated", self.params.debug_folder, flip_vertical=self.params.flip_for_display)
+            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.debug_folder, flip_vertical=self.params.flip_for_display)
 
         self._apply_motion(alpha_maps, centers=None, motion_signal=s, motion_type='non-rigid')
-        expanded_curves = expand_motion_states_to_readouts(ky_readout_layout, {"navigator": s}, device=self.t_device)
-        self.navigator = expanded_curves["navigator"]
+        expanded_curves = expand_motion_states_to_readouts(ky_readout_layout, {"navigator": s[:, 0]}, device=self.t_device)
+        self.navigator = expanded_curves["navigator"].reshape(-1, 1)
 
     # ---------------------------------------------------------------------------
     # ------------------ NON-RIGID: REALISTIC SIMULATION  -----------------------
@@ -500,13 +501,13 @@ class MotionSimulator:
 
         alpha_maps = self._create_discrete_non_rigid_alpha_fields()
         amp = float(self.params.nonrigid_motion_amplitude)
-        alpha_maps = alpha_maps * amp
+        alpha_maps = (alpha_maps * amp).unsqueeze(-1)
         self.alpha_maps = alpha_maps
 
-        self.navigator = self._create_realistic_non_rigid_motion_curve()
+        self.navigator = self._create_realistic_non_rigid_motion_curve().reshape(-1, 1)
         self._apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
         if self.params.debug_flag:
-            save_nonrigid_alpha_plots(alpha_maps, self.image[0], "simulated", self.params.debug_folder, flip_vertical=self.params.flip_for_display)
+            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.debug_folder, flip_vertical=self.params.flip_for_display)
 
     

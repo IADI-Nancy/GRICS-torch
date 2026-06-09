@@ -378,30 +378,51 @@ class MotionOperator:
     def _initialize_non_rigid_motion_operator(self):
         alpha = self.alpha
         signal = torch.as_tensor(self.motion_signal, device=self.device, dtype=alpha.dtype)
+        if signal.ndim != 2:
+            raise ValueError(
+                "non-rigid motion_signal must have shape [Nstate, Nsensor]. "
+                f"Got {tuple(signal.shape)}."
+            )
 
         self.sparseMotionOperator = []
-        n_states = signal.numel()
+        n_states = int(signal.shape[0])
+        n_sensor = int(signal.shape[1])
         if self.Nz > 1:
-            if alpha.ndim != 4 or alpha.shape[0] < 3:
-                raise ValueError("3D non-rigid motion expects alpha with shape (3, Nx, Ny, Nz).")
-            alpha_x = alpha[0]
-            alpha_y = alpha[1]
-            alpha_z = alpha[2]
+            if alpha.ndim != 5 or alpha.shape[0] < 3:
+                raise ValueError(
+                    "3D non-rigid motion expects alpha with shape "
+                    "[3, Nx, Ny, Nz, Nsensor]."
+                )
+            if int(alpha.shape[-1]) != n_sensor:
+                raise ValueError(
+                    "alpha sensor dimension must match motion_signal. "
+                    f"Got alpha Nsensor={int(alpha.shape[-1])}, signal Nsensor={n_sensor}."
+                )
             for motion_state in range(n_states):
-                ux = alpha_x * signal[motion_state]
-                uy = alpha_y * signal[motion_state]
-                uz = alpha_z * signal[motion_state]
+                weights = signal[motion_state].reshape(1, 1, 1, n_sensor)
+                ux = torch.sum(alpha[0] * weights, dim=-1)
+                uy = torch.sum(alpha[1] * weights, dim=-1)
+                uz = torch.sum(alpha[2] * weights, dim=-1)
                 motion_op = MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
                 self.sparseMotionOperator.append(motion_op)
         else:
             # Axis convention:
             # alpha[0] -> Ux -> axis 0 displacement (rows)
             # alpha[1] -> Uy -> axis 1 displacement (cols)
-            alpha_x = alpha[0]
-            alpha_y = alpha[1]
+            if alpha.ndim != 4 or alpha.shape[0] < 2:
+                raise ValueError(
+                    "2D non-rigid motion expects alpha with shape "
+                    "[2, Nx, Ny, Nsensor]."
+                )
+            if int(alpha.shape[-1]) != n_sensor:
+                raise ValueError(
+                    "alpha sensor dimension must match motion_signal. "
+                    f"Got alpha Nsensor={int(alpha.shape[-1])}, signal Nsensor={n_sensor}."
+                )
             for motion_state in range(n_states):
-                ux = alpha_x * signal[motion_state]
-                uy = alpha_y * signal[motion_state]
+                weights = signal[motion_state].reshape(1, 1, n_sensor)
+                ux = torch.sum(alpha[0] * weights, dim=-1)
+                uy = torch.sum(alpha[1] * weights, dim=-1)
                 motion_op = MotionOperator._create_sparse_motion_operator_2d(ux, uy)
                 self.sparseMotionOperator.append(motion_op)
 

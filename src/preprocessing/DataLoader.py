@@ -278,7 +278,7 @@ class DataLoader:
             motion_curve, _ = motionSimulator.get_nonrigid_motion_information()
             self._motion_plot_kwargs = {}
 
-        self._motion_curve_for_binning = motion_curve
+        self._motion_curve_for_binning = motion_curve.reshape(-1, 1)
 
         return motionSimulator
 
@@ -437,7 +437,7 @@ class DataLoader:
         ):
             scale = (self.motion_plot_context or {}).get("alpha_visual_scale", None)
             save_nonrigid_alpha_plots(
-                self.alpha_maps_true, self.image_ground_truth[0],
+                self.alpha_maps_true[..., 0], self.image_ground_truth[0],
                 "simulated_input", folder,
                 flip_vertical=flip_for_display,
                 abs_max_x=None if scale is None else scale.get("alpha_abs_max_x"),
@@ -758,16 +758,29 @@ class DataLoader:
             self.params.N_motion_states = self.params.Nshots
         self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
+        motion_np = data['motion_data']
         if is_3d:
             # 3D: use ALL (ky, kz) acquisitions for global respiratory binning
             # so each readout is assigned to its actual respiratory state.
-            motion_data = torch.from_numpy(data['motion_data'].reshape(-1)).to(self.t_device)
-            self.ky_idx = torch.from_numpy(data['idx_ky'].reshape(-1)).to(self.t_device, dtype=torch.int64)
+            idx_ky_flat = data['idx_ky'].reshape(-1)
+            if motion_np.ndim != 2 or motion_np.shape[0] != idx_ky_flat.size:
+                raise ValueError(
+                    "3D motion_data must have shape [Nreadout, Nsensor]. "
+                    f"Got {motion_np.shape}; expected first dimension {idx_ky_flat.size}."
+                )
+            motion_data = torch.from_numpy(motion_np).to(self.t_device)
+            self.ky_idx = torch.from_numpy(idx_ky_flat).to(self.t_device, dtype=torch.int64)
             kz_all = torch.from_numpy(data['idx_kz'].reshape(-1)).to(self.t_device, dtype=torch.int64)
             self.nex_idx = torch.from_numpy(data['idx_nex'].reshape(-1)).to(self.t_device, dtype=torch.int64)
         else:
             z_sel = slice_idx
-            motion_data = torch.from_numpy(data['motion_data'][z_sel, :]).to(self.t_device)
+            if motion_np.ndim != 3:
+                raise ValueError(
+                    "2D motion_data must have shape [Nslice, Nreadout, Nsensor]. "
+                    f"Got {motion_np.shape}."
+                )
+            motion_slice = motion_np[z_sel, :, :]
+            motion_data = torch.from_numpy(motion_slice).to(self.t_device)
             self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
             kz_all = None
             self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)

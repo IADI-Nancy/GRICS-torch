@@ -244,6 +244,28 @@ class RawDataReader:
         return y_new
 
 
+    def _interpolate_respiratory_data(self, time_saec, resp, time_kspace):
+        if isinstance(resp, (list, tuple)):
+            interpolated = []
+            for idx, resp_channel in enumerate(resp):
+                time_channel = time_saec[idx] if isinstance(time_saec, (list, tuple)) else time_saec
+                time_channel = torch.as_tensor(time_channel, device=self.device)
+                resp_channel = torch.as_tensor(resp_channel, device=self.device)
+                interpolated.append(self._interp1d_torch(time_channel, resp_channel, time_kspace))
+            return torch.stack(interpolated, dim=1)
+
+        time_saec = torch.as_tensor(time_saec, device=self.device)
+        resp = torch.as_tensor(resp, device=self.device)
+        if resp.ndim <= 1:
+            return self._interp1d_torch(time_saec, resp, time_kspace).unsqueeze(1)
+
+        interpolated = []
+        for idx in range(resp.shape[0]):
+            time_channel = time_saec[idx] if time_saec.ndim > 1 else time_saec
+            interpolated.append(self._interp1d_torch(time_channel, resp[idx], time_kspace))
+        return torch.stack(interpolated, dim=1)
+
+
     def _reshape_data_slicewise(
         self,
         respiratory_data_interpolated,
@@ -257,11 +279,9 @@ class RawDataReader:
         device = respiratory_data_interpolated.device
 
         if not group_by_z_index:
-            # 3D slab acquisition: the tensor volume axis is kz, but the scanner
-            # has one slice. Keep all kz partitions in a single slice row so the
-            # preprocessed-real arrays describe one acquisition with many kz samples.
+            # 3D slab acquisition: keep one row per readout and one column per physiological sensor.
             return (
-                respiratory_data_interpolated.reshape(1, -1),
+                respiratory_data_interpolated,
                 idx_ky.reshape(1, -1),
                 idx_kz.reshape(1, -1),
                 idx_nex.reshape(1, -1),
@@ -278,7 +298,7 @@ class RawDataReader:
         lines_per_slice = int(counts[0].item())
 
         motion_data = torch.zeros(
-            (N_SLI, lines_per_slice),
+            (N_SLI, lines_per_slice, respiratory_data_interpolated.shape[1]),
             dtype=respiratory_data_interpolated.dtype,
             device=device)
 
@@ -313,14 +333,11 @@ class RawDataReader:
         time_saec, resp = RespiratoryDataReader._read_and_process_data(
             self.saec_file, self.sensor_type)
 
-        time_saec = torch.tensor(time_saec, device=self.device)
-        resp = torch.tensor(resp, device=self.device)
-
         kspace, time_kspace, z_indices, idx_ky, idx_kz, idx_nex, nex_source, nex_values = \
             self._extract_mri_data()
         reference_kspace = getattr(self, "reference_kspace", None)
 
-        respiratory_interpolated = self._interp1d_torch(
+        respiratory_interpolated = self._interpolate_respiratory_data(
             time_saec, resp, time_kspace)
 
         motion_data, line_idx_y, line_idx_z, line_idx_nex = \
