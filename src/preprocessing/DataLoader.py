@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import subprocess
+import time
 import torch
 from typing import Dict, Optional, Sequence, Union
 from skimage.data import shepp_logan_phantom
@@ -33,6 +34,7 @@ class DataLoader:
         t_device=None,
         filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None,
         slice_idx=None,
+        run_pipeline=True,
     ):
         """
         Load source data and prepare reconstruction inputs.
@@ -49,6 +51,8 @@ class DataLoader:
                 ``"siemens_file"`` and ``"saec_file"``. Other data types use a
                 single path string when a filename is required.
             slice_idx: Slice/partition to load for 2D preprocessed-real/ismrmrd-saec/siemens-saec inputs.
+            run_pipeline: If true, load data and run the slice-wise preparation pipeline.
+                If false, call load_data() and run_slice_pipeline() explicitly.
         """
         self._init_runtime_state(
             params=params,
@@ -58,18 +62,9 @@ class DataLoader:
             slice_idx=slice_idx,
         )
         self._validate_inputs()
-        self._load_source_data()
-        self._normalize_kspace_if_enabled()
-        self._compute_reference_image_data()
-        motionSimulator = self._apply_or_import_motion()
-        self._build_binned_sampling_indices()
-        self._prepare_motion_plot_context()
-        self._save_initial_data()
-
-        if self.params.debug_flag and self._has_simulated_motion():
-            self._debug_check_true_motion_image_reconstruction(motionSimulator)
-
-        del motionSimulator
+        if run_pipeline:
+            self.load_data()
+            self.run_slice_pipeline()
 
     def _init_runtime_state(
         self,
@@ -92,6 +87,15 @@ class DataLoader:
         self._motion_plot_y_limits = None
         self.kz_idx_chronological = None
         self.reference_kspace = None
+        self.kspace_scale = 1.0
+        self._source_data_loaded = False
+        self._slice_pipeline_has_run = False
+        self._source_kspace = None
+        self._source_reference_kspace = None
+        self._source_motion_data = None
+        self._source_idx_ky = None
+        self._source_idx_kz = None
+        self._source_idx_nex = None
 
     def _validate_inputs(self):
         if self.params.data_type != "shepp-logan" and self.filename is None:
@@ -132,8 +136,40 @@ class DataLoader:
                 "Do not provide slice_idx when data_dimension='3D'."
             )
 
-        if supports_slice_idx and not is_3d and self.slice_idx is None:
-            self.slice_idx = 0
+    def load_data(self):
+        if self._source_data_loaded:
+            raise RuntimeError("DataLoader.load_data() was called after source data was already loaded.")
+        self._load_source_data()
+        self._source_data_loaded = True
+        return self
+
+    def run_slice_pipeline(self, slice_idx=None):
+        if not self._source_data_loaded:
+            raise RuntimeError("DataLoader.run_slice_pipeline() requires load_data() to be called first.")
+        if self._slice_pipeline_has_run:
+            raise RuntimeError("DataLoader.run_slice_pipeline() was called after the slice pipeline already ran.")
+        if slice_idx is not None:
+            self._select_loaded_slice(slice_idx)
+        if self.params.data_dimension == "2D" and int(self.Nz) != 1:
+            raise ValueError(
+                f"DataLoader.run_slice_pipeline() requires exactly one 2D slice, "
+                f"but the loaded data has {int(self.Nz)} slices. "
+                "Call run_slice_pipeline(slice_idx=...) before reconstruction-stage processing."
+            )
+
+        self._normalize_kspace_if_enabled()
+        self._compute_reference_image_data()
+        motionSimulator = self._apply_or_import_motion()
+        self._build_binned_sampling_indices()
+        self._prepare_motion_plot_context()
+        self._save_initial_data()
+
+        if self.params.debug_flag and self._has_simulated_motion():
+            self._debug_check_true_motion_image_reconstruction(motionSimulator)
+
+        del motionSimulator
+        self._slice_pipeline_has_run = True
+        return self
 
     def _load_source_data(self):
         print(f"[DataLoader] Reading source data (data_type={self.params.data_type})...")
@@ -160,7 +196,13 @@ class DataLoader:
 
         # Calculate coil sensitivity maps and input image
         method = getattr(self.params, "coil_sensitivity_method", "espirit")
-        print(f"[DataLoader] Calculating coil sensitivity maps (method={method})...")
+        slice_label = "all" if self.slice_idx is None else f"{self.slice_idx + 1:03d}"
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(
+            f"[{timestamp}] [csm] slice {slice_label} calculating coil sensitivity maps "
+            f"(method={method})",
+            flush=True,
+        )
         self.smaps = CoilSensitivityCalculator(self.params, sp_device=self.sp_device).calculate(
             self.kspace, reference_kspace=self.reference_kspace,
         )
@@ -384,6 +426,7 @@ class DataLoader:
         )
 
     def _normalize_kspace_if_enabled(self):
+        self.kspace_scale = 1.0
         if not self.params.normalize_kspace:
             return
 
@@ -691,6 +734,7 @@ class DataLoader:
             "'siemens_file' and 'saec_file'."
         )
 
+
     def _convert_siemens_to_ismrmrd(self, path_to_siemens):
         if path_to_siemens is None:
             raise ValueError("Missing Siemens raw data file for data_type='siemens-saec'.")
@@ -704,6 +748,11 @@ class DataLoader:
         base = os.path.splitext(os.path.basename(path_to_siemens))[0]
         output_path = os.path.join(output_folder, f"{base}_meas2.mrd")
 
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+        print(f"[DataLoader] Converting Siemens raw data to ISMRMRD: {output_path}")
+        t0 = time.time()
         cmd = [
             "siemens_to_ismrmrd",
             "-f",
@@ -733,24 +782,34 @@ class DataLoader:
                 f"{output_path}"
             )
 
+        print(f"[DataLoader] Siemens conversion finished in {time.time() - t0:.2f} s")
         return output_path
 
     def _ingest_realworld_arrays(self, data, slice_idx=None):
-        kspace_np = data['kspace']
         is_3d = self.params.data_dimension == "3D"
-        if is_3d:
-            # 3D acquisition: keep all kz partitions for volumetric reconstruction.
-            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)
-        else:
-            self.kspace = torch.from_numpy(kspace_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
 
+        self._source_kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)
         reference_np = data.get('reference_kspace')
-        if reference_np is None:
-            self.reference_kspace = None
-        elif is_3d:
-            self.reference_kspace = torch.from_numpy(reference_np).to(self.t_device, dtype=torch.cdouble)
-        else:
-            self.reference_kspace = torch.from_numpy(reference_np).to(self.t_device, dtype=torch.cdouble)[:, :, :, :, [slice_idx]]
+        self._source_reference_kspace = (
+            None if reference_np is None else torch.from_numpy(reference_np).to(self.t_device, dtype=torch.cdouble)
+        )
+
+        motion_np = data['motion_data']
+        self._source_motion_data = torch.from_numpy(motion_np).to(self.t_device)
+        self._source_idx_ky = torch.from_numpy(data['idx_ky']).to(self.t_device, dtype=torch.int64)
+        self._source_idx_kz = torch.from_numpy(data['idx_kz']).to(self.t_device, dtype=torch.int64)
+        self._source_idx_nex = torch.from_numpy(data['idx_nex']).to(self.t_device, dtype=torch.int64)
+
+        self.kspace = self._source_kspace
+        self.reference_kspace = self._source_reference_kspace
+        self._update_kspace_dimensions_and_sampling_params()
+
+        if is_3d:
+            self._configure_loaded_3d_realworld_motion_inputs()
+        elif slice_idx is not None:
+            self._select_loaded_slice(slice_idx)
+
+    def _update_kspace_dimensions_and_sampling_params(self):
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
@@ -758,33 +817,47 @@ class DataLoader:
             self.params.N_motion_states = self.params.Nshots
         self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
-        motion_np = data['motion_data']
-        if is_3d:
-            # 3D: use ALL (ky, kz) acquisitions for global respiratory binning
-            # so each readout is assigned to its actual respiratory state.
-            idx_ky_flat = data['idx_ky'].reshape(-1)
-            if motion_np.ndim != 2 or motion_np.shape[0] != idx_ky_flat.size:
-                raise ValueError(
-                    "3D motion_data must have shape [Nreadout, Nsensor]. "
-                    f"Got {motion_np.shape}; expected first dimension {idx_ky_flat.size}."
-                )
-            motion_data = torch.from_numpy(motion_np).to(self.t_device)
-            self.ky_idx = torch.from_numpy(idx_ky_flat).to(self.t_device, dtype=torch.int64)
-            kz_all = torch.from_numpy(data['idx_kz'].reshape(-1)).to(self.t_device, dtype=torch.int64)
-            self.nex_idx = torch.from_numpy(data['idx_nex'].reshape(-1)).to(self.t_device, dtype=torch.int64)
-        else:
-            z_sel = slice_idx
-            if motion_np.ndim != 3:
-                raise ValueError(
-                    "2D motion_data must have shape [Nslice, Nreadout, Nsensor]. "
-                    f"Got {motion_np.shape}."
-                )
-            motion_slice = motion_np[z_sel, :, :]
-            motion_data = torch.from_numpy(motion_slice).to(self.t_device)
-            self.ky_idx = torch.from_numpy(data['idx_ky'][z_sel]).to(self.t_device, dtype=torch.int64)
-            kz_all = None
-            self.nex_idx = torch.from_numpy(data['idx_nex'][z_sel]).to(self.t_device, dtype=torch.int64)
-        self._configure_realworld_motion_inputs(motion_data, kz_all=kz_all)
+    def _configure_loaded_3d_realworld_motion_inputs(self):
+        idx_ky_flat = self._source_idx_ky.reshape(-1)
+        if self._source_motion_data.ndim != 2 or self._source_motion_data.shape[0] != idx_ky_flat.numel():
+            raise ValueError(
+                "3D motion_data must have shape [Nreadout, Nsensor]. "
+                f"Got {tuple(self._source_motion_data.shape)}; expected first dimension {idx_ky_flat.numel()}."
+            )
+        self.ky_idx = idx_ky_flat
+        self.nex_idx = self._source_idx_nex.reshape(-1)
+        kz_all = self._source_idx_kz.reshape(-1)
+        self._configure_realworld_motion_inputs(self._source_motion_data, kz_all=kz_all)
+
+    def _select_loaded_slice(self, slice_idx):
+        if self.params.data_dimension == "3D":
+            raise ValueError("slice_idx must not be provided when data_dimension='3D'.")
+        if self._source_kspace is None:
+            raise RuntimeError("No loaded source k-space is available for slice selection.")
+
+        slice_idx = int(slice_idx)
+        n_slices = int(self._source_kspace.shape[-1])
+        if slice_idx < 0 or slice_idx >= n_slices:
+            raise ValueError(f"slice_idx={slice_idx} is out of range for {n_slices} slices.")
+        if self._source_motion_data.ndim != 3:
+            raise ValueError(
+                "2D motion_data must have shape [Nslice, Nreadout, Nsensor]. "
+                f"Got {tuple(self._source_motion_data.shape)}."
+            )
+
+        self.slice_idx = slice_idx
+        self.kspace = self._source_kspace[..., slice_idx:slice_idx + 1]
+        self.reference_kspace = (
+            None
+            if self._source_reference_kspace is None
+            else self._source_reference_kspace[..., slice_idx:slice_idx + 1]
+        )
+        self._update_kspace_dimensions_and_sampling_params()
+        motion_data = self._source_motion_data[slice_idx, :, :]
+        self.ky_idx = self._source_idx_ky[slice_idx]
+        self.kz_idx = None
+        self.nex_idx = self._source_idx_nex[slice_idx]
+        self._configure_realworld_motion_inputs(motion_data, kz_all=None)
 
     def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=None):
         reader = RawDataReader(
@@ -792,15 +865,16 @@ class DataLoader:
             saec_file=path_to_saec,
             sensor_type=self.params.rawdata_sensor_type,
             device="cpu",
+            debug=self.params.debug_flag,
         )
         data = reader._read_data_from_rawdata()
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        if self.params.debug_flag:
+        if self.params.debug_flag and hasattr(self, "ky_idx"):
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
-                fname=f"ky_order_rawdata_slice{slice_idx}.png",
+                fname=f"ky_order_rawdata_slice{self.slice_idx}.png",
             )
         
 
@@ -816,11 +890,11 @@ class DataLoader:
                 data['reference_kspace'] = f['reference_kspace'][:]
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        if self.params.debug_flag:
+        if self.params.debug_flag and hasattr(self, "ky_idx"):
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
-                fname=f"ky_order_realworld_slice{slice_idx}.png",
+                fname=f"ky_order_realworld_slice{self.slice_idx}.png",
             )
 
     def _debug_check_true_motion_image_reconstruction(self, motionSimulator):

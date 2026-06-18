@@ -35,11 +35,12 @@ def _is_parallel_calibration(acq):
 
 class RawDataReader:
 
-    def __init__(self, ismrmrd_file, saec_file, sensor_type='BELT', device="cpu"):
+    def __init__(self, ismrmrd_file, saec_file, sensor_type='BELT', device="cpu", debug=False):
         self.ismrmrd_file = ismrmrd_file
         self.saec_file = saec_file
         self.sensor_type = sensor_type
         self.device = device
+        self.debug = bool(debug)
 
     @staticmethod
     def _encoding_limit_size(limit_obj):
@@ -91,7 +92,6 @@ class RawDataReader:
 
 
     def _extract_mri_data(self):
-
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
         try:
             header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
@@ -183,6 +183,11 @@ class RawDataReader:
                 kspace[:, nex, :, ky, z] = acq_data
 
                 if _is_parallel_calibration(acq):
+                    if self.debug:
+                        print(
+                            "[RawDataReader] parallel calibration line: "
+                            f"acquisition={i}, ky={ky}, z={z}, repetition={rep}"
+                        )
                     if reference_line_seen[ky, z]:
                         raise ValueError(
                             "Duplicate parallel-calibration acquisition found for "
@@ -389,25 +394,18 @@ class RawDataReader:
             if "reference_kspace" in data:
                 data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]
 
-        if h5filename is None:
-            base = os.path.splitext(os.path.basename(self.ismrmrd_file))[0]
-            h5filename = os.path.join(
-                os.path.dirname(self.ismrmrd_file),
-                f"{base}_realworld_from_raw.h5",
-            )
-
-        with h5py.File(h5filename, 'w') as f:
-            f.create_dataset('motion_data', data=data['motion_data'])
-            f.create_dataset('idx_ky', data=data['idx_ky'])
-            f.create_dataset('idx_kz', data=data['idx_kz'])
-            f.create_dataset('idx_nex', data=data['idx_nex'])
-            f.create_dataset('kspace', data=data['kspace'])
-            if 'reference_kspace' in data:
-                f.create_dataset('reference_kspace', data=data['reference_kspace'])
-            f.create_dataset('nex_values', data=data['nex_values'])
-            f.attrs['nex_source'] = data['nex_source']
-
-        data['realworld_h5_path'] = h5filename
+        if h5filename is not None:
+            with h5py.File(h5filename, 'w') as f:
+                f.create_dataset('motion_data', data=data['motion_data'])
+                f.create_dataset('idx_ky', data=data['idx_ky'])
+                f.create_dataset('idx_kz', data=data['idx_kz'])
+                f.create_dataset('idx_nex', data=data['idx_nex'])
+                f.create_dataset('kspace', data=data['kspace'])
+                if 'reference_kspace' in data:
+                    f.create_dataset('reference_kspace', data=data['reference_kspace'])
+                f.create_dataset('nex_values', data=data['nex_values'])
+                f.attrs['nex_source'] = data['nex_source']
+            data['realworld_h5_path'] = h5filename
 
         return data
 

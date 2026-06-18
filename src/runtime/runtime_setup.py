@@ -124,14 +124,15 @@ def initialize_runtime(params, print_gpu_info=False):
             total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
             print(f"Total GPU memory: {total_mem:.2f} GB")
 
+    if hasattr(params, "seed") and params.seed is not None:
+        torch.manual_seed(params.seed)
+        if use_gpu and torch.cuda.is_available():
+            torch.cuda.manual_seed(params.seed)
+            torch.cuda.manual_seed_all(params.seed)
+
     if params.debug_flag:
         torch.use_deterministic_algorithms(True, warn_only=True)
-        if hasattr(params, "seed") and params.seed is not None:
-            torch.manual_seed(params.seed)
         if use_gpu and torch.cuda.is_available():
-            if hasattr(params, "seed") and params.seed is not None:
-                torch.cuda.manual_seed(params.seed)
-                torch.cuda.manual_seed_all(params.seed)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 
