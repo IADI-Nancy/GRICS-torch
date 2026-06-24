@@ -1,7 +1,7 @@
 # # -------------------------------------------------------------------
 # # This is a Dockerfile for the internal use of the IADI lab (Nancy, France). It is not intended for public use and may contain specific configurations for the lab's network and infrastructure.
 # # -------------------------------------------------------------------
-FROM ghcr.io/iadi-nancy/grics-torch:1.0.1
+FROM ghcr.io/iadi-nancy/grics-torch:1.0.2
 
 RUN echo 'Defaults    env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY"' >> /etc/sudoers \
 	&& echo '[distutils]\n\

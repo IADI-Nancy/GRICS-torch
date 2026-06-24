@@ -55,19 +55,18 @@ ENV PATH=/opt/conda/envs/environment_grics/bin:$PATH
 # -------------------------------------------------------------------
 # Install pip packages
 # -------------------------------------------------------------------
+COPY requirements-torch.txt /tmp/requirements-torch.txt
+COPY requirements-pip.txt /tmp/requirements-pip.txt
+
 # PyTorch (CUDA wheels)
 RUN pip install --no-cache-dir \
-    torch==2.5.1+cu121 \
-    torchvision==0.20.1+cu121 \
-    torchaudio==2.5.1+cu121 \
+    -r /tmp/requirements-torch.txt \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Everything else
 RUN pip install --no-cache-dir \
-    ismrmrd==1.14.2 \
-    GitPython==3.1.46 \
-    pandas==2.3.3 \
-    scikit-image==0.26.0
+    -r /tmp/requirements-pip.txt \
+ && rm /tmp/requirements-torch.txt /tmp/requirements-pip.txt
 
 ENV CUDA_PATH=/usr/local/cuda-12.1
 ENV NVCC=$CUDA_PATH/bin/nvcc
