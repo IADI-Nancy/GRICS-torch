@@ -96,6 +96,7 @@ class DataLoader:
         self._source_idx_ky = None
         self._source_idx_kz = None
         self._source_idx_nex = None
+        self.source_ismrmrd_file = None
 
     def _validate_inputs(self):
         if self.params.data_type != "shepp-logan" and self.filename is None:
@@ -179,10 +180,12 @@ class DataLoader:
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
         elif self.params.data_type == 'ismrmrd-saec': # Preprocessed real data with acquisition order and motion data, loaded from raw data files
             path_to_ismrm, path_to_saec = self.rawdata_filenames
+            self.source_ismrmrd_file = path_to_ismrm
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'siemens-saec':
             path_to_siemens, path_to_saec = self.siemens_saec_filenames
             path_to_ismrm = self._convert_siemens_to_ismrmrd(path_to_siemens)
+            self.source_ismrmrd_file = path_to_ismrm
             self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
             self._load_from_image(self.filename)
@@ -799,6 +802,7 @@ class DataLoader:
         self._source_idx_ky = torch.from_numpy(data['idx_ky']).to(self.t_device, dtype=torch.int64)
         self._source_idx_kz = torch.from_numpy(data['idx_kz']).to(self.t_device, dtype=torch.int64)
         self._source_idx_nex = torch.from_numpy(data['idx_nex']).to(self.t_device, dtype=torch.int64)
+        self._source_slice_geometry = data.get('slice_geometry')
 
         self.kspace = self._source_kspace
         self.reference_kspace = self._source_reference_kspace

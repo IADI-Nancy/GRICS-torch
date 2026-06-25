@@ -135,6 +135,7 @@ class RawDataReader:
             idx_ky = []
             idx_kz = []
             idx_nex = []
+            slice_geometry = {}
 
             num_acq = dset.number_of_acquisitions()
             for i in range(num_acq):
@@ -179,6 +180,15 @@ class RawDataReader:
                 idx_ky.append(ky)
                 idx_kz.append(kz)
                 idx_nex.append(nex)
+                if z not in slice_geometry:
+                    patient_position = getattr(header.measurementInformation, "patientPosition", None)
+                    slice_geometry[z] = {
+                        "position": list(acq.position),
+                        "read_dir": list(acq.read_dir),
+                        "phase_dir": list(acq.phase_dir),
+                        "slice_dir": list(acq.slice_dir),
+                        "patient_position": str(patient_position).split(".")[-1] if patient_position is not None else None,
+                    }
                 nex_values_seen.add(nex)
                 kspace[:, nex, :, ky, z] = acq_data
 
@@ -218,6 +228,7 @@ class RawDataReader:
                 torch.tensor(idx_nex, device=self.device),
                 "repetition",
                 nex_values,
+                slice_geometry,
             )
         finally:
             dset.close()
@@ -338,7 +349,7 @@ class RawDataReader:
         time_saec, resp = RespiratoryDataReader._read_and_process_data(
             self.saec_file, self.sensor_type)
 
-        kspace, time_kspace, z_indices, idx_ky, idx_kz, idx_nex, nex_source, nex_values = \
+        kspace, time_kspace, z_indices, idx_ky, idx_kz, idx_nex, nex_source, nex_values, slice_geometry = \
             self._extract_mri_data()
         reference_kspace = getattr(self, "reference_kspace", None)
 
@@ -367,6 +378,7 @@ class RawDataReader:
             "idx_nex": line_idx_nex.detach().cpu().numpy(),
             "nex_source": nex_source,
             "nex_values": nex_values.detach().cpu().numpy(),
+            "slice_geometry": slice_geometry,
         }
         if reference_kspace is not None:
             data["reference_kspace"] = reference_kspace.detach().cpu().numpy()
@@ -390,6 +402,7 @@ class RawDataReader:
                 "idx_ky": data["idx_ky"][[slice_idx], :],
                 "idx_kz": data["idx_kz"][[slice_idx], :],
                 "idx_nex": data["idx_nex"][[slice_idx], :],
+                "slice_geometry": {0: data["slice_geometry"][slice_idx]},
             }
             if "reference_kspace" in data:
                 data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]

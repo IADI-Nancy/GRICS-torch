@@ -52,12 +52,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import ismrmrd
 import torch
 
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
+from src.utils.dicom_export import write_reconstruction_dicom
+from src.utils.zero_fill import zero_fill_grics_image_to_shape
 
 
 LOADED_DATA = None
@@ -187,6 +190,99 @@ def reconstruct_slice(slice_idx: int) -> dict:
     }
 
 
+def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple[int, int]]:
+    ismrmrd_file = getattr(raw_data, "source_ismrmrd_file", None)
+    if not ismrmrd_file:
+        raise ValueError("Cannot determine GRICS zero-fill sizes: raw_data.source_ismrmrd_file is not set.")
+
+    dset = ismrmrd.Dataset(str(ismrmrd_file), "dataset", create_if_needed=False)
+    try:
+        header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
+    finally:
+        dset.close()
+
+    enc = header.encoding[0]
+    recon = enc.reconSpace.matrixSize
+    encoded = enc.encodedSpace.matrixSize
+    target_y = int(recon.y)
+    encoded_y = int(encoded.y)
+    if target_y > encoded_y:
+        target_y //= 2
+
+    target_shape = (int(raw_data.Nx), target_y)
+    encoded_shape = (int(raw_data.Nx), encoded_y)
+    if any(target > encoded for target, encoded in zip(target_shape, encoded_shape)):
+        raise ValueError(
+            "GRICS zero-fill sizes are inconsistent: "
+            f"target_shape={target_shape} is larger than encoded_shape={encoded_shape}."
+        )
+    return target_shape, encoded_shape
+
+
+def zero_fill_loaded_reconstruction(
+    image: torch.Tensor,
+    target_shape: tuple[int, int],
+    encoded_shape: tuple[int, int],
+) -> torch.Tensor:
+    return zero_fill_grics_image_to_shape(
+        image,
+        target_shape=target_shape,
+        encoded_shape=encoded_shape,
+        spatial_dims=(-2, -1),
+    )
+
+
+def zero_fill_reconstructed_images(results: list[dict], raw_data: DataLoader) -> tuple[int, int]:
+    target_shape, encoded_shape = grics_zero_fill_shapes(raw_data)
+    print(
+        f"[zero-fill] Loading GRICS images, padding to encoded matrix {encoded_shape}, "
+        f"then cropping to recon matrix {target_shape}"
+    )
+
+    for result in results:
+        image_path = Path(result["output_dir"]) / "GricsRecon.pt"
+        zero_filled_path = Path(result["output_dir"]) / "GricsReconZeroFilled.pt"
+        image = torch.load(image_path, map_location="cpu")
+        image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
+        torch.save(image, zero_filled_path)
+        result["zero_filled_recon_file"] = str(zero_filled_path)
+        print(f"[zero-fill] slice {result['slice_number']:03d}: {zero_filled_path}")
+
+    return target_shape
+
+
+def write_reconstruction_dicoms(results: list[dict], raw_data: DataLoader) -> tuple[Path, dict[str, str]]:
+    from pydicom.uid import generate_uid
+
+    dicom_dir = OUTPUT_ROOT / "dicoms"
+    dicom_dir.mkdir(parents=True, exist_ok=True)
+    dicom_uids = {
+        "study_instance_uid": generate_uid(),
+        "series_instance_uid": generate_uid(),
+        "frame_of_reference_uid": generate_uid(),
+    }
+    print(f"[dicom] Exporting {len(results)} reconstructed slices to {dicom_dir}...")
+    print(f"[dicom] SeriesInstanceUID: {dicom_uids['series_instance_uid']}")
+    for result in results:
+        slice_idx = int(result["slice_idx"])
+        image_path = Path(result["zero_filled_recon_file"])
+        dicom_path = dicom_dir / f"GricsRecon_slice{slice_idx + 1:03d}.dcm"
+        image = torch.load(image_path, map_location="cpu")
+        write_reconstruction_dicom(
+            image,
+            dicom_path,
+            raw_data=raw_data,
+            slice_index=slice_idx,
+            series_description="GRICS reconstruction RESEARCH ONLY",
+            images_in_acquisition=len(results),
+            series_number=1,
+            **dicom_uids,
+        )
+        result["dicom_file"] = str(dicom_path)
+        print(f"[dicom] slice {result['slice_number']:03d}: {dicom_path}")
+    return dicom_dir, dicom_uids
+
+
 def write_manifest(manifest: dict) -> None:
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     with (OUTPUT_ROOT / "run_manifest.json").open("w", encoding="utf-8") as f:
@@ -223,6 +319,8 @@ def main() -> None:
             print(f"[run] slice {result['slice_number']:03d} finished in {result['elapsed_s']:.2f} s")
 
     results.sort(key=lambda item: item["slice_idx"])
+    zero_filled_shape = zero_fill_reconstructed_images(results, LOADED_DATA)
+    dicom_dir, dicom_uids = write_reconstruction_dicoms(results, LOADED_DATA)
     elapsed_s = time.time() - t0
     write_manifest(
         {
@@ -230,6 +328,9 @@ def main() -> None:
             "saec_file": str(args.saec_file),
             "reconstruction_config": RECONSTRUCTION_CONFIG,
             "output_root": str(OUTPUT_ROOT),
+            "dicom_dir": str(dicom_dir),
+            "dicom_uids": dicom_uids,
+            "zero_filled_shape": zero_filled_shape,
             "nslices": nslices,
             "selected_slices": slices,
             "max_workers": max_workers,
