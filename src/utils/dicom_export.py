@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ def write_reconstruction_dicom(
     frame_of_reference_uid: str | None = None,
     images_in_acquisition: int | None = None,
     series_number: int | None = None,
+    reference_dicom_path: str | Path | None = None,
 ) -> Path:
     """
     Write a single-frame DICOM file for a reconstructed MR image.
@@ -44,7 +46,11 @@ def write_reconstruction_dicom(
     pixels_float = _prepare_single_frame_image(image, geometry=geometry)
     pixel_array, rescale_slope = _scale_to_uint16(pixels_float)
 
+    reference_dicom = _find_reference_dicom(reference_dicom_path, geometry, slice_index)
     ds = _base_dataset(output_path)
+    if reference_dicom is not None:
+        _copy_reference_dicom_fields(ds, reference_dicom)
+        _validate_distinct_series_number(series_number, reference_dicom)
     _copy_raw_header_fields(
         ds,
         header,
@@ -53,14 +59,142 @@ def write_reconstruction_dicom(
         series_instance_uid=series_instance_uid,
         frame_of_reference_uid=frame_of_reference_uid,
         series_number=series_number,
+        only_missing=reference_dicom is not None,
     )
-    _copy_geometry_fields(ds, header, pixel_array.shape, slice_index, images_in_acquisition, raw_data, geometry)
+    if reference_dicom is None:
+        _copy_geometry_fields(ds, header, pixel_array.shape, slice_index, images_in_acquisition, raw_data, geometry)
+    else:
+        _set_reference_geometry_fields(ds, reference_dicom, pixel_array.shape, images_in_acquisition)
     _set_pixel_fields(ds, pixel_array, rescale_slope)
-    _add_minimal_mr_fields(ds, header)
+    _add_minimal_mr_fields(ds, header, only_missing=reference_dicom is not None)
 
     ds.save_as(output_path, write_like_original=False)
     return output_path
 
+
+
+def _find_reference_dicom(
+    reference_dicom_path: str | Path | None,
+    geometry: Any,
+    slice_index: int | None,
+) -> Any | None:
+    if reference_dicom_path is None:
+        return None
+
+    _ensure_pydicom_available()
+    import pydicom
+
+    path = Path(reference_dicom_path)
+    if path.is_file():
+        return pydicom.dcmread(str(path), stop_before_pixels=True, force=True)
+    if not path.is_dir():
+        raise FileNotFoundError(f"Reference DICOM path does not exist: {path}")
+
+    current_location = _slice_location_from_geometry(geometry)
+    if current_location is None:
+        raise ValueError("Cannot match reference DICOM: source slice geometry has no valid slice location.")
+
+    candidates = []
+    for candidate in sorted(p for p in path.rglob("*") if p.is_file()):
+        try:
+            ds = pydicom.dcmread(str(candidate), stop_before_pixels=True, force=True)
+        except Exception:
+            continue
+        if getattr(ds, "Modality", None) != "MR":
+            continue
+        if not hasattr(ds, "SliceLocation"):
+            continue
+        candidates.append((abs(float(ds.SliceLocation) - current_location), candidate, ds))
+
+    if not candidates:
+        raise ValueError(f"No MR DICOM files with SliceLocation found below: {path}")
+
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][2]
+
+
+def _copy_reference_dicom_fields(ds: Any, reference: Any) -> None:
+    for elem in reference:
+        if elem.tag.is_private or elem.keyword in _REFERENCE_DICOM_SKIP_KEYWORDS:
+            continue
+        ds.add(deepcopy(elem))
+
+
+def _validate_distinct_series_number(series_number: int | None, reference: Any) -> None:
+    if series_number is None or not hasattr(reference, "SeriesNumber"):
+        return
+    if int(series_number) == int(reference.SeriesNumber):
+        raise ValueError(
+            "Output series number must be different from the reference Siemens series number: "
+            f"{series_number}. Pass a different --dicom-series-number."
+        )
+
+
+def _set_reference_geometry_fields(
+    ds: Any,
+    reference: Any,
+    shape: tuple[int, int],
+    images_in_acquisition: int | None,
+) -> None:
+    rows, cols = int(shape[0]), int(shape[1])
+    ds.Rows = rows
+    ds.Columns = cols
+    if images_in_acquisition is not None:
+        ds.ImagesInAcquisition = int(images_in_acquisition)
+
+    required = ("PixelSpacing", "ImageOrientationPatient", "ImagePositionPatient")
+    missing = [name for name in required if not hasattr(reference, name)]
+    if missing:
+        raise ValueError(f"Reference DICOM is missing required geometry fields: {missing}")
+
+    ds.PixelSpacing = [float(v) for v in reference.PixelSpacing]
+    ds.ImageOrientationPatient = [float(v) for v in reference.ImageOrientationPatient]
+    ds.ImagePositionPatient = [float(v) for v in reference.ImagePositionPatient]
+    _copy_if_present(ds, reference, "InstanceNumber")
+    _copy_if_present(ds, reference, "SliceLocation")
+    _copy_if_present(ds, reference, "SliceThickness")
+    _copy_if_present(ds, reference, "SpacingBetweenSlices")
+    _copy_if_present(ds, reference, "PatientPosition")
+    _copy_if_present(ds, reference, "PositionReferenceIndicator")
+
+
+_REFERENCE_DICOM_SKIP_KEYWORDS = {
+    "PixelData",
+    "FloatPixelData",
+    "DoubleFloatPixelData",
+    "OverlayData",
+    "SOPClassUID",
+    "SOPInstanceUID",
+    "MediaStorageSOPClassUID",
+    "MediaStorageSOPInstanceUID",
+    "TransferSyntaxUID",
+    "ImplementationClassUID",
+    "SeriesInstanceUID",
+    "SeriesNumber",
+    "SeriesDescription",
+    "ImageType",
+    "ConversionType",
+    "ContentDate",
+    "ContentTime",
+    "InstanceCreationDate",
+    "InstanceCreationTime",
+    "InstanceNumber",
+    "Rows",
+    "Columns",
+    "SamplesPerPixel",
+    "PhotometricInterpretation",
+    "BitsAllocated",
+    "BitsStored",
+    "HighBit",
+    "PixelRepresentation",
+    "SmallestImagePixelValue",
+    "LargestImagePixelValue",
+    "WindowCenter",
+    "WindowWidth",
+    "RescaleIntercept",
+    "RescaleSlope",
+    "RescaleType",
+}
 
 
 def _ensure_pydicom_available() -> None:
@@ -178,6 +312,7 @@ def _copy_raw_header_fields(
     series_instance_uid: str | None = None,
     frame_of_reference_uid: str | None = None,
     series_number: int | None = None,
+    only_missing: bool = False,
 ) -> None:
     from pydicom.uid import generate_uid
 
@@ -186,34 +321,33 @@ def _copy_raw_header_fields(
     measurement = _first_present(header, "measurementInformation")
     system = _first_present(header, "acquisitionSystemInformation")
 
-    ds.PatientName = _get(subject, "patientName", "Anonymous")
-    ds.PatientID = _get(subject, "patientID", "UNKNOWN")
-    _set_if_present(ds, "PatientBirthDate", _dicom_date(_get(subject, "patientBirthdate")))
-    _set_if_present(ds, "PatientSex", _patient_sex(_get(subject, "patientGender")))
+    _set_or_replace(ds, "PatientName", _get(subject, "patientName", "Anonymous"), only_missing)
+    _set_or_replace(ds, "PatientID", _get(subject, "patientID", "UNKNOWN"), only_missing)
+    _set_if_present(ds, "PatientBirthDate", _dicom_date(_get(subject, "patientBirthdate")), only_missing=only_missing)
+    _set_if_present(ds, "PatientSex", _patient_sex(_get(subject, "patientGender")), only_missing=only_missing)
 
-    ds.StudyInstanceUID = study_instance_uid or generate_uid()
+    _set_or_replace(ds, "StudyInstanceUID", study_instance_uid or generate_uid(), only_missing)
     ds.SeriesInstanceUID = series_instance_uid or generate_uid()
-    ds.FrameOfReferenceUID = frame_of_reference_uid or generate_uid()
+    _set_or_replace(ds, "FrameOfReferenceUID", frame_of_reference_uid or generate_uid(), only_missing)
     if series_number is not None:
         ds.SeriesNumber = int(series_number)
-    _set_if_present(ds, "StudyID", _get(study, "studyID"))
-    _set_if_present(ds, "AccessionNumber", _get(study, "accessionNumber"))
-    _set_if_present(ds, "ReferringPhysicianName", _get(study, "referringPhysicianName"))
-    _set_if_present(ds, "StudyDate", _dicom_date(_get(study, "studyDate")))
-    _set_if_present(ds, "StudyTime", _dicom_time(_get(study, "studyTime")))
+    _set_if_present(ds, "StudyID", _get(study, "studyID"), only_missing=only_missing)
+    _set_if_present(ds, "AccessionNumber", _get(study, "accessionNumber"), only_missing=only_missing)
+    _set_if_present(ds, "ReferringPhysicianName", _get(study, "referringPhysicianName"), only_missing=only_missing)
+    _set_if_present(ds, "StudyDate", _dicom_date(_get(study, "studyDate")), only_missing=only_missing)
+    _set_if_present(ds, "StudyTime", _dicom_time(_get(study, "studyTime")), only_missing=only_missing)
 
     protocol_name = _get(measurement, "protocolName")
     raw_series_description = _get(measurement, "seriesDescription", "GRICS reconstruction")
     ds.SeriesDescription = series_description or raw_series_description
-    _set_if_present(ds, "ProtocolName", protocol_name)
-    _set_if_present(ds, "SeriesDate", _dicom_date(_get(measurement, "seriesDate")))
-    _set_if_present(ds, "SeriesTime", _dicom_time(_get(measurement, "seriesTime")))
-    _set_if_present(ds, "Manufacturer", _get(system, "systemVendor"))
-    _set_if_present(ds, "ManufacturerModelName", _get(system, "systemModel"))
-    _set_if_present(ds, "InstitutionName", _get(system, "institutionName"))
-    _set_if_present(ds, "StationName", _get(system, "stationName"))
-    _set_if_present(ds, "DeviceSerialNumber", _get(system, "systemSerialNumber"))
-
+    _set_if_present(ds, "ProtocolName", protocol_name, only_missing=only_missing)
+    _set_if_present(ds, "SeriesDate", _dicom_date(_get(measurement, "seriesDate")), only_missing=only_missing)
+    _set_if_present(ds, "SeriesTime", _dicom_time(_get(measurement, "seriesTime")), only_missing=only_missing)
+    _set_if_present(ds, "Manufacturer", _get(system, "systemVendor"), only_missing=only_missing)
+    _set_if_present(ds, "ManufacturerModelName", _get(system, "systemModel"), only_missing=only_missing)
+    _set_if_present(ds, "InstitutionName", _get(system, "institutionName"), only_missing=only_missing)
+    _set_if_present(ds, "StationName", _get(system, "stationName"), only_missing=only_missing)
+    _set_if_present(ds, "DeviceSerialNumber", _get(system, "systemSerialNumber"), only_missing=only_missing)
 
 def _copy_geometry_fields(
     ds: Any,
@@ -424,19 +558,20 @@ def _encoding_limit_size(limit_obj: Any) -> int:
         return 1
     return int(maximum) + 1
 
-def _add_minimal_mr_fields(ds: Any, header: Any) -> None:
+def _add_minimal_mr_fields(ds: Any, header: Any, *, only_missing: bool = False) -> None:
     seq = _first_present(header, "sequenceParameters")
-    _set_if_present(ds, "RepetitionTime", _first_number(_get(seq, "TR")))
-    _set_if_present(ds, "EchoTime", _first_number(_get(seq, "TE")))
-    _set_if_present(ds, "InversionTime", _first_number(_get(seq, "TI")))
-    _set_if_present(ds, "FlipAngle", _first_number(_get(seq, "flipAngle_deg")))
-    ds.ScanningSequence = "RM"
-    ds.SequenceVariant = "NONE"
-    ds.ScanOptions = ""
-    ds.MRAcquisitionType = _mr_acquisition_type(header)
+    _set_if_present(ds, "RepetitionTime", _first_number(_get(seq, "TR")), only_missing=only_missing)
+    _set_if_present(ds, "EchoTime", _first_number(_get(seq, "TE")), only_missing=only_missing)
+    _set_if_present(ds, "InversionTime", _first_number(_get(seq, "TI")), only_missing=only_missing)
+    _set_if_present(ds, "FlipAngle", _first_number(_get(seq, "flipAngle_deg")), only_missing=only_missing)
+    _set_or_replace(ds, "ScanningSequence", "RM", only_missing)
+    _set_or_replace(ds, "SequenceVariant", "NONE", only_missing)
+    _set_or_replace(ds, "ScanOptions", "", only_missing)
+    _set_or_replace(ds, "MRAcquisitionType", _mr_acquisition_type(header), only_missing)
     from pydicom.sequence import Sequence
 
-    ds.ReferencedImageSequence = Sequence([])
+    if not only_missing or not hasattr(ds, "ReferencedImageSequence"):
+        ds.ReferencedImageSequence = Sequence([])
 
 
 def _first_present(obj: Any, attr: str, index: int | None = None) -> Any:
@@ -453,9 +588,20 @@ def _get(obj: Any, attr: str, default: Any = None) -> Any:
     return default if value is None else value
 
 
-def _set_if_present(ds: Any, name: str, value: Any) -> None:
+def _set_if_present(ds: Any, name: str, value: Any, *, only_missing: bool = False) -> None:
     if value not in (None, ""):
-        setattr(ds, name, value)
+        _set_or_replace(ds, name, value, only_missing)
+
+
+def _set_or_replace(ds: Any, name: str, value: Any, only_missing: bool) -> None:
+    if only_missing and hasattr(ds, name):
+        return
+    setattr(ds, name, value)
+
+
+def _copy_if_present(ds: Any, source: Any, name: str) -> None:
+    if hasattr(source, name):
+        setattr(ds, name, deepcopy(getattr(source, name)))
 
 
 def _first_number(value: Any) -> float | None:

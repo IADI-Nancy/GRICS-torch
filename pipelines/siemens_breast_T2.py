@@ -4,7 +4,9 @@ Slicewise GRICS-torch reconstruction for multislice Siemens breast T2 data.
 Example usage:
 python pipelines/siemens_breast_T2.py \
   ../data/GRICS-torch/test_XA61_volunteer/0274_T2_s.dat \
-  ../data/GRICS-torch/test_XA61_volunteer/0274_T2_s.saec
+  ../data/GRICS-torch/test_XA61_volunteer/0274_T2_s.saec \
+    --dicom-header-dir runs/siemens_breast_T2/2017-110_01-0275-V1MR_2026-06-09/DCM_MR/S2/ \
+    --dicom-series-number 100
 """
 
 
@@ -76,6 +78,24 @@ def parse_args() -> argparse.Namespace:
         help="Input Siemens .dat file or already converted ISMRMRD .h5/.mrd file.",
     )
     parser.add_argument("saec_file", type=Path, help="Input SAEC physiological .h5 file.")
+    parser.add_argument(
+        "--dicom-header-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory containing Siemens DICOMs to use as public metadata "
+            "header donors. Files are searched recursively and matched by slice location."
+        ),
+    )
+    parser.add_argument(
+        "--dicom-series-number",
+        type=int,
+        default=1001,
+        help=(
+            "SeriesNumber assigned to the exported GRICS DICOM series. If donor DICOMs "
+            "are provided, this must be different from the Siemens source series number."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -251,7 +271,12 @@ def zero_fill_reconstructed_images(results: list[dict], raw_data: DataLoader) ->
     return target_shape
 
 
-def write_reconstruction_dicoms(results: list[dict], raw_data: DataLoader) -> tuple[Path, dict[str, str]]:
+def write_reconstruction_dicoms(
+    results: list[dict],
+    raw_data: DataLoader,
+    reference_dicom_path: Path | None,
+    series_number: int,
+) -> tuple[Path, dict[str, str]]:
     from pydicom.uid import generate_uid
 
     dicom_dir = OUTPUT_ROOT / "dicoms"
@@ -275,7 +300,8 @@ def write_reconstruction_dicoms(results: list[dict], raw_data: DataLoader) -> tu
             slice_index=slice_idx,
             series_description="GRICS reconstruction RESEARCH ONLY",
             images_in_acquisition=len(results),
-            series_number=1,
+            series_number=series_number,
+            reference_dicom_path=reference_dicom_path,
             **dicom_uids,
         )
         result["dicom_file"] = str(dicom_path)
@@ -320,7 +346,12 @@ def main() -> None:
 
     results.sort(key=lambda item: item["slice_idx"])
     zero_filled_shape = zero_fill_reconstructed_images(results, LOADED_DATA)
-    dicom_dir, dicom_uids = write_reconstruction_dicoms(results, LOADED_DATA)
+    dicom_dir, dicom_uids = write_reconstruction_dicoms(
+        results,
+        LOADED_DATA,
+        reference_dicom_path=args.dicom_header_dir,
+        series_number=args.dicom_series_number,
+    )
     elapsed_s = time.time() - t0
     write_manifest(
         {
@@ -330,6 +361,8 @@ def main() -> None:
             "output_root": str(OUTPUT_ROOT),
             "dicom_dir": str(dicom_dir),
             "dicom_uids": dicom_uids,
+            "dicom_header_dir": str(args.dicom_header_dir) if args.dicom_header_dir is not None else None,
+            "dicom_series_number": args.dicom_series_number,
             "zero_filled_shape": zero_filled_shape,
             "nslices": nslices,
             "selected_slices": slices,
