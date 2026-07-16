@@ -70,14 +70,14 @@ class RespiratoryDataReader:
             if sensor_type == 'BELT' :
                 if 'SAEC_RESP' in attr:
                     respiratory_data.append(value.RESP.datas.values.astype(np.float64))
-                    timestampsSAEC.append(value.RESP.timestamp.values)
+                    timestampsSAEC.append(np.asarray(value.RESP.timestamp.values).reshape(-1))
             # elif sensor_type == '1MARMOT' or 'ALL_MARMOTs': # KISA !!!
             else:
                 if 'MARMOT' in attr:
                     try:
                         if value.ACC.datas.values.astype(np.float64).size != 0:
                             respiratory_data.append(value.ACC.datas.values.astype(np.float64))
-                            timestampsSAEC.append(value.ACC.timestamp.values)
+                            timestampsSAEC.append(np.asarray(value.ACC.timestamp.values).reshape(-1))
                     except:
                         print("Accelerometer data was not found for a MARMOT")
 
