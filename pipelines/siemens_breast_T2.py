@@ -23,6 +23,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 
+# Pipeline-level settings. Reconstruction parameters live in the TOML file below.
 OUTPUT_ROOT = Path("runs/siemens_breast_T2")
 RECONSTRUCTION_CONFIG = "config/reconstruction/nonrigid_2d_breast.toml"
 RUNTIME_DEVICE = "cpu"
@@ -33,6 +34,8 @@ JUPYTER_NOTEBOOK_FLAG = False
 DEBUG_FLAG = False
 
 
+# Each process reconstructs one slice, so numerical libraries must not create
+# additional thread pools inside every worker.
 _THREAD_ENV = {
     "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1",
@@ -66,6 +69,8 @@ from src.utils.plotting import show_and_save_image
 from src.utils.zero_fill import zero_fill_grics_image_to_shape
 
 
+# With the fork start method, workers inherit this read-only source dataset
+# without serializing and copying the complete acquisition for every slice.
 LOADED_DATA = None
 
 
@@ -135,6 +140,7 @@ def output_overrides(folder: Path) -> dict:
 
 
 def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
+    """Load the acquisition once, without running the per-slice preprocessing."""
     require_existing_file(raw_data_file, "raw_data_file")
     require_existing_file(saec_file, "saec_file")
     data_type = data_type_from_raw_data_file(raw_data_file)
@@ -156,6 +162,7 @@ def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
 
 
 def selected_slices(nslices: int) -> list[int]:
+    """Resolve and validate the configured half-open slice range."""
     start = RECONSTRUCT_SLICE_START
     stop = RECONSTRUCT_SLICE_STOP if RECONSTRUCT_SLICE_STOP is not None else nslices
     if start < 0 or stop < start or stop > nslices:
@@ -220,6 +227,7 @@ def normalize_reconstruction_by_grics_reference(
 
 
 def reconstruct_slice(slice_idx: int) -> dict:
+    """Preprocess and reconstruct one slice inside a worker process."""
     if LOADED_DATA is None:
         raise RuntimeError("LOADED_DATA is not initialized in the worker process.")
 
@@ -229,6 +237,7 @@ def reconstruct_slice(slice_idx: int) -> dict:
     slice_output_dir = OUTPUT_ROOT / "reconstructions" / f"slice{slice_idx + 1:03d}"
     slice_output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Isolate mutable slice state while retaining the large inherited source tensors.
     data = copy.copy(LOADED_DATA)
     data.params = copy.copy(LOADED_DATA.params)
     set_worker_output_folders(data, slice_output_dir)
@@ -280,6 +289,7 @@ def reconstruct_slice(slice_idx: int) -> dict:
 
 
 def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Read encoded and reconstruction matrix sizes from the ISMRMRD header."""
     ismrmrd_file = getattr(raw_data, "source_ismrmrd_file", None)
     if not ismrmrd_file:
         raise ValueError("Cannot determine GRICS zero-fill sizes: raw_data.source_ismrmrd_file is not set.")
@@ -322,6 +332,7 @@ def zero_fill_loaded_reconstruction(
 
 
 def zero_fill_reconstructed_images(results: list[dict], raw_data: DataLoader) -> tuple[int, int]:
+    """Zero-fill every reconstruction to the scanner reconstruction matrix."""
     target_shape, encoded_shape = grics_zero_fill_shapes(raw_data)
     print(
         f"[zero-fill] Loading GRICS images, padding to encoded matrix {encoded_shape}, "
@@ -346,6 +357,7 @@ def write_reconstruction_dicoms(
     reference_dicom_path: Path | None,
     series_number: int,
 ) -> tuple[Path, dict[str, str]]:
+    """Export all reconstructed slices as one DICOM series."""
     from pydicom.uid import generate_uid
 
     dicom_dir = OUTPUT_ROOT / "dicoms"
@@ -379,69 +391,121 @@ def write_reconstruction_dicoms(
 
 
 def write_manifest(manifest: dict) -> None:
+    """Persist the inputs, settings, outputs, and timing of this pipeline run."""
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     with (OUTPUT_ROOT / "run_manifest.json").open("w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
 
 
-def main() -> None:
+def initialize_source_data(args: argparse.Namespace) -> DataLoader:
+    """Load source data and expose it to forked reconstruction workers."""
     global LOADED_DATA
 
-    args = parse_args()
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-
     print(f"[load pid={os.getpid()}] Loading all slices with DataLoader...")
     LOADED_DATA = load_all_slices(args.raw_data_file, args.saec_file)
-    nslices = int(LOADED_DATA.Nz)
     print(
         f"[load pid={os.getpid()}] Source data loaded once: "
-        f"kspace_shape={tuple(LOADED_DATA._source_kspace.shape)}, nslices={nslices}"
+        f"kspace_shape={tuple(LOADED_DATA._source_kspace.shape)}, "
+        f"nslices={int(LOADED_DATA.Nz)}"
     )
-    slices = selected_slices(nslices)
-    max_workers = MAX_WORKERS or min(len(slices), os.cpu_count() or 1)
-    max_workers = min(max_workers, len(slices))
+    return LOADED_DATA
 
-    print(f"[run pid={os.getpid()}] Reconstructing {len(slices)} slices with {max_workers} forked workers.")
+
+def reconstruct_slices_in_parallel(slice_indices: list[int]) -> tuple[list[dict], int]:
+    """Reconstruct the selected slices in separate forked processes."""
+    if not slice_indices:
+        raise ValueError("At least one slice must be selected for reconstruction.")
+
+    max_workers = MAX_WORKERS or min(len(slice_indices), os.cpu_count() or 1)
+    max_workers = min(max_workers, len(slice_indices))
+    print(
+        f"[run pid={os.getpid()}] Reconstructing {len(slice_indices)} slices "
+        f"with {max_workers} forked workers."
+    )
+
     results = []
-    t0 = time.time()
-
     context = mp.get_context("fork")
     with ProcessPoolExecutor(max_workers=max_workers, mp_context=context) as executor:
-        futures = [executor.submit(reconstruct_slice, slice_idx) for slice_idx in slices]
+        futures = [executor.submit(reconstruct_slice, slice_idx) for slice_idx in slice_indices]
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
             print(f"[run] slice {result['slice_number']:03d} finished in {result['elapsed_s']:.2f} s")
 
     results.sort(key=lambda item: item["slice_idx"])
-    zero_filled_shape = zero_fill_reconstructed_images(results, LOADED_DATA)
+    return results, max_workers
+
+
+def build_manifest(
+    args: argparse.Namespace,
+    raw_data: DataLoader,
+    slice_indices: list[int],
+    results: list[dict],
+    max_workers: int,
+    zero_filled_shape: tuple[int, int],
+    dicom_dir: Path,
+    dicom_uids: dict[str, str],
+    elapsed_s: float,
+) -> dict:
+    """Collect run provenance in a JSON-serializable dictionary."""
+    return {
+        "raw_data_file": str(args.raw_data_file),
+        "saec_file": str(args.saec_file),
+        "reconstruction_config": RECONSTRUCTION_CONFIG,
+        "output_root": str(OUTPUT_ROOT),
+        "dicom_dir": str(dicom_dir),
+        "dicom_uids": dicom_uids,
+        "dicom_header_dir": (
+            str(args.dicom_header_dir) if args.dicom_header_dir is not None else None
+        ),
+        "dicom_series_number": args.dicom_series_number,
+        "zero_filled_shape": zero_filled_shape,
+        "nslices": int(raw_data.Nz),
+        "selected_slices": slice_indices,
+        "max_workers": max_workers,
+        "runtime_device": RUNTIME_DEVICE,
+        "normalize_by_reference": raw_data.params.normalize_by_reference,
+        "elapsed_s": elapsed_s,
+        "slice_results": results,
+    }
+
+
+def main() -> None:
+    """Run the Siemens breast T2 reconstruction and export pipeline."""
+    args = parse_args()
+    run_started_at = time.time()
+
+    # 1. Load the complete acquisition once for all forked slice workers.
+    raw_data = initialize_source_data(args)
+    slice_indices = selected_slices(int(raw_data.Nz))
+
+    # 2. Preprocess and reconstruct the selected slices in parallel.
+    results, max_workers = reconstruct_slices_in_parallel(slice_indices)
+
+    # 3. Match the scanner matrix and export a single DICOM series.
+    zero_filled_shape = zero_fill_reconstructed_images(results, raw_data)
     dicom_dir, dicom_uids = write_reconstruction_dicoms(
         results,
-        LOADED_DATA,
+        raw_data,
         reference_dicom_path=args.dicom_header_dir,
         series_number=args.dicom_series_number,
     )
-    elapsed_s = time.time() - t0
-    write_manifest(
-        {
-            "raw_data_file": str(args.raw_data_file),
-            "saec_file": str(args.saec_file),
-            "reconstruction_config": RECONSTRUCTION_CONFIG,
-            "output_root": str(OUTPUT_ROOT),
-            "dicom_dir": str(dicom_dir),
-            "dicom_uids": dicom_uids,
-            "dicom_header_dir": str(args.dicom_header_dir) if args.dicom_header_dir is not None else None,
-            "dicom_series_number": args.dicom_series_number,
-            "zero_filled_shape": zero_filled_shape,
-            "nslices": nslices,
-            "selected_slices": slices,
-            "max_workers": max_workers,
-            "runtime_device": RUNTIME_DEVICE,
-            "normalize_by_reference": LOADED_DATA.params.normalize_by_reference,
-            "elapsed_s": elapsed_s,
-            "slice_results": results,
-        }
+
+    # 4. Save complete run provenance after all outputs have been produced.
+    elapsed_s = time.time() - run_started_at
+    manifest = build_manifest(
+        args,
+        raw_data,
+        slice_indices,
+        results,
+        max_workers,
+        zero_filled_shape,
+        dicom_dir,
+        dicom_uids,
+        elapsed_s,
     )
+    write_manifest(manifest)
     print(f"[run] Done in {elapsed_s:.2f} s. Manifest: {OUTPUT_ROOT / 'run_manifest.json'}")
 
 
