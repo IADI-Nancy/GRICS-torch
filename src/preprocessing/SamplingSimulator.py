@@ -33,6 +33,24 @@ class SamplingSimulator:
             raise ValueError("ky and kz values must have the same number of samples.")
         return torch.stack([ky_values, kz_values], dim=1)
 
+
+    @staticmethod
+    def _undersampling_mask(Ny, acceleration_factor, calibration_lines, device):
+        R = int(acceleration_factor)
+        if R == 1:
+            return torch.ones(Ny, dtype=torch.bool, device=device)
+        ncal = int(calibration_lines)
+        if ncal > Ny:
+            raise ValueError(f"calibration_lines ({ncal}) cannot exceed the number of ky lines ({Ny}).")
+        mask = torch.arange(Ny, device=device) % R == 0
+        start = (Ny - ncal) // 2
+        mask[start:start + ncal] = True
+        return mask
+
+    def _apply_undersampling(self, ky_values):
+        mask = self._undersampling_mask(self.Ny, self.params.acceleration_factor, getattr(self.params, "calibration_lines", None), ky_values.device)
+        return ky_values[mask[ky_values.to(torch.int64)]]
+
     @staticmethod
     def _build_ordered_ky_values(
         nex,
@@ -128,6 +146,8 @@ class SamplingSimulator:
                     torch.arange(self.Ny, device=self.t_device, dtype=torch.int64),
                     torch.arange(Nz, device=self.t_device, dtype=torch.int64),
                 )
+                keep = self._undersampling_mask(self.Ny, self.params.acceleration_factor, getattr(self.params, "calibration_lines", None), self.t_device)[all_pairs[:, 0]]
+                all_pairs = all_pairs[keep]
                 perm = torch.randperm(all_pairs.shape[0], device=self.t_device, dtype=torch.int64)
                 all_pairs = all_pairs[perm]
                 split_sizes = [
@@ -139,8 +159,10 @@ class SamplingSimulator:
                 ky_all = self._build_ordered_ky_values(
                     nex, Nshots, self.Ny, self.t_device, self.params.kspace_sampling_type,
                 ).to(torch.int32)
+                ky_all = self._apply_undersampling(ky_all)
+                n_acquired_ky = int(ky_all.numel())
                 split_sizes = [
-                    (self.Ny // Nshots) + (1 if s < self.Ny % Nshots else 0)
+                    (n_acquired_ky // Nshots) + (1 if s < n_acquired_ky % Nshots else 0)
                     for s in range(Nshots)
                 ]
                 start = 0
@@ -155,6 +177,8 @@ class SamplingSimulator:
                         phase_encode_pairs = self._build_ordered_ky_kz_pairs(
                             nex, shot, Nshots, self.Ny, Nz, self.t_device, self.params.kspace_sampling_type,
                         )
+                        keep = self._undersampling_mask(self.Ny, self.params.acceleration_factor, getattr(self.params, "calibration_lines", None), phase_encode_pairs.device)[phase_encode_pairs[:, 0]]
+                        phase_encode_pairs = phase_encode_pairs[keep]
                     ky_block = phase_encode_pairs[:, 0].to(torch.int32)
                     kz_block = phase_encode_pairs[:, 1].to(torch.int32)
 

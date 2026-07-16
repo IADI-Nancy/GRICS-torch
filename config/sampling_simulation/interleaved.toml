@@ -5,3 +5,5 @@ kspace_sampling_type = "interleaved"
 NshotsPerNex = 8
 # Number of averages/repetitions acquired.
 Nex = 1
+acceleration_factor = 1
+calibration_lines = 24

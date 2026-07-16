@@ -211,6 +211,8 @@ _SAMPLING_KEYS = {
     "NshotsPerNex",
     "Nex",
     "Nshots",
+    "acceleration_factor",
+    "calibration_lines",
 }
 _MOTION_KEYS = {
     "reconstruction_motion_type",
@@ -362,6 +364,8 @@ class SamplingConfig:
     NshotsPerNex: int | None = None
     Nex: int | None = None
     Nshots: int | None = None
+    acceleration_factor: int | None = None
+    calibration_lines: int | None = None
 
     def to_flat_dict(self):
         out = {}
@@ -687,6 +691,19 @@ def _normalize_runtime_config(runtime, data_type):
 
 
 def _normalize_sampling_config(sampling, data_type):
+    if sampling.acceleration_factor is None:
+        if sampling.kspace_sampling_type == "from-data" or data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
+            sampling.acceleration_factor = 1
+        else:
+            raise ValueError("acceleration_factor is required in the sampling configuration.")
+    sampling.acceleration_factor = _normalize_positive_int(sampling.acceleration_factor, "acceleration_factor")
+    if sampling.acceleration_factor > 1:
+        if sampling.calibration_lines is None:
+            raise ValueError("calibration_lines is required when acceleration_factor is greater than 1.")
+        sampling.calibration_lines = _normalize_positive_int(sampling.calibration_lines, "calibration_lines")
+    elif sampling.calibration_lines is not None:
+        sampling.calibration_lines = _normalize_positive_int(sampling.calibration_lines, "calibration_lines")
+
     if sampling.kspace_sampling_type is None:
         if data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
             sampling.kspace_sampling_type = "from-data"
