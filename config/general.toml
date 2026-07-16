@@ -50,4 +50,4 @@ coil_sensitivity_eps = 1.0e-8
 
 [raw_data]
 # Physiological sensor channel to read from the SAEC file.
-rawdata_sensor_type = "ALL_MARMOTS"
+rawdata_sensor_type = "1MARMOT"

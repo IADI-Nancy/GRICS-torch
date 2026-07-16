@@ -87,6 +87,7 @@ class DataLoader:
         self._motion_plot_y_limits = None
         self.kz_idx_chronological = None
         self.reference_kspace = None
+        self.grics_reference_image = None
         self.kspace_scale = 1.0
         self._source_data_loaded = False
         self._slice_pipeline_has_run = False
@@ -206,9 +207,11 @@ class DataLoader:
             f"(method={method})",
             flush=True,
         )
-        self.smaps = CoilSensitivityCalculator(self.params, sp_device=self.sp_device).calculate(
+        calculator = CoilSensitivityCalculator(self.params, sp_device=self.sp_device)
+        self.smaps = calculator.calculate(
             self.kspace, reference_kspace=self.reference_kspace,
         )
+        self.grics_reference_image = getattr(calculator, "grics_reference_image", None)
         img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
         self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
         del img_cplx

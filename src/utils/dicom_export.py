@@ -44,9 +44,9 @@ def write_reconstruction_dicom(
     header = _read_ismrmrd_header(_resolve_ismrmrd_file(raw_data, ismrmrd_file))
     geometry = _require_slice_geometry(raw_data, slice_index)
     pixels_float = _prepare_single_frame_image(image, geometry=geometry)
-    pixel_array, rescale_slope = _scale_to_uint16(pixels_float)
-
     reference_dicom = _find_reference_dicom(reference_dicom_path, geometry, slice_index)
+    pixel_array = _scale_to_dicom_uint12(pixels_float, reference_dicom)
+
     ds = _base_dataset(output_path)
     if reference_dicom is not None:
         _copy_reference_dicom_fields(ds, reference_dicom)
@@ -65,7 +65,7 @@ def write_reconstruction_dicom(
         _copy_geometry_fields(ds, header, pixel_array.shape, slice_index, images_in_acquisition, raw_data, geometry)
     else:
         _set_reference_geometry_fields(ds, reference_dicom, pixel_array.shape, images_in_acquisition)
-    _set_pixel_fields(ds, pixel_array, rescale_slope)
+    _set_pixel_fields(ds, pixel_array, reference_dicom)
     _add_minimal_mr_fields(ds, header, only_missing=reference_dicom is not None)
 
     ds.save_as(output_path, write_like_original=False)
@@ -268,13 +268,34 @@ def _dicom_matrix_shape(header: Any) -> tuple[int, int] | None:
     return None
 
 
-def _scale_to_uint16(image: np.ndarray) -> tuple[np.ndarray, float]:
+def _scale_to_dicom_uint12(image: np.ndarray, reference_dicom: Any | None = None) -> np.ndarray:
     image = image - float(np.min(image))
     vmax = float(np.max(image))
     if vmax <= 0.0:
-        return np.zeros(image.shape, dtype=np.uint16), 1.0
-    scale = 65535.0 / vmax
-    return np.rint(image * scale).astype(np.uint16), 1.0 / scale
+        return np.zeros(image.shape, dtype=np.uint16)
+
+    target_max = _reference_pixel_ceiling(reference_dicom)
+    scale = float(target_max) / vmax
+    return np.clip(np.rint(image * scale), 0, target_max).astype(np.uint16)
+
+
+def _reference_pixel_ceiling(reference_dicom: Any | None = None) -> int:
+    hard_ceiling = 2**12 - 1
+    if reference_dicom is None:
+        return hard_ceiling
+
+    center = _first_number(getattr(reference_dicom, "WindowCenter", None))
+    width = _first_number(getattr(reference_dicom, "WindowWidth", None))
+    if center is None or width is None:
+        raise ValueError("Reference DICOM scaling requires WindowCenter and WindowWidth.")
+
+    upper_window_value = int(round(center + 0.5 * width))
+    if upper_window_value <= 0:
+        raise ValueError(
+            "Reference DICOM WindowCenter/WindowWidth imply a non-positive upper window value: "
+            f"center={center}, width={width}."
+        )
+    return max(1, min(hard_ceiling, upper_window_value))
 
 
 def _base_dataset(output_path: Path):
@@ -511,21 +532,29 @@ def _first_float(value: Any, index: int) -> float:
         raise ValueError("DICOM export requires a valid two-value PixelSpacing.") from exc
 
 
-def _set_pixel_fields(ds: Any, pixel_array: np.ndarray, rescale_slope: float) -> None:
-    window_width = int(pixel_array.max()) if int(pixel_array.max()) > 0 else 1
-    ds.WindowCenter = float(window_width) / 2.0
-    ds.WindowWidth = float(window_width)
+def _set_pixel_fields(ds: Any, pixel_array: np.ndarray, reference_dicom: Any | None = None) -> None:
     ds.SamplesPerPixel = 1
     ds.PhotometricInterpretation = "MONOCHROME2"
     ds.BitsAllocated = 16
-    ds.BitsStored = 16
-    ds.HighBit = 15
+    ds.BitsStored = 12
+    ds.HighBit = 11
     ds.PixelRepresentation = 0
     ds.SmallestImagePixelValue = int(pixel_array.min())
     ds.LargestImagePixelValue = int(pixel_array.max())
     ds.RescaleIntercept = 0
     ds.RescaleSlope = 1
     ds.RescaleType = "US"
+
+    if reference_dicom is not None:
+        if not hasattr(reference_dicom, "WindowCenter") or not hasattr(reference_dicom, "WindowWidth"):
+            raise ValueError("Reference DICOM pixel fields require WindowCenter and WindowWidth.")
+        ds.WindowCenter = deepcopy(reference_dicom.WindowCenter)
+        ds.WindowWidth = deepcopy(reference_dicom.WindowWidth)
+    else:
+        window_width = int(pixel_array.max()) if int(pixel_array.max()) > 0 else 1
+        ds.WindowCenter = float(window_width) / 2.0
+        ds.WindowWidth = float(window_width)
+
     ds.PixelData = pixel_array.astype("<u2", copy=False).tobytes()
     ds["PixelData"].VR = "OW"
 

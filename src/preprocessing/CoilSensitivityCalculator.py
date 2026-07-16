@@ -195,7 +195,7 @@ class CoilSensitivityCalculator:
         surface_abs = torch.abs(coil_images)
         reference_abs = torch.sqrt(torch.sum(surface_abs ** 2, dim=0).clamp_min(0.0))
 
-        threshold = 0.05 * torch.max(surface_abs)
+        threshold = 0.01 * torch.max(surface_abs)
         nonzero_surface_abs = torch.clamp(surface_abs, min=threshold.item())
         surface_phase = coil_images / nonzero_surface_abs
 
@@ -212,6 +212,16 @@ class CoilSensitivityCalculator:
                 lambda_magnitude,
             ).abs().permute(1, 2, 0)
 
+        reference_threshold = 0.01 * torch.max(torch.abs(reference_abs))
+        reference_abs = torch.clamp(reference_abs, min=reference_threshold.item())
+
+        reference_sum = torch.sum(torch.abs(reference_abs))
+        if float(reference_sum.real.item()) <= 0.0:
+            raise ValueError("GRICS reference image has non-positive sum; cannot normalize.")
+        self.grics_reference_image = reference_abs * (
+            float(reference_abs.numel()) / float(reference_sum.real.item())
+        )
+
         if lambda_phase > 0:
             surface_phase = self._spline_fft_solver(
                 surface_phase.permute(0, 3, 1, 2),
@@ -220,4 +230,8 @@ class CoilSensitivityCalculator:
 
         phase_factor = torch.exp(1j * torch.angle(surface_phase))
         eps = float(getattr(self.params, "coil_sensitivity_eps", 1.0e-8))
-        return surface_abs * phase_factor / reference_abs.clamp_min(eps).unsqueeze(0)
+        smaps = surface_abs * phase_factor / reference_abs.clamp_min(eps).unsqueeze(0)
+        smaps_max = torch.max(torch.abs(smaps))
+        if float(smaps_max.real.item()) <= 0.0:
+            raise ValueError("GRICS sensitivity maps have non-positive maximum; cannot normalize.")
+        return smaps / smaps_max

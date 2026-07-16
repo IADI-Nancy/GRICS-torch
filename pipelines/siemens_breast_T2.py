@@ -62,6 +62,7 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
 from src.utils.dicom_export import write_reconstruction_dicom
+from src.utils.plotting import show_and_save_image
 from src.utils.zero_fill import zero_fill_grics_image_to_shape
 
 
@@ -167,6 +168,57 @@ def set_worker_output_folders(data: DataLoader, slice_output_dir: Path) -> None:
         setattr(data.params, key, value)
 
 
+def grics_reference_image_for_normalization(data: DataLoader, image: torch.Tensor) -> torch.Tensor:
+    reference_image = getattr(data, "grics_reference_image", None)
+    if reference_image is None:
+        raise ValueError(
+            "GRICS reference normalization requires the smoothed reference image "
+            "calculated together with the coil sensitivity maps."
+        )
+    reference_image = reference_image.to(device=image.device)
+
+    if reference_image.ndim == image.ndim and image.ndim >= 3:
+        reference_image = reference_image.unsqueeze(0)
+    if reference_image.ndim == image.ndim + 1 and reference_image.shape[-1] == 1:
+        reference_image = reference_image[..., 0]
+
+    if tuple(reference_image.shape) == tuple(image.shape):
+        return reference_image
+    if reference_image.shape[0] == 1 and tuple(reference_image.shape[1:]) == tuple(image.shape[1:]):
+        return reference_image.expand(image.shape[0], *reference_image.shape[1:])
+
+    raise ValueError(
+        "GRICS reference image shape is incompatible with reconstructed image: "
+        f"reference={tuple(reference_image.shape)}, image={tuple(image.shape)}."
+    )
+
+
+def normalize_reconstruction_by_grics_reference(
+    image: torch.Tensor,
+    reference_image: torch.Tensor,
+) -> torch.Tensor:
+    if tuple(image.shape) != tuple(reference_image.shape):
+        raise ValueError(
+            "GRICS reference normalization requires matching image shapes: "
+            f"image={tuple(image.shape)}, reference={tuple(reference_image.shape)}."
+        )
+
+    reference_magnitude = torch.abs(reference_image).to(device=image.device, dtype=image.real.dtype)
+    threshold = 1.0 * torch.mean(reference_magnitude)
+    below_threshold = reference_magnitude < threshold
+    print(
+        "[normalize] reference clamp: "
+        f"min={float(torch.min(reference_magnitude).item()):.6g}, "
+        f"mean={float(torch.mean(reference_magnitude).item()):.6g}, "
+        f"max={float(torch.max(reference_magnitude).item()):.6g}, "
+        f"threshold={float(threshold.item()):.6g}, "
+        f"clamped={100.0 * float(torch.mean(below_threshold.to(torch.float64)).item()):.3f}%",
+        flush=True,
+    )
+    reference_magnitude = torch.clamp(reference_magnitude, min=threshold)
+    return image / reference_magnitude, reference_magnitude
+
+
 def reconstruct_slice(slice_idx: int) -> dict:
     if LOADED_DATA is None:
         raise RuntimeError("LOADED_DATA is not initialized in the worker process.")
@@ -197,6 +249,23 @@ def reconstruct_slice(slice_idx: int) -> dict:
 
     t0 = time.time()
     image, alpha = reconstructor.run()
+    if data.params.normalize_by_reference:
+        reference_image = grics_reference_image_for_normalization(data, image)
+        show_and_save_image(
+            reference_image[0] if reference_image.ndim == 3 and reference_image.shape[0] == 1 else reference_image,
+            "GricsReferenceImage_smoothed",
+            str(slice_output_dir),
+            flip_for_display=data.params.flip_for_display,
+        )
+        image, reference_denominator = normalize_reconstruction_by_grics_reference(image, reference_image)
+        show_and_save_image(
+            reference_denominator[0] if reference_denominator.ndim == 3 and reference_denominator.shape[0] == 1 else reference_denominator,
+            "GricsReferenceImage_denominator",
+            str(slice_output_dir),
+            flip_for_display=data.params.flip_for_display,
+        )
+        torch.save(reference_image, slice_output_dir / "GricsReferenceImage_smoothed.pt")
+        torch.save(reference_denominator, slice_output_dir / "GricsReferenceImage_denominator.pt")
     elapsed_s = time.time() - t0
 
     torch.save(image, slice_output_dir / "GricsRecon.pt")
@@ -368,6 +437,7 @@ def main() -> None:
             "selected_slices": slices,
             "max_workers": max_workers,
             "runtime_device": RUNTIME_DEVICE,
+            "normalize_by_reference": LOADED_DATA.params.normalize_by_reference,
             "elapsed_s": elapsed_s,
             "slice_results": results,
         }

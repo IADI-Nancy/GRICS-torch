@@ -13,6 +13,9 @@ ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
 # Number of GN iterations for each resolution level.
 GN_iterations_per_level = [4, 4, 4, 1]
 
+# Normalize the reconstructed image by the GRICS reference-image magnitude.
+normalize_by_reference = false
+
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
 # Iteration interval for recomputing the true residual in CG.
