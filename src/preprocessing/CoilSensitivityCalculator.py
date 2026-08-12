@@ -185,17 +185,20 @@ class CoilSensitivityCalculator:
         return smoothed
 
     def calculate_iadi_spline(self, kspace, reference_kspace=None):
-        kspace_calib = self._calibration_kspace(
-            kspace,
-            reference_kspace=reference_kspace,
-            use_central_lines=True,
-        )
-        coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1)).to(torch.complex128)
+        # Match GRICS++ AutoCalibrationSensitivityReader: the classic GRICS
+        # input contains the imaging KspaceData, not the separate ISMRMRD
+        # reference buffer.  For these fully sampled TSE acquisitions the full
+        # averaged imaging k-space is used to form the autocalibration images.
+        del reference_kspace
+        kspace_calib = self._average_repetitions(kspace).to(torch.complex64)
+        coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
 
         surface_abs = torch.abs(coil_images)
         reference_abs = torch.sqrt(torch.sum(surface_abs ** 2, dim=0).clamp_min(0.0))
 
-        threshold = 0.01 * torch.max(surface_abs)
+        # Match GRICS++ SensitivityMapCalculator::create_SensitivityMaps:
+        # stabilize the phase proxy at 5% of the global surface-coil maximum.
+        threshold = 0.05 * torch.max(surface_abs)
         nonzero_surface_abs = torch.clamp(surface_abs, min=threshold.item())
         surface_phase = coil_images / nonzero_surface_abs
 
@@ -212,9 +215,6 @@ class CoilSensitivityCalculator:
                 lambda_magnitude,
             ).abs().permute(1, 2, 0)
 
-        reference_threshold = 0.01 * torch.max(torch.abs(reference_abs))
-        reference_abs = torch.clamp(reference_abs, min=reference_threshold.item())
-
         reference_sum = torch.sum(torch.abs(reference_abs))
         if float(reference_sum.real.item()) <= 0.0:
             raise ValueError("GRICS reference image has non-positive sum; cannot normalize.")
@@ -230,8 +230,15 @@ class CoilSensitivityCalculator:
 
         phase_factor = torch.exp(1j * torch.angle(surface_phase))
         eps = float(getattr(self.params, "coil_sensitivity_eps", 1.0e-8))
-        smaps = surface_abs * phase_factor / reference_abs.clamp_min(eps).unsqueeze(0)
+        # C++ divides by the smoothed reference directly.  Only guard exact
+        # numerical zeros; do not impose an additional relative intensity floor.
+        reference_denominator = torch.where(
+            reference_abs > 0,
+            reference_abs,
+            torch.full_like(reference_abs, eps),
+        )
+        smaps = surface_abs * phase_factor / reference_denominator.unsqueeze(0)
         smaps_max = torch.max(torch.abs(smaps))
         if float(smaps_max.real.item()) <= 0.0:
             raise ValueError("GRICS sensitivity maps have non-positive maximum; cannot normalize.")
-        return smaps / smaps_max
+        return (smaps / smaps_max).to(torch.complex128)
