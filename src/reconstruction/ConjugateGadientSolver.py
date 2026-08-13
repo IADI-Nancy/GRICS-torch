@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import torch
 
 """
@@ -180,7 +182,7 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=20, tol=1e-3):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False):
         """
         Solve _A(x) = b using Conjugate Gradient.
 
@@ -189,8 +191,11 @@ class ConjugateGradientSolver:
             x0       : initial guess
             max_iter : max iterations
             tol      : tolerance
+            differentiable : preserve autograd through CG when True. The default
+                             False retains the validated inference behavior.
         """
-        with torch.no_grad():
+        context = nullcontext() if differentiable else torch.no_grad()
+        with context:
             b = b.to(self.device)
             n = b.numel()
 

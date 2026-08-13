@@ -27,7 +27,7 @@ from src.utils.joint_reconstructor_utils import (
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None):
+    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None, initial_image=None, initial_motion=None):
         Ncoils, Nx_full, Ny_full, Nz_full = smaps.shape
 
         # Parameters constant for all resolutions        
@@ -50,6 +50,8 @@ class JointReconstructor:
             )
         self.Nphysio = int(self.motion_signal.shape[1])
         self.motion_plot_context = motion_plot_context or {}
+        self.initial_image = initial_image
+        self.initial_motion = initial_motion
         self._last_image_cg_info = None
         self._last_motion_cg_info = None
         self._current_level_idx = 0
@@ -66,6 +68,28 @@ class JointReconstructor:
             for ms in range(len(SamplingIndices[0]))
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
+        self._initialize_motion_state_schedule()
+
+    def _initialize_motion_state_schedule(self):
+        full_states = int(self.params.N_motion_states)
+        schedule = getattr(self.params, "N_motion_states_per_level", None)
+        if schedule is None:
+            schedule = [full_states] * len(self.params.ResolutionLevels)
+        self.motion_states_per_level = [int(value) for value in schedule]
+        if len(self.motion_states_per_level) != len(self.params.ResolutionLevels):
+            raise ValueError(
+                "N_motion_states_per_level must have one entry per ResolutionLevels entry."
+            )
+        if any(value < 1 or value > full_states for value in self.motion_states_per_level):
+            raise ValueError(
+                f"N_motion_states_per_level values must be between 1 and {full_states}."
+            )
+        if int(self.motion_signal.shape[0]) != full_states:
+            raise ValueError(f"motion_signal has {self.motion_signal.shape[0]} states; expected {full_states}.")
+        if self.params.reconstruction_motion_type == "rigid" and any(
+            value != full_states for value in self.motion_states_per_level
+        ):
+            raise ValueError("Per-level motion-state reduction is supported only for non-rigid reconstruction.")
 
     def _resize_img_xy(self, img, new_size):
         is_complex = img.is_complex()
@@ -209,6 +233,84 @@ class JointReconstructor:
 
         return kspace_res   
 
+    def _reduce_motion_states(self, sampling_indices, target_states, kspace=None):
+        full_states = int(self.motion_signal.shape[0])
+        if target_states == full_states:
+            return sampling_indices, self.motion_signal
+
+        weights = torch.tensor(
+            [sum(sampling_indices[nex][state].numel() for nex in range(self.params.Nex))
+             for state in range(full_states)],
+            dtype=self.motion_signal.dtype, device=self.device,
+        )
+
+        binning_mode = str(
+            getattr(self.params, "motion_binning_mode", "kmeans")
+        ).strip().lower()
+        if binning_mode == "kspace_energy":
+            if kspace is None:
+                raise ValueError(
+                    "Resolution-specific k-space is required for kspace_energy reduction."
+                )
+            # Recompute state energy after the resolution crop, exactly where
+            # GRICS++ selects its resolution-specific virtual times.
+            weights.zero_()
+            for nex in range(self.params.Nex):
+                for state in range(full_states):
+                    indices = sampling_indices[nex][state].long()
+                    if indices.numel() > 0:
+                        weights[state] += kspace[:, nex, indices].abs().square().sum()
+            # GRICS++ keeps the highest-energy states at each resolution and
+            # attaches every remaining state to its nearest retained state.
+            selected = torch.argsort(weights, descending=True, stable=True)[:target_states]
+            centers = self.motion_signal[selected].clone()
+            labels = torch.cdist(self.motion_signal, centers).argmin(dim=1)
+        else:
+            # Preserve the original deterministic weighted K-means reduction.
+            selected = [int(torch.argmax(weights).item())]
+            min_distance = torch.cdist(
+                self.motion_signal, self.motion_signal[selected]
+            ).squeeze(1)
+            while len(selected) < target_states:
+                next_idx = int(torch.argmax(min_distance).item())
+                selected.append(next_idx)
+                distance = torch.cdist(
+                    self.motion_signal, self.motion_signal[[next_idx]]
+                ).squeeze(1)
+                min_distance = torch.minimum(min_distance, distance)
+
+            centers = self.motion_signal[selected].clone()
+            for _ in range(20):
+                distances = torch.cdist(self.motion_signal, centers)
+                labels = distances.argmin(dim=1)
+                updated = []
+                for cluster in range(target_states):
+                    mask = labels == cluster
+                    if not mask.any():
+                        updated.append(centers[cluster])
+                        continue
+                    cluster_weights = weights[mask]
+                    denominator = torch.clamp(cluster_weights.sum(), min=1.0)
+                    updated.append(
+                        (self.motion_signal[mask] * cluster_weights[:, None]).sum(dim=0)
+                        / denominator
+                    )
+                new_centers = torch.stack(updated)
+                if torch.allclose(new_centers, centers):
+                    centers = new_centers
+                    break
+                centers = new_centers
+
+        reduced = []
+        for nex in range(self.params.Nex):
+            nex_bins = []
+            for cluster in range(target_states):
+                members = torch.nonzero(labels == cluster, as_tuple=False).reshape(-1).tolist()
+                pieces = [sampling_indices[nex][state] for state in members]
+                nex_bins.append(torch.cat(pieces) if pieces else torch.empty(0, dtype=torch.long, device=self.device))
+            reduced.append(nex_bins)
+        return reduced, centers
+
     def _downsample_data(self, res_factor):    
         Nx = int(round(self.Data_full["Nx"] * res_factor))
         Ny = int(round(self.Data_full["Ny"] * res_factor))
@@ -223,8 +325,14 @@ class JointReconstructor:
 
         resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
         Data_res["SensitivityMaps"] = self._resize_img_xy(self.Data_full["SensitivityMaps"], resize_shape)
-        Data_res["SamplingIndices"] = self._downsample_sampling_indices(self.Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz)
+        sampling_indices = self._downsample_sampling_indices(
+            self.Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
+        )
         Data_res["KspaceData"] = self._downsample_kspace(Nx, Ny, Nz_res=Nz)
+        target_states = self.motion_states_per_level[self._current_level_idx]
+        Data_res["SamplingIndices"], Data_res["MotionSignal"] = self._reduce_motion_states(
+            sampling_indices, target_states, kspace=Data_res["KspaceData"]
+        )
         Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
         return Data_res
@@ -270,7 +378,7 @@ class JointReconstructor:
                 Nx, Ny, alpha, self.params.reconstruction_motion_type, Nz=Data_res.get("Nz", 1)
             )
         else:
-            motion_signal = self.motion_signal
+            motion_signal = Data_res["MotionSignal"]
             motionOperator = MotionOperator(
                 Nx, Ny, alpha, self.params.reconstruction_motion_type,
                 motion_signal=motion_signal.to(dtype=alpha.dtype), Nz=Data_res.get("Nz", 1)
@@ -399,7 +507,34 @@ class JointReconstructor:
                     )
                 else:
                     Data_res["MotionModel"] = torch.zeros((self.Nalpha, Data_res["Nx"], Data_res["Ny"], self.Nphysio), device=self.device)
+            self._apply_external_initializer(Data_res)
         return Data_res
+
+    def _apply_external_initializer(self, data):
+        """Initialize the coarsest level from optional full-resolution estimates."""
+        spatial = ((data["Nx"], data["Ny"], data["Nz"]) if int(data.get("Nz", 1)) > 1 else (data["Nx"], data["Ny"]))
+        if self.initial_image is not None:
+            image = torch.as_tensor(self.initial_image, device=self.device)
+            if image.ndim == len(spatial):
+                image = image.unsqueeze(0)
+            if image.shape[0] == 1 and self.params.Nex > 1:
+                image = image.expand(self.params.Nex, *image.shape[1:])
+            if image.ndim != len(spatial) + 1 or image.shape[0] != self.params.Nex:
+                raise ValueError(f"Invalid initial_image shape {tuple(image.shape)}.")
+            data["ReconstructedImage"] = self._resize_img_xy(image.to(torch.complex128), spatial)
+        if self.initial_motion is not None:
+            motion = torch.as_tensor(self.initial_motion, device=self.device, dtype=torch.float64)
+            if self.params.reconstruction_motion_type == "non-rigid":
+                if motion.ndim == len(spatial) + 1:
+                    motion = motion.unsqueeze(-1)
+                if motion.shape[0] != self.Nalpha or motion.shape[-1] != self.Nphysio:
+                    raise ValueError(f"Invalid initial_motion shape {tuple(motion.shape)}; expected Nalpha={self.Nalpha}, Nsensor={self.Nphysio}.")
+                data["MotionModel"] = self._resize_img_xy(motion, spatial)
+            else:
+                expected = (self.Nalpha, self.params.N_motion_states)
+                if tuple(motion.shape) != expected:
+                    raise ValueError(f"Rigid initial_motion must have shape {expected}.")
+                data["MotionModel"] = motion
 
     @staticmethod
     def _strip_level_runtime_state(data):
@@ -451,7 +586,7 @@ class JointReconstructor:
                 run_log,
                 (
                     f"Resolution level {idx_res} ({Data_res['Nx']}x{Data_res['Ny']}x{Data_res.get('Nz', 1)}, "
-                    f"{Data_res['Ny']} views, {self.params.N_motion_states} virtual times)\n"
+                    f"{Data_res['Ny']} views, {len(Data_res['SamplingIndices'][0])} virtual times)\n"
                     f"    lambda_r : {self._lambda_r_for_level():.6e}\n"
                     f"    Resolution level initializations : {level_init_time:.6f} s\n"
                 ),
