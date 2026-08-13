@@ -1,16 +1,27 @@
 [reconstruction]
-# Reconstruction data dimensionality tag for compatibility checks.
+# Data dimensionality. Allowed values: "2D" or "3D"; it must match the input data.
 reconstruction_dimension = "2D"
-# Motion model used by reconstruction ("rigid" or "non-rigid").
+# Motion model. Allowed values: "rigid" or "non-rigid".
 motion_type = "non-rigid"
-# Manual number of motion states used for reconstruction.
-# This value is selected only if manual mode is selected (i.e., no motion simulation override).
+# Number of motion states. Must be a positive integer and cannot exceed the
+# number of available physiological samples.
 N_motion_states = 16
-# Apply extra scaling to motion updates during GN iterations.
+# Motion-state construction method. Allowed values: "kmeans" or "kspace_energy".
+motion_binning_mode = "kspace_energy"
+# Number of uniform quantization levels per physiological channel when
+# motion_binning_mode = "kspace_energy". Must be an integer greater than or equal to 2.
+motion_quantization_bins = 256
+# Number of motion states at each resolution level, ordered from coarse to fine.
+# The list length must match ResolutionLevels. Each value must be between 1 and
+# N_motion_states. State reduction is supported only for non-rigid reconstruction.
+N_motion_states_per_level = [4, 8, 16, 16]
+# Whether to scale motion updates during Gauss-Newton iterations.
 use_scaled_motion_update = false
-# Multi-resolution scale factors (relative to full resolution).
+# Spatial scale at each reconstruction level, relative to full resolution.
+# Values must be positive; 1.0 represents full resolution.
 ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
-# Number of GN iterations for each resolution level.
+# Gauss-Newton iterations per resolution level. The list length must match
+# ResolutionLevels and each value must be a positive integer.
 GN_iterations_per_level = [4, 4, 4, 1]
 
 # Normalize the reconstructed image by the GRICS reference-image magnitude.
@@ -18,26 +29,26 @@ normalize_by_reference = false
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
-# Iteration interval for recomputing the true residual in CG.
+# Iteration interval for recomputing the true residual in CG. Must be positive.
 cg_true_residual_interval = 10
-# Allowed consecutive stagnating CG steps.
+# Number of consecutive stagnating CG steps allowed before stopping. Must be non-negative.
 cg_max_stag_steps = 6
-# Extra CG steps after the first stopping criterion is met.
+# Extra CG steps after the first stopping criterion is met. Must be non-negative.
 cg_max_more_steps = 0
 # Estimate regularization scaling internally from probes.
 cg_use_reg_scale_proxy = false
-# Number of probes for regularization scaling estimate.
+# Number of probes for the regularization scaling estimate. Must be positive.
 cg_reg_scale_num_probes = 8
-# Image reconstruction regularization weight.
+# Image reconstruction regularization weight. Must be non-negative.
 lambda_r = 5.0e-2
-# Maximum CG/GN inner iterations for image update.
+# Maximum CG iterations for each image update. Must be a positive integer.
 max_iter_recon = 50
-# Convergence tolerance for image update.
+# Relative convergence tolerance for image updates. Must be positive.
 tol_recon = 1.0e-3
 
-# Motion reconstruction regularization weight.
+# Motion reconstruction regularization weight. Must be non-negative.
 lambda_m = 10.0
-# Maximum CG/GN inner iterations for motion update.
+# Maximum CG iterations for each motion update. Must be a positive integer.
 max_iter_motion = 10
-# Convergence tolerance for motion update.
+# Relative convergence tolerance for motion updates. Must be positive.
 tol_motion = 1.0e-2

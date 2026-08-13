@@ -20,3 +20,4 @@ data/*
 !data/demo_motion-free_breast_image.png
 demos_data/*.h5
 runs/
+*.orig
