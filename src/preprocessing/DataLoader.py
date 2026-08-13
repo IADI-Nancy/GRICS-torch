@@ -398,6 +398,7 @@ class DataLoader:
                 self.params,
                 y_limits=self._motion_plot_y_limits,
                 return_debug_data=True,
+                kspace=self.kspace,
                 **self._motion_plot_kwargs,
             )
         else:

@@ -940,6 +940,17 @@ def _normalize_reconstruction_config(reconstruction, motion, sampling):
     else:
         reconstruction.N_motion_states = manual_states
 
+    mode = str(reconstruction.options.get("motion_binning_mode", "kmeans")).strip().lower()
+    if mode not in {"kmeans", "kspace_energy"}:
+        raise ValueError(
+            "motion_binning_mode must be 'kmeans' or 'kspace_energy'."
+        )
+    reconstruction.options["motion_binning_mode"] = mode
+    quantization_bins = int(reconstruction.options.get("motion_quantization_bins", 256))
+    if quantization_bins < 2:
+        raise ValueError("motion_quantization_bins must be at least 2.")
+    reconstruction.options["motion_quantization_bins"] = quantization_bins
+
 
 def _ensure_output_folders(paths):
     for folder in (
