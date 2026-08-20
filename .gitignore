@@ -21,3 +21,4 @@ data/*
 demos_data/*.h5
 runs/
 *.orig
+article/

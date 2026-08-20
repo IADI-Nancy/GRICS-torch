@@ -11,11 +11,14 @@ import sigpy as sp
 
 
 _GUARDS_INSTALLED = False
+_GPU_RUNTIME_ACTIVE = False
 
 
 def cleanup_runtime():
-    """Best-effort cleanup to release Python/CUDA memory between runs."""
+    """Best-effort cleanup without initializing GPU libraries for CPU runs."""
     gc.collect()
+    if not _GPU_RUNTIME_ACTIVE:
+        return
 
     try:
         import cupy as cp
@@ -25,7 +28,9 @@ def cleanup_runtime():
     except Exception:
         pass
 
-    if torch.cuda.is_available():
+    # is_initialized() is a local state check; unlike is_available(), it does
+    # not initialize the CUDA driver during cleanup.
+    if torch.cuda.is_initialized():
         try:
             torch.cuda.synchronize()
         except Exception:
@@ -77,6 +82,7 @@ def _install_runtime_safety_guards():
 
 
 def initialize_runtime(params, print_gpu_info=False):
+    global _GPU_RUNTIME_ACTIVE
     _install_runtime_safety_guards()
     if params.clean_output_folders_before_run:
         _clean_run_output_folders(params)
@@ -86,9 +92,11 @@ def initialize_runtime(params, print_gpu_info=False):
         raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
 
     cupy_ok = False
-    torch_cuda_ok = torch.cuda.is_available()
-
+    # CPU runs must not probe CUDA: is_available() initializes the NVIDIA
+    # driver and can deadlock when many CPU reconstruction workers start.
+    torch_cuda_ok = False
     if runtime_device == "gpu":
+        torch_cuda_ok = torch.cuda.is_available()
         try:
             import cupy as cp
 
@@ -104,6 +112,7 @@ def initialize_runtime(params, print_gpu_info=False):
             runtime_device = "cpu"
 
     use_gpu = runtime_device == "gpu"
+    _GPU_RUNTIME_ACTIVE = _GPU_RUNTIME_ACTIVE or use_gpu
     # SigPy/CuPy can stay on CPU even when Torch runs on CUDA.
     if use_gpu and cupy_ok:
         sp_device = sp.Device(0)
@@ -118,7 +127,7 @@ def initialize_runtime(params, print_gpu_info=False):
     t_device = torch.device("cuda:0" if use_gpu else "cpu")
     params.runtime_device = runtime_device
 
-    if use_gpu and torch.cuda.is_available():
+    if use_gpu and torch_cuda_ok:
         torch.cuda.empty_cache()
         if print_gpu_info:
             total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
@@ -126,13 +135,13 @@ def initialize_runtime(params, print_gpu_info=False):
 
     if hasattr(params, "seed") and params.seed is not None:
         torch.manual_seed(params.seed)
-        if use_gpu and torch.cuda.is_available():
+        if use_gpu and torch_cuda_ok:
             torch.cuda.manual_seed(params.seed)
             torch.cuda.manual_seed_all(params.seed)
 
     if params.debug_flag:
         torch.use_deterministic_algorithms(True, warn_only=True)
-        if use_gpu and torch.cuda.is_available():
+        if use_gpu and torch_cuda_ok:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 

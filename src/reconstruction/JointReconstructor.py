@@ -27,7 +27,7 @@ from src.utils.joint_reconstructor_utils import (
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
-    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None, initial_image=None, initial_motion=None):
+    def __init__(self, KspaceData, smaps, SamplingIndices, motion_signal, params, kspace_scale=1.0, motion_plot_context=None, initial_image=None, initial_motion=None, external_image_regularizer=None):
         Ncoils, Nx_full, Ny_full, Nz_full = smaps.shape
 
         # Parameters constant for all resolutions        
@@ -54,6 +54,7 @@ class JointReconstructor:
         self.initial_motion = initial_motion
         self._last_image_cg_info = None
         self._last_motion_cg_info = None
+        self.external_image_regularizer = external_image_regularizer
         self._current_level_idx = 0
 
         # Data changing with resolution
@@ -423,7 +424,23 @@ class JointReconstructor:
         )
         _assign_cached_reg_scale(self.params, Data_res, "image", solver, b.flatten())
 
-        img_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_recon, tol=self.params.tol_recon)
+        # Optional MoDL update:
+        # z = D_w(x0), then (E^H E + lambda I)x = E^H y + lambda z.
+        # With no callback, the original GRICS image solve is unchanged.
+        differentiable = self.external_image_regularizer is not None
+        if differentiable:
+            prior = self.external_image_regularizer(x0)
+            if prior.shape != x0.shape:
+                raise ValueError(
+                    "external_image_regularizer must preserve the image shape; "
+                    f"got {tuple(prior.shape)}, expected {tuple(x0.shape)}."
+                )
+            b = b + solver._effective_lambda() * prior.to(b.dtype)
+
+        img_vec = solver.cg(
+            b.flatten(), x0=x0.flatten(), max_iter=self.params.max_iter_recon,
+            tol=self.params.tol_recon, differentiable=differentiable,
+        )
         self._last_image_cg_info = solver.last_info
 
         if int(Data_res.get("Nz", 1)) > 1:
