@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from src.preprocessing.SamplingSimulator import SamplingSimulator
+from src.preprocessing.Sampling import Sampling
 
 
 def require_motion_param(params, name):
@@ -156,7 +156,7 @@ def compress_consecutive_rigid_states(
 
     compressed_alpha = alpha[:, new_state]
     compressed_centers = None if centers is None else centers[:, new_state]
-    sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
+    sampling_idx = Sampling.build_sampling_per_nex_per_motion(
         binned_ky,
         device,
         Nx,

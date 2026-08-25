@@ -14,6 +14,7 @@ from src.preprocessing.RawDataReader import RawDataReader
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
+from src.preprocessing.Sampling import Sampling
 from src.preprocessing.MotionBinner import MotionBinner
 from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculator
 from src.reconstruction.MotionOperator import MotionOperator
@@ -389,7 +390,7 @@ class DataLoader:
                 self.ky_idx_chronological,
                 self.kz_idx_chronological,
                 self.nex_idx_chronological,
-            ) = MotionBinner._bin_motion(
+            ) = MotionBinner.bin_motion(
                 self._motion_curve_for_binning,
                 self.ky_idx,
                 self.kz_idx,
@@ -427,7 +428,7 @@ class DataLoader:
 
         # Reconstruction always consumes the grouped [Nex][Nmotion] view,
         # whether those groups came from clustering or direct chronological order.
-        self.sampling_idx = SamplingSimulator._build_sampling_per_nex_per_motion(
+        self.sampling_idx = Sampling.build_sampling_per_nex_per_motion(
             self.binned_ky_indices, self.t_device, self.Nx, self.Ny,
             Nz=self.Nz, binned_kz_indices=getattr(self, 'binned_kz_indices', None),  # [Nex][Nmotion]
         )

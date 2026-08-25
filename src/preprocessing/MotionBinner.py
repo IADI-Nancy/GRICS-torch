@@ -119,7 +119,7 @@ class MotionBinner:
         raise TypeError(f"{name} must be a tensor or list of tensors, got {type(values)!r}.")
 
     @staticmethod
-    def _bin_motion(
+    def bin_motion(
         motion_curve,
         ky_idx,
         kz_idx,
@@ -238,3 +238,6 @@ class MotionBinner:
                 nex_idx,
             )
         return binned_ky_indices, binned_kz_indices, centers
+
+    # Compatibility alias for integrations written before bin_motion was public.
+    _bin_motion = bin_motion

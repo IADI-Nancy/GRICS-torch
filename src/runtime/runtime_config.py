@@ -143,6 +143,9 @@ _CODE_DEFAULTS = {
     "use_scaled_motion_update": False,
     "cg_true_residual_interval": 10,
     "jupyter_notebook_flag": False,
+    "update_motion_on_final_iteration": False,
+    "gn_early_stopping": True,
+    "save_reconstruction_outputs": True,
 }
 
 _MOTION_TYPES = {"rigid", "non-rigid"}
@@ -950,6 +953,15 @@ def _normalize_reconstruction_config(reconstruction, motion, sampling):
     if quantization_bins < 2:
         raise ValueError("motion_quantization_bins must be at least 2.")
     reconstruction.options["motion_quantization_bins"] = quantization_bins
+    for name, default in (
+        ("update_motion_on_final_iteration", False),
+        ("gn_early_stopping", True),
+        ("save_reconstruction_outputs", True),
+    ):
+        value = reconstruction.options.get(name, default)
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be a boolean.")
+        reconstruction.options[name] = value
 
 
 def _ensure_output_folders(paths):

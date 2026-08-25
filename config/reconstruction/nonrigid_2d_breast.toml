@@ -23,6 +23,12 @@ ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
 # Gauss-Newton iterations per resolution level. The list length must match
 # ResolutionLevels and each value must be a positive integer.
 GN_iterations_per_level = [4, 4, 4, 1]
+# Run a motion update after the final image update.
+update_motion_on_final_iteration = false
+# Stop a resolution level when its image residual increases.
+gn_early_stopping = true
+# Write reconstruction logs, residual plots, images, and motion plots.
+save_reconstruction_outputs = true
 
 # Normalize the reconstructed image by the GRICS reference-image magnitude.
 normalize_by_reference = false

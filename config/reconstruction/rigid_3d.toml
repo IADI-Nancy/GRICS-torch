@@ -12,6 +12,12 @@ use_scaled_motion_update = true
 ResolutionLevels = [0.25, 0.5, 1.0]
 # Number of GN iterations for each resolution level.
 GN_iterations_per_level = [10, 4, 4]
+# Run a motion update after the final image update.
+update_motion_on_final_iteration = false
+# Stop a resolution level when its image residual increases.
+gn_early_stopping = true
+# Write reconstruction logs, residual plots, images, and motion plots.
+save_reconstruction_outputs = true
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
