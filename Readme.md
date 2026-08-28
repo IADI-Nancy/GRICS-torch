@@ -220,11 +220,52 @@ By default, these folders are cleaned before each run (`clean_output_folders_bef
 
 ## External Integration APIs
 
-Most public functions in the repository are ordinary GRICS-torch components and are documented by their source docstrings. This section covers only the additional interfaces intended for external reconstruction or training code.
+This section covers the standard reconstruction entry point and the additional interfaces intended for external reconstruction or training code. Exact input types and tensor dimensions are available directly in each Python signature and docstring.
+
+### Data preparation API
+
+`GRICSPreparerAPI` is for an external application that already owns its image or k-space tensors. It loads GRICS configuration, bins chronological motion measurements, and builds GRICS sampling indices. It does not load k-space, calculate sensitivity maps, simulate motion, or reconstruct an image.
+
+```python
+from src.preprocessing.GRICSPreparerAPI import GRICSPreparerAPI
+
+preparer = GRICSPreparerAPI(reconstruction_config, overrides=runtime_overrides)
+prepared = preparer.prepare_acquisition(
+    motion_data, ky_indices, nex_indices,
+    Nx=Nx, Ny=Ny, kz_indices=kz_indices,
+    kspace=kspace, seed=seed,
+)
+sampling_indices = prepared.sampling_indices["all"]
+motion_signal = prepared.motion_signal
+params = prepared.params
+```
+
+When `sampling_masks` is omitted, `"all"` contains every supplied readout.
+
+#### Optional undersampling
+
+The preparer supports externally defined undersampling through `sampling_masks`. It does not generate an acceleration pattern: the caller chooses retained chronological readouts, and the preparer converts those selections into GRICS indices.
+
+```python
+phase_encode_mask = make_phase_encode_mask(Ny, acceleration, calibration_lines)
+retained_readouts = phase_encode_mask[ky_indices]
+prepared = preparer.prepare_acquisition(
+    motion_data, ky_indices, nex_indices, Nx=Nx, Ny=Ny,
+    sampling_masks={
+        "retained": retained_readouts,
+        "heldout": ~retained_readouts,
+    },
+    kspace=kspace, seed=seed,
+)
+retained_sampling_indices = prepared.sampling_indices["retained"]
+heldout_sampling_indices = prepared.sampling_indices["heldout"]
+```
+
+Every mask contains one Boolean per chronological readout. Keys are caller-defined, and all named layouts share the same motion-state labels.
 
 ### Standard reconstruction entry point
 
-`JointReconstructor.run()` is the standard GRICS-torch entry point, rather than an additional integration API. It runs the complete configured multi-resolution reconstruction and returns the reconstructed image and motion model.
+`JointReconstructor.run()` executes the complete configured multi-resolution reconstruction.
 
 ```python
 from src.reconstruction.JointReconstructor import JointReconstructor
@@ -238,79 +279,23 @@ reconstructor = JointReconstructor(
 image, motion_model = reconstructor.run()
 ```
 
-`initial_image` and `initial_motion` optionally initialize the coarsest resolution level. `external_image_regularizer` optionally supplies an image prior during the standard reconstruction.
-
-### Acquisition preparation API
-
-`GRICSPreparerAPI` is a lightweight adapter for an external application that already owns and loads its image or k-space tensors. Given only the chronological motion measurements and acquisition indices, it loads the GRICS configuration, bins the readouts into motion states, and builds the sampling indices expected by GRICS operators. It does not load k-space, calculate sensitivity maps, simulate motion, or reconstruct an image.
-
-The usual external use has one sampling layout containing all acquired readouts:
-
-```python
-from src.preprocessing.GRICSPreparerAPI import GRICSPreparerAPI
-
-preparer = GRICSPreparerAPI(
-    reconstruction_config, overrides=runtime_overrides,
-)
-prepared = preparer.prepare_acquisition(
-    motion_data, ky_indices, nex_indices,
-    Nx=Nx, Ny=Ny, kz_indices=kz_indices,
-    kspace=kspace, seed=seed,
-)
-
-sampling_indices = prepared.sampling_indices["all"]
-motion_signal = prepared.motion_signal
-params = prepared.params
-```
-
-Here, `sampling_indices` is the `[Nex][N_motion_states]` sampling layout passed to `JointReconstructor` and the encoding operators. Each entry contains the flattened k-space locations acquired for one excitation and one binned motion state. The name `"all"` is created automatically when `sampling_masks` is omitted.
-
-#### Optional undersampling
-
-`GRICSPreparerAPI` supports externally defined undersampling through `sampling_masks`. It does not generate an acceleration pattern: the caller decides which chronological readouts are retained, and the preparer converts that selection into the `[Nex][N_motion_states]` indices required by GRICS.
-
-For example, a 2D phase-encode mask of length `Ny` can be mapped to chronological readouts using their `ky` indices:
-
-```python
-# Created by the external application; True means that ky is retained.
-phase_encode_mask = make_phase_encode_mask(Ny, acceleration, calibration_lines)
-retained_readouts = phase_encode_mask[ky_indices]
-
-prepared = preparer.prepare_acquisition(
-    motion_data, ky_indices, nex_indices, Nx=Nx, Ny=Ny,
-    sampling_masks={
-        "retained": retained_readouts,
-        "heldout": ~retained_readouts,
-    },
-    kspace=kspace, seed=seed,
-)
-
-retained_sampling_indices = prepared.sampling_indices["retained"]
-heldout_sampling_indices = prepared.sampling_indices["heldout"]
-```
-
-Each mask must contain one Boolean value per chronological readout. The dictionary keys are arbitrary caller-defined names. The retained layout can be passed to `JointReconstructor`; a held-out layout can be passed to `predict_kspace_api()` for an external loss or evaluation.
-
-Motion binning is performed once using the complete supplied motion trace, and every named sampling layout uses those same motion-state labels.
+For `params`, use `data.params` from `DataLoader` or `prepared.params` from `GRICSPreparerAPI`.
 
 ### Full-resolution iteration and prediction APIs
 
-The following methods can be used by external iterative or unrolled reconstruction codes.
-
-`full_resolutions_gauss_newton_iteration_api()` performs one full-resolution image update followed by an optional motion update. The CG limits default to `params.max_iter_recon` and `params.max_iter_motion`. If `image_regularizer` returns a prior `z`, the image step uses `lambda * ||x - z||_2^2`; passing `None` retains the standard GRICS image solve.
+`full_resolutions_gauss_newton_iteration_api()` performs one full-resolution image update followed by an optional motion update.
 
 ```python
 image, motion_model = reconstructor.full_resolutions_gauss_newton_iteration_api(
-    image, motion_model,
-    image_regularizer=None, regularization_weight=None,
-    update_motion=True,
+    image, motion_model, image_regularizer=None,
+    regularization_weight=None, update_motion=True,
     image_cg_iterations=None, motion_cg_iterations=None,
 )
 ```
 
-`predict_kspace_api()` evaluates an image and motion model using either the reconstruction sampling layout or an explicitly supplied layout.
+`predict_kspace_api()` evaluates an image and motion model on the constructor sampling layout or an explicitly supplied layout.
 
-```
+```python
 predicted_kspace = reconstructor.predict_kspace_api(
     image, motion_model, sampling_indices=None,
 )
@@ -322,7 +307,7 @@ Parts of this code and its documentation were developed with the assistance of A
 
 ## References
 
-[1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine: An Official Journal of the International Society for Magnetic Resonance in Medicine, 60(1), 146-157.
+[1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine, 60(1), 146-157.
 [2] Isaieva, K., Meullenet, C., Vuissoz, P. A., Fauvel, M., Nohava, L., Laistler, E., ... & Odille, F. (2023). Feasibility of online non‐rigid motion correction for high‐resolution supine breast MRI. Magnetic Resonance in Medicine, 90(5), 2130-2143.
 [3] Isaieva, K., Fauvel, M., Weber, N., Vuissoz, P. A., Felblinger, J., Oster, J., & Odille, F. (2022). A hardware and software system for MRI applications requiring external device data. Magnetic Resonance in Medicine, 88(3), 1406-1418.
 [4] https://github.com/IADI-Nancy/wrapperHDF5

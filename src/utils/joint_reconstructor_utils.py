@@ -1,5 +1,8 @@
 import os
+from contextlib import nullcontext
+
 import torch
+from tqdm.auto import tqdm
 
 from src.utils.plotting import save_nonrigid_alpha_plots, save_residual_subplots
 
@@ -125,3 +128,104 @@ def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, 
                 f"level{level_idx}_sensor{sensor_idx + 1}", debug_folder,
                 flip_vertical=flip_for_display,
             )
+
+
+class _JointReconstructionLogger:
+    """Own run logging, progress display, residual history, and residual plots.
+
+    This helper deliberately does not decide whether an iteration should stop,
+    whether motion should be updated, or which reconstruction state is kept.
+    Those algorithm decisions remain in JointReconstructor.
+    """
+
+    def __init__(self, params, iterations_per_level):
+        self.params = params
+        self.enabled = bool(getattr(params, "save_reconstruction_outputs", True))
+        n_levels = len(iterations_per_level)
+        self.run_log = (
+            _init_run_logging(params, n_levels, iterations_per_level)
+            if self.enabled else {
+                "recon_residuals_by_level": [[] for _ in range(n_levels)],
+                "motion_residuals_by_level": [[] for _ in range(n_levels)],
+            }
+        )
+
+    def append(self, message=""):
+        if self.enabled:
+            _append_run_log(self.run_log, message)
+
+    def progress(self, level_index, level_iterations, level_count):
+        if level_iterations <= 0:
+            return nullcontext()
+        return tqdm(
+            total=level_iterations,
+            desc=f"Resolution level {level_index + 1}/{level_count}",
+            disable=not self.params.jupyter_notebook_flag,
+            leave=True, dynamic_ncols=True, position=0,
+        )
+
+    def announce_iteration(self, iteration_index, level_iterations):
+        _console(self.params, f"  GN iteration {iteration_index + 1}/{level_iterations}")
+
+    @staticmethod
+    def show_residual(progress, relative_residual):
+        if progress is not None:
+            progress.set_postfix(recon=f"{relative_residual:.2e}")
+
+    @staticmethod
+    def update_progress(progress):
+        if progress is not None:
+            progress.update(1)
+
+    def level_started(self, level_index, data, regularization_weight, elapsed):
+        self.append(
+            f"Resolution level {level_index} "
+            f"({data['Nx']}x{data['Ny']}x{data.get('Nz', 1)}, "
+            f"{data['Ny']} views, "
+            f"{len(data['SamplingIndices'][0])} virtual times)\n"
+            f"    lambda_r : {regularization_weight:.6e}\n"
+            f"    Resolution level initializations : {elapsed:.6f} s\n"
+        )
+
+    def iteration_stopped_early(self, progress):
+        message = "    Relative residual increased - restoring best solution at this level."
+        _console(self.params, message)
+        self.append(message)
+        self.update_progress(progress)
+
+    def iteration_finished(
+        self, *, iteration_index, result, relative_residual,
+        image_cg_info, motion_cg_info, relative_motion_update=None,
+        motion_update_norm=None, elapsed,
+    ):
+        self.append(
+            "    Reconstruction step : "
+            f"{_format_cg_info(image_cg_info)}, "
+            f"elapsed time = {result.image_elapsed:.6f} s"
+        )
+        if relative_motion_update is None:
+            self.append(
+                f"    Fixed point iter {iteration_index}: "
+                f"recon_rel_residual = {relative_residual:.6e}, "
+                f"image_only = True : {elapsed:.6f} s\n"
+            )
+            return
+        self.append(
+            "    Model optimization step: "
+            f"{_format_cg_info(motion_cg_info)}, "
+            f"elapsed time = {result.motion_elapsed:.6f} s\n"
+            f"    Fixed point iter {iteration_index}: "
+            f"recon_rel_residual = {relative_residual:.6e}, "
+            f"motion_rel_residual = {relative_motion_update:.6e}, "
+            f"motion_norm = {motion_update_norm:.6e} : {elapsed:.6f} s\n"
+        )
+
+    def level_finished(self, level_index, reconstruction_residuals, motion_residuals, elapsed):
+        self.run_log["recon_residuals_by_level"][level_index] = reconstruction_residuals
+        self.run_log["motion_residuals_by_level"][level_index] = motion_residuals
+        self.append(f"    Total time of resolution level {level_index}: {elapsed:.6f} s\n")
+
+    def run_finished(self, elapsed):
+        self.append(f"Total time of reconstruction run: {elapsed:.6f} s")
+        if self.enabled:
+            _save_run_residual_plots(self.params.logs_folder, self.run_log)

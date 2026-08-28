@@ -1,6 +1,10 @@
 """High-level preparation of motion-binned GRICS acquisition metadata."""
 
 import copy
+from os import PathLike
+from types import SimpleNamespace
+
+import numpy as np
 
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -13,11 +17,14 @@ from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
 
 
+TensorLike = torch.Tensor | np.ndarray | list | tuple
+
+
 @dataclass(frozen=True)
 class PreparedGRICSAcquisition:
     """Configuration, motion bins, and named sampling layouts for one acquisition."""
 
-    params: Any
+    params: SimpleNamespace
     motion_signal: torch.Tensor
     motion_labels: torch.Tensor
     sampling_indices: dict[str, list]
@@ -36,13 +43,22 @@ class GRICSPreparerAPI:
     class translates those selections into GRICS indices but does not generate
     an acceleration pattern. Applications can cache the result because it
     depends on acquisition metadata, not learned parameters.
+
+    Args:
+        reconstruction_config: Path to the mandatory reconstruction TOML.
+        data_type: External data mode; default ``preprocessed-real``.
+        simulated_motion_type: Motion mode; default ``as-it-is``.
+        data_dimension: ``2D`` or ``3D``.
+        overrides: Optional mapping of configuration overrides.
+        **config_options: Additional keyword arguments accepted by ``load_config``.
     """
 
     def __init__(
-        self, reconstruction_config, *, data_type="preprocessed-real",
-        simulated_motion_type="as-it-is", data_dimension="2D",
-        overrides=None, **config_options,
-    ):
+        self, reconstruction_config: str | PathLike[str], *,
+        data_type: str = "preprocessed-real",
+        simulated_motion_type: str = "as-it-is", data_dimension: str = "2D",
+        overrides: Mapping[str, Any] | None = None, **config_options: Any,
+    ) -> None:
         self.params = load_config(
             data_type=data_type, reconstruction_config=reconstruction_config,
             simulated_motion_type=simulated_motion_type,
@@ -51,17 +67,33 @@ class GRICSPreparerAPI:
         self.sp_device, self.device = initialize_runtime(self.params)
 
     def prepare_acquisition(
-        self, motion_data, ky_indices, nex_indices, *, Nx, Ny, Nz=1,
-        kz_indices=None, sampling_masks: Mapping[str, torch.Tensor] | None = None,
-        kspace=None, y_limits=None, seed=None,
-    ):
-        """Bin motion and build named ``[Nex][Nmotion]`` sampling layouts.
+        self, motion_data: TensorLike, ky_indices: TensorLike,
+        nex_indices: TensorLike, *, Nx: int, Ny: int, Nz: int = 1,
+        kz_indices: TensorLike | None = None,
+        sampling_masks: Mapping[str, TensorLike] | None = None,
+        kspace: torch.Tensor | None = None,
+        y_limits: tuple[float, float] | None = None, seed: int | None = None,
+    ) -> PreparedGRICSAcquisition:
+        """Bin motion and build named ``[Ne][Nm]`` sampling layouts.
 
-        ``sampling_masks`` maps caller-defined names to Boolean selections over
-        chronological readouts, enabling externally defined undersampling. Each
-        mask must have one value per readout. The caller creates the sampling
-        pattern; this method only converts it to GRICS sampling indices. If the
-        argument is omitted, one layout named ``all`` is made.
+        Args:
+            motion_data: Real tensor-like ``[Nr]`` or ``[Nr, Ns]``.
+            ky_indices: Integer tensor-like ``[Nr]`` in ``[0, Ny-1]``.
+            nex_indices: Integer tensor-like ``[Nr]`` with zero-based values.
+            Nx: Positive readout matrix size.
+            Ny: Positive phase-encode matrix size.
+            Nz: Positive partition count; default ``1`` for 2D.
+            kz_indices: Integer tensor-like ``[Nr]`` for 3D, otherwise ``None``.
+            sampling_masks: Optional mapping from arbitrary names to Boolean
+                tensor-like ``[Nr]`` selections for external undersampling.
+            kspace: Optional complex ``[Nc, Ne, Nx, Ny, (Nz)]`` tensor; required
+                only when the configured binning mode uses k-space energy.
+            y_limits: Optional plotting range ``(minimum, maximum)``.
+            seed: Optional integer for reproducible motion binning.
+
+        If ``sampling_masks`` is omitted, one layout named ``all`` is returned.
+        The caller creates any acceleration pattern; this method only converts
+        readout selections to GRICS sampling indices.
         """
         motion = torch.as_tensor(motion_data, device=self.device)
         if motion.ndim == 1:
