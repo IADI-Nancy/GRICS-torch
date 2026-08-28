@@ -151,6 +151,18 @@ class DataLoader:
             raise RuntimeError("DataLoader.run_slice_pipeline() requires load_data() to be called first.")
         if self._slice_pipeline_has_run:
             raise RuntimeError("DataLoader.run_slice_pipeline() was called after the slice pipeline already ran.")
+        if (
+            slice_idx is None and self.slice_idx is None
+            and self.params.data_dimension == "2D"
+            and self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+        ):
+            if int(self.Nz) == 1:
+                slice_idx = 0
+            else:
+                raise ValueError(
+                    f"The loaded 2D source contains {int(self.Nz)} slices; "
+                    "slice_idx must be specified explicitly."
+                )
         if slice_idx is not None:
             self._select_loaded_slice(slice_idx)
         if self.params.data_dimension == "2D" and int(self.Nz) != 1:
@@ -220,8 +232,8 @@ class DataLoader:
     def _prepare_motion_simulator_inputs(self):
         motion_sim_device = self.t_device
         if (
-            self.params.simulated_motion_type == "rigid"
-            and self.params.motion_state_mode == "realistic"
+            self.params.simulated_motion_type.startswith("rigid-")
+            and self.params.simulated_motion_type.endswith("-realistic")
         ):
             motion_sim_device = torch.device("cpu")
 
@@ -257,7 +269,7 @@ class DataLoader:
         )
 
     def _apply_or_import_motion(self):
-        if self.params.motion_simulation_model_mode == 'as-it-is':
+        if self.params.simulated_motion_type == 'as-it-is':
             self.image_no_moco = self.image_ground_truth
             return None
 
@@ -274,7 +286,7 @@ class DataLoader:
 
         print(
             "[DataLoader] Starting motion simulation "
-            f"(type={self.params.simulated_motion_type}, mode={self.params.motion_state_mode})..."
+            f"(type={self.params.simulated_motion_type})..."
         )
         motionSimulator = MotionSimulator(
             image_ground_truth,
@@ -289,13 +301,13 @@ class DataLoader:
             t_device=motion_sim_device,
         )
 
-        if self.params.simulated_motion_type == "rigid":
-            if self.params.motion_state_mode == "per-shot":
+        if self.params.simulated_motion_type.startswith("rigid-"):
+            if self.params.simulated_motion_type.endswith("-per-shot"):
                 motionSimulator.simulate_discrete_rigid_motion()
             else:
                 motionSimulator.simulate_realistic_rigid_motion()
         else:
-            if self.params.motion_state_mode == "per-shot":
+            if self.params.simulated_motion_type.endswith("-per-shot"):
                 motionSimulator.simulate_discrete_non_rigid_motion()
             else:
                 motionSimulator.simulate_realistic_non_rigid_motion()
@@ -305,7 +317,7 @@ class DataLoader:
         if hasattr(motionSimulator, "alpha_maps"):
             self.alpha_maps_true = motionSimulator.alpha_maps.to(self.t_device)
 
-        if self.params.simulated_motion_type == "rigid":
+        if self.params.simulated_motion_type.startswith("rigid-"):
             if self.Nz > 1:
                 motion_curve, tx, ty, tz, rx, ry, rz = motionSimulator.get_rigid_motion_information_3d()
                 self._motion_plot_kwargs = {
@@ -349,7 +361,7 @@ class DataLoader:
         }
 
         if (
-            self.params.simulated_motion_type == "non-rigid"
+            self.params.simulated_motion_type.startswith("non-rigid-")
             and hasattr(self, "alpha_maps_true")
             and self.alpha_maps_true is not None
         ):
@@ -482,7 +494,7 @@ class DataLoader:
         if (
             hasattr(self, "alpha_maps_true")
             and self.alpha_maps_true is not None
-            and self.params.simulated_motion_type == "non-rigid"
+            and self.params.simulated_motion_type.startswith("non-rigid-")
             and self.alpha_maps_true.ndim >= 3
             and self.alpha_maps_true.shape[0] >= 2
         ):
@@ -497,7 +509,7 @@ class DataLoader:
             )
 
     def _has_simulated_motion(self):
-        return self.params.motion_simulation_model_mode != "as-it-is"
+        return self.params.simulated_motion_type != "as-it-is"
 
     # For the image loaded from a file
     @staticmethod
@@ -709,7 +721,7 @@ class DataLoader:
             for nex in range(self.params.Nex)
         ]
         self._motion_curve_for_binning = (
-            motion_data if self.params.motion_simulation_model_mode == "as-it-is" else None
+            motion_data if self.params.simulated_motion_type == "as-it-is" else None
         )
         self._motion_plot_kwargs = {}
 
@@ -822,7 +834,7 @@ class DataLoader:
         self.params.Nex = int(self.kspace.shape[1])
         self.params.NshotsPerNex = int(self.kspace.shape[3])
         self.params.Nshots = int(self.params.Nex) * int(self.params.NshotsPerNex)
-        if getattr(self.params, "motion_state_mode", None) == "per-shot":
+        if self.params.simulated_motion_type.endswith("-per-shot"):
             self.params.N_motion_states = self.params.Nshots
         self.Ncha, _, self.Nx, self.Ny, self.Nz = self.kspace.shape
 
@@ -848,9 +860,10 @@ class DataLoader:
         n_slices = int(self._source_kspace.shape[-1])
         if slice_idx < 0 or slice_idx >= n_slices:
             raise ValueError(f"slice_idx={slice_idx} is out of range for {n_slices} slices.")
-        if self._source_motion_data.ndim != 3:
+        if self._source_motion_data.ndim not in {2, 3}:
             raise ValueError(
-                "2D motion_data must have shape [Nslice, Nreadout, Nsensor]. "
+                "2D motion_data must have shape [Nslice, Nreadout] or "
+                "[Nslice, Nreadout, Nsensor]. "
                 f"Got {tuple(self._source_motion_data.shape)}."
             )
 
@@ -862,7 +875,9 @@ class DataLoader:
             else self._source_reference_kspace[..., slice_idx:slice_idx + 1]
         )
         self._update_kspace_dimensions_and_sampling_params()
-        motion_data = self._source_motion_data[slice_idx, :, :]
+        motion_data = self._source_motion_data[slice_idx]
+        if motion_data.ndim == 1:
+            motion_data = motion_data.unsqueeze(-1)
         self.ky_idx = self._source_idx_ky[slice_idx]
         self.kz_idx = None
         self.nex_idx = self._source_idx_nex[slice_idx]
@@ -883,7 +898,7 @@ class DataLoader:
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
-                fname=f"ky_order_rawdata_slice{self.slice_idx}.png",
+                fname=f"ky_order_acquisition_slice{self.slice_idx}.png",
             )
         
 
@@ -903,12 +918,12 @@ class DataLoader:
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
-                fname=f"ky_order_realworld_slice{self.slice_idx}.png",
+                fname=f"ky_order_acquisition_slice{self.slice_idx}.png",
             )
 
     def _debug_check_true_motion_image_reconstruction(self, motionSimulator):
         # This consistency check is meaningful only for simulated non-rigid data.
-        if self.params.simulated_motion_type != "non-rigid":
+        if not self.params.simulated_motion_type.startswith("non-rigid-"):
             return
         if not self._has_simulated_motion():
             return
@@ -924,7 +939,7 @@ class DataLoader:
             nsamples_true = self.Nx * self.Ny * self.Nz
 
             motion_op_true = MotionOperator(
-                self.Nx, self.Ny, alpha_true, self.params.simulated_motion_type,
+                self.Nx, self.Ny, alpha_true, "non-rigid",
                 motion_signal=signal_true, Nz=self.Nz,
             )
 

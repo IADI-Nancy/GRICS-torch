@@ -29,7 +29,7 @@ def _first_existing_glob(folder, *patterns):
 
 
 def _infer_has_ground_truth(params):
-    return params.motion_simulation_model_mode != "as-it-is"
+    return params.simulated_motion_type != "as-it-is"
 
 
 def _display_image_row(image_paths, subtitles, title=None, figsize=None):
@@ -194,8 +194,7 @@ def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_
         input_folder,
         "ky_kz_order_nex*.png",
         "ky_order_nex*.png",
-        "ky_order_realworld_slice*.png",
-        "ky_order_rawdata_slice*.png",
+        "ky_order_acquisition_slice*.png",
         "ky_sampling_order.png",
     )
     motion_vs_ky_path = _first_existing_path(

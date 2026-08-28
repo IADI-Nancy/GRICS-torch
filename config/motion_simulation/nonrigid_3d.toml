@@ -1,10 +1,8 @@
 [motion]
 # Motion simulation data dimensionality tag for compatibility checks.
 motion_simulation_config_dimension = "3D"
-# Motion model type ("rigid" or "non-rigid").
-motion_type = "non-rigid"
-# Temporal simulation mode: "realistic" (continuous) or "per-shot" (piecewise-constant).
-motion_state_mode = "realistic"
+# Synthetic motion model and temporal behavior.
+simulated_motion_type = "non-rigid-realistic"
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 2.0
 # Per-shot Gaussian scale for the discrete non-rigid temporal coefficient `s`.

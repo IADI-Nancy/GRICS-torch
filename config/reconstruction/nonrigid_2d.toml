@@ -2,7 +2,7 @@
 # Reconstruction data dimensionality tag for compatibility checks.
 reconstruction_dimension = "2D"
 # Motion model used by reconstruction ("rigid" or "non-rigid").
-motion_type = "non-rigid"
+reconstruction_motion_type = "non-rigid"
 # Manual number of motion states used for reconstruction.
 # This value is selected only if manual mode is selected (i.e., no motion simulation override).
 N_motion_states = 4
@@ -10,13 +10,13 @@ N_motion_states = 4
 use_scaled_motion_update = false
 # Multi-resolution scale factors (relative to full resolution).
 ResolutionLevels = [0.25, 0.5, 1.0]
-# Number of GN iterations for each resolution level.
+# Must contain exactly one positive GN iteration count per ResolutionLevels entry.
 GN_iterations_per_level = [10, 4, 4]
-# Run a motion update after the final image update.
+# false keeps the conventional final GN iteration image-only.
 update_motion_on_final_iteration = false
-# Stop a resolution level when its image residual increases.
+# true stops a resolution level when its image residual increases.
 gn_early_stopping = true
-# Write reconstruction logs, residual plots, images, and motion plots.
+# true writes reconstruction logs, residual plots, images, and motion plots.
 save_reconstruction_outputs = true
 
 # Stop CG when stagnation is detected.

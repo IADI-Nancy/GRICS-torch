@@ -1,10 +1,8 @@
 [motion]
 # Motion simulation data dimensionality tag for compatibility checks.
 motion_simulation_config_dimension = "2D"
-# Motion model type ("rigid" or "non-rigid").
-motion_type = "rigid"
-# Temporal simulation mode: "realistic" (continuous) or "per-shot" (piecewise-constant).
-motion_state_mode = "realistic"
+# Synthetic motion model and temporal behavior.
+simulated_motion_type = "rigid-realistic"
 # Number of smooth motion events across the acquisition.
 num_motion_events = 4
 # Global scale factor for rigid-motion amplitudes.

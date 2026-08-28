@@ -76,7 +76,7 @@ class MotionSimulator:
 
     def _apply_motion(self, alpha, centers=None, motion_signal=None, motion_type=None):
         if motion_type is None:
-            motion_type = self.params.simulated_motion_type
+            motion_type = self.params.simulated_motion_type.split("-", 1)[0]
 
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz)
         E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.sampling_idx, self.params.Nex, self.MotionOperator)

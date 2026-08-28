@@ -2,7 +2,7 @@
 # Data dimensionality. Allowed values: "2D" or "3D"; it must match the input data.
 reconstruction_dimension = "2D"
 # Motion model. Allowed values: "rigid" or "non-rigid".
-motion_type = "non-rigid"
+reconstruction_motion_type = "non-rigid"
 # Number of motion states. Must be a positive integer and cannot exceed the
 # number of available physiological samples.
 N_motion_states = 16
@@ -20,14 +20,13 @@ use_scaled_motion_update = false
 # Spatial scale at each reconstruction level, relative to full resolution.
 # Values must be positive; 1.0 represents full resolution.
 ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
-# Gauss-Newton iterations per resolution level. The list length must match
-# ResolutionLevels and each value must be a positive integer.
+# Must contain exactly one positive GN iteration count per ResolutionLevels entry.
 GN_iterations_per_level = [4, 4, 4, 1]
-# Run a motion update after the final image update.
+# false keeps the conventional final GN iteration image-only.
 update_motion_on_final_iteration = false
-# Stop a resolution level when its image residual increases.
+# true stops a resolution level when its image residual increases.
 gn_early_stopping = true
-# Write reconstruction logs, residual plots, images, and motion plots.
+# true writes reconstruction logs, residual plots, images, and motion plots.
 save_reconstruction_outputs = true
 
 # Normalize the reconstructed image by the GRICS reference-image magnitude.

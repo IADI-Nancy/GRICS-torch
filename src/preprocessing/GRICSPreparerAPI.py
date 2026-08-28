@@ -31,18 +31,21 @@ class GRICSPreparerAPI:
 
     The constructor loads the reconstruction configuration and initializes the
     runtime. ``prepare_acquisition`` then bins a physiological signal and
-    constructs one or more named sampling layouts. Applications can cache the
-    result because it depends on acquisition metadata, not learned parameters.
+    constructs one or more named sampling layouts. Caller-provided Boolean
+    masks support externally defined undersampling or held-out readouts; this
+    class translates those selections into GRICS indices but does not generate
+    an acceleration pattern. Applications can cache the result because it
+    depends on acquisition metadata, not learned parameters.
     """
 
     def __init__(
         self, reconstruction_config, *, data_type="preprocessed-real",
-        motion_simulation_model_mode="as-it-is", data_dimension="2D",
+        simulated_motion_type="as-it-is", data_dimension="2D",
         overrides=None, **config_options,
     ):
         self.params = load_config(
             data_type=data_type, reconstruction_config=reconstruction_config,
-            motion_simulation_model_mode=motion_simulation_model_mode,
+            simulated_motion_type=simulated_motion_type,
             data_dimension=data_dimension, overrides=overrides, **config_options,
         )
         self.sp_device, self.device = initialize_runtime(self.params)
@@ -54,9 +57,11 @@ class GRICSPreparerAPI:
     ):
         """Bin motion and build named ``[Nex][Nmotion]`` sampling layouts.
 
-        ``sampling_masks`` maps caller-defined names to Boolean masks over the
-        chronological readouts. If omitted, one layout named ``all`` is made.
-        This keeps application-specific split policies outside GRICS.
+        ``sampling_masks`` maps caller-defined names to Boolean selections over
+        chronological readouts, enabling externally defined undersampling. Each
+        mask must have one value per readout. The caller creates the sampling
+        pattern; this method only converts it to GRICS sampling indices. If the
+        argument is omitted, one layout named ``all`` is made.
         """
         motion = torch.as_tensor(motion_data, device=self.device)
         if motion.ndim == 1:
