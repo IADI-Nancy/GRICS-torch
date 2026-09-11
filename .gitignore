@@ -22,3 +22,4 @@ demos_data/*.h5
 runs/
 *.orig
 article/
+input_data/

@@ -1,10 +1,7 @@
-import h5py
 import ismrmrd
 import torch
 import math
-import os
 from src.utils.fftnc import fftnc, ifftnc
-from src.preprocessing.RespiratoryDataReader import RespiratoryDataReader
 
 
 def _is_noise(acq):
@@ -35,10 +32,8 @@ def _is_parallel_calibration(acq):
 
 class RawDataReader:
 
-    def __init__(self, ismrmrd_file, saec_file, sensor_type='BELT', device="cpu", debug=False):
+    def __init__(self, ismrmrd_file, device="cpu", debug=False):
         self.ismrmrd_file = ismrmrd_file
-        self.saec_file = saec_file
-        self.sensor_type = sensor_type
         self.device = device
         self.debug = bool(debug)
 
@@ -234,193 +229,18 @@ class RawDataReader:
             dset.close()
 
 
-    def _interp1d_torch(self, x, y, x_new):
+    def read_data(self):
+        """Read MRI arrays and full-sequence times, without physiological processing.
 
-        x = x.flatten()
-        y = y.flatten()
-        x_new = x_new.flatten()
-
-        idx = torch.searchsorted(x, x_new)
-
-        idx0 = torch.clamp(idx - 1, 0, len(x) - 1)
-        idx1 = torch.clamp(idx, 0, len(x) - 1)
-
-        x0 = x[idx0]
-        x1 = x[idx1]
-        y0 = y[idx0]
-        y1 = y[idx1]
-
-        denom = (x1 - x0)
-        denom[denom == 0] = 1e-12
-
-        weight = (x_new - x0) / denom
-
-        y_new = y0 + weight * (y1 - y0)
-
-        return y_new
-
-
-    def _interpolate_respiratory_data(self, time_saec, resp, time_kspace):
-        if isinstance(resp, (list, tuple)):
-            interpolated = []
-            for idx, resp_channel in enumerate(resp):
-                time_channel = time_saec[idx] if isinstance(time_saec, (list, tuple)) else time_saec
-                time_channel = torch.as_tensor(time_channel, device=self.device)
-                resp_channel = torch.as_tensor(resp_channel, device=self.device)
-                interpolated.append(self._interp1d_torch(time_channel, resp_channel, time_kspace))
-            return torch.stack(interpolated, dim=1)
-
-        time_saec = torch.as_tensor(time_saec, device=self.device)
-        resp = torch.as_tensor(resp, device=self.device)
-        if resp.ndim <= 1:
-            return self._interp1d_torch(time_saec, resp, time_kspace).unsqueeze(1)
-
-        interpolated = []
-        for idx in range(resp.shape[0]):
-            time_channel = time_saec[idx] if time_saec.ndim > 1 else time_saec
-            interpolated.append(self._interp1d_torch(time_channel, resp[idx], time_kspace))
-        return torch.stack(interpolated, dim=1)
-
-
-    def _reshape_data_slicewise(
-        self,
-        respiratory_data_interpolated,
-        z_indices,
-        idx_ky,
-        idx_kz,
-        idx_nex,
-        group_by_z_index=True,
-    ):
-
-        device = respiratory_data_interpolated.device
-
-        if not group_by_z_index:
-            # 3D slab acquisition: keep one row per readout and one column per physiological sensor.
-            return (
-                respiratory_data_interpolated,
-                idx_ky.reshape(1, -1),
-                idx_kz.reshape(1, -1),
-                idx_nex.reshape(1, -1),
-            )
-
-        N_SLI = int(torch.max(z_indices).item()) + 1
-
-        counts = torch.bincount(z_indices, minlength=N_SLI)
-        if torch.any(counts != counts[0]):
-            raise ValueError(
-                "Acquisition lines per z-index are not uniform; cannot reshape into "
-                "[Nz, Nlines] realworld format."
-            )
-        lines_per_slice = int(counts[0].item())
-
-        motion_data = torch.zeros(
-            (N_SLI, lines_per_slice, respiratory_data_interpolated.shape[1]),
-            dtype=respiratory_data_interpolated.dtype,
-            device=device)
-
-        line_idx_y = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_ky.dtype,
-            device=device)
-
-        line_idx_z = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_kz.dtype,
-            device=device)
-
-        line_idx_nex = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_nex.dtype,
-            device=device)
-
-        for i_sli in range(N_SLI):
-            mask = (z_indices == i_sli)
-
-            motion_data[i_sli] = respiratory_data_interpolated[mask]
-            line_idx_y[i_sli] = idx_ky[mask]
-            line_idx_z[i_sli] = idx_kz[mask]
-            line_idx_nex[i_sli] = idx_nex[mask]
-
-        return motion_data, line_idx_y, line_idx_z, line_idx_nex
-
-
-    def _read_motion_and_kspace(self):
-
-        time_saec, resp = RespiratoryDataReader._read_and_process_data(
-            self.saec_file, self.sensor_type)
-
-        kspace, time_kspace, z_indices, idx_ky, idx_kz, idx_nex, nex_source, nex_values, slice_geometry = \
-            self._extract_mri_data()
-        reference_kspace = getattr(self, "reference_kspace", None)
-
-        respiratory_interpolated = self._interpolate_respiratory_data(
-            time_saec, resp, time_kspace)
-
-        motion_data, line_idx_y, line_idx_z, line_idx_nex = \
-            self._reshape_data_slicewise(
-                respiratory_interpolated,
-                z_indices,
-                idx_ky,
-                idx_kz,
-                idx_nex,
-                group_by_z_index=not getattr(self, "_raw_uses_kz_as_volume_axis", False),
-            )
-
-        kspace = self._remove_oversampling(kspace)
-        if reference_kspace is not None:
-            reference_kspace = self._remove_oversampling(reference_kspace)
-
-        data = {
-            "kspace": kspace.detach().cpu().numpy(),
-            "motion_data": motion_data.detach().cpu().numpy(),
-            "idx_ky": line_idx_y.detach().cpu().numpy(),
-            "idx_kz": line_idx_z.detach().cpu().numpy(),
-            "idx_nex": line_idx_nex.detach().cpu().numpy(),
-            "nex_source": nex_source,
-            "nex_values": nex_values.detach().cpu().numpy(),
-            "slice_geometry": slice_geometry,
+        K-space is returned before readout oversampling removal. Acquisition
+        mapping and timestamps follow the existing scanner-reading implementation.
+        """
+        (kspace, times, slices, ky, kz, nex, nex_source, nex_values,
+         geometry) = self._extract_mri_data()
+        return {
+            "kspace": kspace, "time_seconds": times, "slice_indices": slices,
+            "idx_ky": ky, "idx_kz": kz, "idx_nex": nex,
+            "nex_source": nex_source, "nex_values": nex_values,
+            "slice_geometry": geometry, "reference_kspace": self.reference_kspace,
+            "uses_kz_as_volume_axis": self._raw_uses_kz_as_volume_axis,
         }
-        if reference_kspace is not None:
-            data["reference_kspace"] = reference_kspace.detach().cpu().numpy()
-        return data
-
-
-    def _read_data_from_rawdata(self, h5filename=None, slice_idx=None):
-
-        data = self._read_motion_and_kspace()
-
-        if slice_idx is not None:
-            n_slices = int(data["kspace"].shape[-1])
-            if slice_idx < 0 or slice_idx >= n_slices:
-                raise ValueError(
-                    f"slice_idx={slice_idx} is out of range for {n_slices} slices."
-                )
-            data = {
-                **data,
-                "kspace": data["kspace"][..., [slice_idx]],
-                "motion_data": data["motion_data"][[slice_idx], :],
-                "idx_ky": data["idx_ky"][[slice_idx], :],
-                "idx_kz": data["idx_kz"][[slice_idx], :],
-                "idx_nex": data["idx_nex"][[slice_idx], :],
-                "slice_geometry": {0: data["slice_geometry"][slice_idx]},
-            }
-            if "reference_kspace" in data:
-                data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]
-
-        if h5filename is not None:
-            with h5py.File(h5filename, 'w') as f:
-                f.create_dataset('motion_data', data=data['motion_data'])
-                f.create_dataset('idx_ky', data=data['idx_ky'])
-                f.create_dataset('idx_kz', data=data['idx_kz'])
-                f.create_dataset('idx_nex', data=data['idx_nex'])
-                f.create_dataset('kspace', data=data['kspace'])
-                if 'reference_kspace' in data:
-                    f.create_dataset('reference_kspace', data=data['reference_kspace'])
-                f.create_dataset('nex_values', data=data['nex_values'])
-                f.attrs['nex_source'] = data['nex_source']
-            data['realworld_h5_path'] = h5filename
-
-        return data
-
-    def read_data_from_rawdata(self, h5filename=None, slice_idx=None):
-        return self._read_data_from_rawdata(h5filename=h5filename, slice_idx=slice_idx)

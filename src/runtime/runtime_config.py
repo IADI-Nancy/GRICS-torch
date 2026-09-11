@@ -454,7 +454,7 @@ def _load_base_config_dict(
                 "from_image_config is required when data_type is 'from_image'."
             )
         cfg.update(_load_toml_flat(from_image_config))
-    elif data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
+    elif data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}:
         pass
     else:
         raise ValueError(f"Unsupported data_type: {data_type}")
@@ -502,9 +502,9 @@ def _resolve_sampling_origin(cfg, data_type):
         return False
 
     _drop_keys(cfg, {"kspace_sampling_type", "NshotsPerNex", "Nex", "Nshots"})
-    if data_type not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
+    if data_type not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}:
         raise ValueError(
-            "Sampling configuration is required when data_type is not 'preprocessed-real'/'ismrmrd-saec'/'siemens-saec'. "
+            "Sampling configuration is required when data_type is not a real-data type. "
             "Provide sampling_config or kspace_sampling_type (+ Nex/NshotsPerNex)."
         )
     return True
@@ -512,7 +512,7 @@ def _resolve_sampling_origin(cfg, data_type):
 
 def _require_motion_input_for_simulated_sources(cfg, *, motion_simulation_config):
     if (
-        cfg.get("data_type") not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+        cfg.get("data_type") not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
         and motion_simulation_config is None
         and cfg.get("simulated_motion_type") is None
     ):
@@ -528,7 +528,7 @@ def _resolve_motion_simulation(cfg, *, sampling_from_data):
     cfg["simulated_motion_type"] = _normalize_simulated_motion_type(cfg.get("simulated_motion_type"))
     if (
         cfg["simulated_motion_type"] == "as-it-is"
-        and cfg.get("data_type") not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+        and cfg.get("data_type") not in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
     ):
         raise ValueError(
             "simulated_motion_type='as-it-is' is only valid for real-world inputs."
@@ -567,12 +567,12 @@ def _apply_notebook_output_defaults(cfg, overrides):
 
 def _apply_display_defaults(cfg, data_type):
     if "flip_for_display" not in cfg:
-        cfg["flip_for_display"] = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+        cfg["flip_for_display"] = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
 
 
 def _normalize_runtime_config(runtime, data_type):
     if runtime.flip_for_display is None:
-        runtime.flip_for_display = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+        runtime.flip_for_display = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
     if runtime.clean_output_folders_before_run is None:
         runtime.clean_output_folders_before_run = True
     if runtime.jupyter_notebook_flag is None:
@@ -594,7 +594,7 @@ def _normalize_runtime_config(runtime, data_type):
 
 def _normalize_sampling_config(sampling, data_type):
     if sampling.acceleration_factor is None:
-        if sampling.kspace_sampling_type == "from-data" or data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
+        if sampling.kspace_sampling_type == "from-data" or data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}:
             sampling.acceleration_factor = 1
         else:
             raise ValueError("acceleration_factor is required in the sampling configuration.")
@@ -607,7 +607,7 @@ def _normalize_sampling_config(sampling, data_type):
         sampling.calibration_lines = _normalize_positive_int(sampling.calibration_lines, "calibration_lines")
 
     if sampling.kspace_sampling_type is None:
-        if data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}:
+        if data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}:
             sampling.kspace_sampling_type = "from-data"
         else:
             sampling.kspace_sampling_type = "linear"

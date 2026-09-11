@@ -10,7 +10,7 @@ from skimage.transform import resize
 import math
 import h5py
 
-from src.preprocessing.RawDataReader import RawDataReader
+from src.preprocessing.RawDataPreparer import RawDataPreparer
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
@@ -36,6 +36,7 @@ class DataLoader:
         filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None,
         slice_idx=None,
         run_pipeline=True,
+        polaris_channel_mode="all",
     ):
         """
         Load source data and prepare reconstruction inputs.
@@ -44,14 +45,12 @@ class DataLoader:
             params: Runtime/config parameters.
             sp_device: SigPy device.
             t_device: Torch device.
-            filename: Source filename(s). For data_type="ismrmrd-saec", this must be
-                either a 2-item tuple/list ``(ismrmrd_file, saec_file)`` or a dict
-                with keys ``"ismrmrd_file"`` and ``"saec_file"``. For
-                data_type="siemens-saec", this must be a 2-item tuple/list
-                ``(siemens_raw_file, saec_file)`` or a dict with keys
-                ``"siemens_file"`` and ``"saec_file"``. Other data types use a
-                single path string when a filename is required.
-            slice_idx: Slice/partition to load for 2D preprocessed-real/ismrmrd-saec/siemens-saec inputs.
+            filename: Source path, or a pair (MRI file, physiological file) for raw data.
+                Raw types are ismrmrd-saec, siemens-saec, ismrmrd-polaris, and
+                siemens-polaris. Dictionaries use ismrmrd_file or siemens_file,
+                plus saec_file or polaris_file. Polaris input is a tracking TSV.
+            slice_idx: Slice/partition to load for 2D real-data inputs.
+            polaris_channel_mode: "all" or "largest-amplitude" tool-axis selection for Polaris.
             run_pipeline: If true, load data and run the slice-wise preparation pipeline.
                 If false, call load_data() and run_slice_pipeline() explicitly.
         """
@@ -62,6 +61,8 @@ class DataLoader:
             filename=filename,
             slice_idx=slice_idx,
         )
+        self.polaris_channel_mode = polaris_channel_mode
+        self.raw_data_preparer = None
         self._validate_inputs()
         if run_pipeline:
             self.load_data()
@@ -80,7 +81,7 @@ class DataLoader:
         self.t_device = t_device
         self.filename = filename
         self.rawdata_filenames = None
-        self.siemens_saec_filenames = None
+        self.siemens_filenames = None
         self.slice_idx = slice_idx
         self.motion_plot_context = None
         self._motion_curve_for_binning = None
@@ -105,28 +106,28 @@ class DataLoader:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
 
         is_3d = getattr(self.params, "data_dimension", None) == "3D"
-        supports_slice_idx = self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+        supports_slice_idx = self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
 
         if self.slice_idx is not None:
             self.slice_idx = int(self.slice_idx)
 
-        if self.params.data_type == "ismrmrd-saec":
+        if self.params.data_type in {"ismrmrd-saec", "ismrmrd-polaris"}:
             self.rawdata_filenames = self._resolve_rawdata_filenames()
-            if not getattr(self.params, "rawdata_sensor_type", None):
+            if self.params.data_type.endswith("-saec") and not getattr(self.params, "rawdata_sensor_type", None):
                 raise ValueError(
                     "rawdata_sensor_type must be set for data_type='ismrmrd-saec'."
                 )
 
-        if self.params.data_type == "siemens-saec":
-            self.siemens_saec_filenames = self._resolve_siemens_saec_filenames()
-            if not getattr(self.params, "rawdata_sensor_type", None):
+        if self.params.data_type in {"siemens-saec", "siemens-polaris"}:
+            self.siemens_filenames = self._resolve_siemens_filenames()
+            if self.params.data_type.endswith("-saec") and not getattr(self.params, "rawdata_sensor_type", None):
                 raise ValueError(
                     "rawdata_sensor_type must be set for data_type='siemens-saec'."
                 )
 
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
-                "slice_idx is only supported for 2D preprocessed-real, ismrmrd-saec, or siemens-saec inputs. "
+                "slice_idx is only supported for 2D preprocessed-real or raw MRI/physiology inputs. "
                 f"Do not provide slice_idx when data_type='{self.params.data_type}'."
             )
 
@@ -135,7 +136,7 @@ class DataLoader:
 
         if is_3d and self.slice_idx is not None:
             raise ValueError(
-                "slice_idx is only supported for 2D preprocessed-real, ismrmrd-saec, or siemens-saec inputs. "
+                "slice_idx is only supported for 2D preprocessed-real or raw MRI/physiology inputs. "
                 "Do not provide slice_idx when data_dimension='3D'."
             )
 
@@ -154,7 +155,7 @@ class DataLoader:
         if (
             slice_idx is None and self.slice_idx is None
             and self.params.data_dimension == "2D"
-            and self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec"}
+            and self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
         ):
             if int(self.Nz) == 1:
                 slice_idx = 0
@@ -192,15 +193,15 @@ class DataLoader:
             self._generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'preprocessed-real': # Preprocessed real data with acquisition order and motion data
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
-        elif self.params.data_type == 'ismrmrd-saec': # Preprocessed real data with acquisition order and motion data, loaded from raw data files
-            path_to_ismrm, path_to_saec = self.rawdata_filenames
+        elif self.params.data_type in {'ismrmrd-saec', 'ismrmrd-polaris'}: # Preprocessed real data with acquisition order and motion data, loaded from raw data files
+            path_to_ismrm, path_to_physiology = self.rawdata_filenames
             self.source_ismrmrd_file = path_to_ismrm
-            self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
-        elif self.params.data_type == 'siemens-saec':
-            path_to_siemens, path_to_saec = self.siemens_saec_filenames
+            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology, slice_idx=self.slice_idx)
+        elif self.params.data_type in {'siemens-saec', 'siemens-polaris'}:
+            path_to_siemens, path_to_physiology = self.siemens_filenames
             path_to_ismrm = self._convert_siemens_to_ismrmrd(path_to_siemens)
             self.source_ismrmrd_file = path_to_ismrm
-            self._load_realworld_data_from_ismrm_and_saec(path_to_ismrm, path_to_saec, slice_idx=self.slice_idx)
+            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology, slice_idx=self.slice_idx)
         elif self.params.data_type == 'from_image':
             self._load_from_image(self.filename)
         else:
@@ -726,38 +727,32 @@ class DataLoader:
         self._motion_plot_kwargs = {}
 
     def _resolve_rawdata_filenames(self):
-        if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
-            return self.filename
-        if isinstance(self.filename, dict):
-            return self.filename.get("ismrmrd_file"), self.filename.get("saec_file")
+        return self._resolve_mri_physiology_filenames("ismrmrd_file")
 
-        raise ValueError(
-            "For data_type='ismrmrd-saec', filename must be a 2-item tuple/list "
-            "(ismrmrd_file, saec_file) or a dict with keys "
-            "'ismrmrd_file' and 'saec_file'."
-        )
+    def _resolve_siemens_filenames(self):
+        return self._resolve_mri_physiology_filenames("siemens_file")
 
-    def _resolve_siemens_saec_filenames(self):
+    def _resolve_mri_physiology_filenames(self, mri_key):
+        physiology_key = "polaris_file" if self.params.data_type.endswith("-polaris") else "saec_file"
+        pair = None
         if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
-            return self.filename
-        if isinstance(self.filename, dict):
-            siemens_file = (
-                self.filename.get("siemens_file")
-                or self.filename.get("siemens_raw_file")
-                or self.filename.get("dat_file")
+            pair = self.filename
+        elif isinstance(self.filename, dict):
+            mri_file = self.filename.get(mri_key)
+            if mri_key == "siemens_file" and mri_file is None:
+                mri_file = self.filename.get("siemens_raw_file") or self.filename.get("dat_file")
+            pair = (mri_file, self.filename.get(physiology_key))
+        if pair is None or any(value is None or value == "" for value in pair):
+            raise ValueError(
+                f"For data_type={self.params.data_type!r}, filename must contain both files: "
+                f"a 2-item tuple/list ({mri_key}, {physiology_key}) or a dict with keys "
+                f"{mri_key!r} and {physiology_key!r}."
             )
-            return siemens_file, self.filename.get("saec_file")
-
-        raise ValueError(
-            "For data_type='siemens-saec', filename must be a 2-item tuple/list "
-            "(siemens_raw_file, saec_file) or a dict with keys "
-            "'siemens_file' and 'saec_file'."
-        )
-
+        return pair
 
     def _convert_siemens_to_ismrmrd(self, path_to_siemens):
         if path_to_siemens is None:
-            raise ValueError("Missing Siemens raw data file for data_type='siemens-saec'.")
+            raise ValueError("Missing Siemens raw data file.")
 
         path_to_siemens = os.fspath(path_to_siemens)
         if not os.path.exists(path_to_siemens):
@@ -787,7 +782,7 @@ class DataLoader:
         except FileNotFoundError as exc:
             raise RuntimeError(
                 "siemens_to_ismrmrd executable was not found. Install it or use "
-                "data_type='ismrmrd-saec' with an already converted ISMRMRD file."
+                "data_type='ismrmrd-saec' or 'ismrmrd-polaris' with an already converted ISMRMRD file."
             ) from exc
         except subprocess.CalledProcessError as exc:
             details = "\n".join(part for part in [exc.stdout, exc.stderr] if part)
@@ -883,15 +878,19 @@ class DataLoader:
         self.nex_idx = self._source_idx_nex[slice_idx]
         self._configure_realworld_motion_inputs(motion_data, kz_all=None)
 
-    def _load_realworld_data_from_ismrm_and_saec(self, path_to_ismrm, path_to_saec, slice_idx=None):
-        reader = RawDataReader(
+    def _load_realworld_data_from_ismrm_and_physiology(self, path_to_ismrm, path_to_physiology, slice_idx=None):
+        preparer = RawDataPreparer(
             ismrmrd_file=path_to_ismrm,
-            saec_file=path_to_saec,
-            sensor_type=self.params.rawdata_sensor_type,
+            physiological_file=path_to_physiology,
+            polaris_channel_mode=self.polaris_channel_mode,
+            physiological_format=("PolarisInfraredTracker"
+                                  if self.params.data_type.endswith("-polaris") else "SAEC"),
+            sensor_type=getattr(self.params, "rawdata_sensor_type", "BELT"),
             device="cpu",
             debug=self.params.debug_flag,
         )
-        data = reader._read_data_from_rawdata()
+        self.raw_data_preparer = preparer
+        data = preparer.read_data()
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
         if self.params.debug_flag and hasattr(self, "ky_idx"):

@@ -97,6 +97,15 @@ Loaded from raw scanner and physiological files using `RawDataReader`:
 The reader converts these files to the arrays used by the `preprocessed-real` mode.
 The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
 
+### `ismrmrd-polaris` and `siemens-polaris`
+
+Select these types with `load_config(data_type=...)`. Pass `DataLoader` a pair
+`(mri_file, tracking_tsv)` or a dictionary containing `ismrmrd_file` / `siemens_file`
+and `polaris_file`. The Siemens variant converts the MRI file to ISMRMRD first.
+Polaris filtering and normalization are handled by `PolarisInfraredTrackerReader`;
+no `rawdata_sensor_type` setting is required. Both types support 2D slice selection
+and 3D volume loading, with sampling read from the acquisition data.
+
 ### `siemens-saec`
 
 Loaded from Siemens raw scanner data and physiological files:
