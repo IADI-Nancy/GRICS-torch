@@ -1,32 +1,13 @@
 [motion]
-# Motion simulation data dimensionality tag for compatibility checks.
+include = "common/nonrigid_common.toml"
+# Dimensionality required by this motion simulation file.
 motion_simulation_config_dimension = "3D"
-# Synthetic motion model and temporal behavior.
+# Continuous respiratory motion over the acquisition.
 simulated_motion_type = "non-rigid-realistic"
+# Run the simulated non-rigid reconstruction consistency check.
+check_simulated_motion_consistency = true
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 2.0
-# Per-shot Gaussian scale for the discrete non-rigid temporal coefficient `s`.
-nonrigid_discrete_s_scale = 4.0
-# Random respiratory cycles over full acquisition duration.
+# Inclusive range of random respiratory cycles over the full acquisition.
 nonrigid_resp_cycles_min = 6
 nonrigid_resp_cycles_max = 7
-
-# Inferior activation center in normalized SI coordinates [-1, 1].
-nonrigid_diaphragm_level = 0.2
-# Steepness of inferior activation transition.
-nonrigid_diaphragm_sharpness = 10.0
-# Lateral spread of the respiratory motion envelope (left-right axis).
-nonrigid_lateral_sigma_lr = 0.45
-# Lateral spread of the respiratory motion envelope (anterior-posterior axis).
-nonrigid_lateral_sigma_ap = 0.30
-# Relative strength of left-right displacement vs SI displacement.
-nonrigid_lr_fraction = 0.15
-# Relative strength of anterior-posterior displacement vs SI displacement.
-nonrigid_ap_fraction = 0.35
-# Anterior bias factor for supine imaging (0 = symmetric, 1 = fully anterior).
-# Suppresses posterior motion to model table constraint.
-nonrigid_anterior_bias = 0.7
-# Extra SI gain toward the most inferior area.
-nonrigid_inferior_gain = 0.0
-# Additional attenuation toward the top region (higher -> stronger decrease at top).
-nonrigid_top_decay = 1.0

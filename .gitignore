@@ -15,7 +15,8 @@ bart-*
 !.vscode/settings.json
 latex/
 .conda-latex/
-tests/
+tests/*
+!tests/test_configuration_validation.py
 data/*
 !data/demo_motion-free_breast_image.png
 demos_data/*.h5

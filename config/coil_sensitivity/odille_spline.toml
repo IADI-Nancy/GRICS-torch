@@ -1,0 +1,9 @@
+[coil_sensitivity]
+# Estimate sensitivity maps with the Odille spline method.
+coil_sensitivity_method = "odille-spline"
+# Smoothing weight for coil-magnitude maps.
+spline_magnitude_smoothing = 1000.0
+# Smoothing weight for coil-phase maps.
+spline_phase_smoothing = 1000.0
+# Positive lower bound for reference-image normalization.
+coil_sensitivity_eps = 1.0e-8

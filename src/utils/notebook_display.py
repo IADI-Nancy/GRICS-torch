@@ -96,7 +96,7 @@ def display_run_panels(
     image_gt=None,
 ):
     if jupyter_notebook_flag is None:
-        jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
+        jupyter_notebook_flag = bool(params.jupyter_notebook_flag)
     if not jupyter_notebook_flag:
         return
     if has_ground_truth is None:
@@ -160,7 +160,7 @@ def display_run_panels(
                 alpha_rec=alpha_rec,
                 image_sim=image_sim,
                 image_rec=image_rec,
-                flip_vertical=bool(getattr(params, "flip_for_display", False)),
+                flip_vertical=bool(params.flip_for_display),
             )
         else:
             _display_image_row(
@@ -181,7 +181,7 @@ def display_run_panels(
 
 def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_notebook_flag=None):
     if jupyter_notebook_flag is None:
-        jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
+        jupyter_notebook_flag = bool(params.jupyter_notebook_flag)
     if not jupyter_notebook_flag:
         return
     if has_ground_truth is None:
@@ -189,7 +189,7 @@ def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_
 
     input_folder = Path(params.initial_data_folder)
     row_width = 13.0 if has_ground_truth else 10.0
-    is_3d = getattr(params, "data_dimension", None) == "3D"
+    is_3d = params.data_dimension == "3D"
     sampling_path = _first_existing_glob(
         input_folder,
         "ky_kz_order_nex*.png",

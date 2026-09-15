@@ -11,19 +11,20 @@ initial_data_folder = "initial_data/"
 [runtime]
 # Save diagnostic motion curves/fields, acquisition-order plots, and per-level reconstruction images.
 save_debug_plots = true
-# Run the reconstruction consistency check for simulated non-rigid motion.
-# Its recovered-image figure is saved only when save_debug_plots is also true.
-check_simulated_motion_consistency = true
 # Request deterministic PyTorch/cuDNN algorithms; warn when unavailable. Seeding is controlled below.
 use_deterministic_algorithms = true
-# Print one line per raw parallel-calibration acquisition (acquisition, ky, z, repetition).
-# Independent of diagnostic plots; does not change which raw data are read or retained.
-print_raw_calibration_lines = false
 # Preferred compute device: "gpu" or "cpu".
 runtime_device = "gpu"
-# Random seed for reproducibility. Remove this line to disable seeding.
+# Enable random seeding independently of deterministic algorithms.
+seed_enabled = true
+# Random seed used when seed_enabled is true.
 seed = 1
-# Print logs.
+# Notebook mode disables verbose/console logging unless explicitly set in overrides.
+# Any automatic logging change is printed as an informational message.
+jupyter_notebook_flag = false
+# Flip displayed images vertically. Set explicitly for acquisition orientation.
+flip_for_display = false
+# Print inner conjugate-gradient solver diagnostics.
 verbose = true
 # Print JointReconstructor progress to console.
 print_to_console = true
@@ -38,24 +39,3 @@ normalize_kspace = true
 kspace_norm_mode = "rms"
 # Lower bound to avoid division by zero during normalization.
 kspace_norm_eps = 1.0e-12
-
-[coil_sensitivity]
-# Coil sensitivity method: "espirit" or "odille-spline".
-coil_sensitivity_method = "odille-spline"
-# Width of auto-calibration signal region for ESPIRiT.
-acs = 48
-# Number of central ky lines used for coil maps when no explicit calibration lines exist.
-coil_sensitivity_calibration_lines = 48
-# ESPIRiT kernel width.
-kernel_width = 12
-# ESPIRiT power-method iterations.
-espirit_max_iter = 100
-# Spline smoothing weights for the Odille-style coil sensitivity estimator.
-spline_magnitude_smoothing = 1000.0
-spline_phase_smoothing = 1000.0
-# Lower bound for odille-spline sensitivity normalization.
-coil_sensitivity_eps = 1.0e-8
-
-[raw_data]
-# Physiological sensor channel to read from the SAEC file.
-rawdata_sensor_type = "1MARMOT"

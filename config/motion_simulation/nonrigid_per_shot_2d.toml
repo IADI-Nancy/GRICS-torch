@@ -1,0 +1,10 @@
+[motion]
+include = "common/nonrigid_common.toml"
+# Dimensionality required by this motion simulation file.
+motion_simulation_config_dimension = "2D"
+# One independently sampled non-rigid state per acquisition shot.
+simulated_motion_type = "non-rigid-per-shot"
+# Run the simulated non-rigid reconstruction consistency check.
+check_simulated_motion_consistency = true
+# Gaussian scale for the discrete non-rigid temporal coefficient s.
+nonrigid_discrete_s_scale = 4.0

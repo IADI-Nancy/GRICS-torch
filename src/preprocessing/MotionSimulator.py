@@ -27,19 +27,8 @@ from src.utils.motion_simulator_utils import (
 )
 
 class MotionSimulator:
-    def __init__(
-        self,
-        image,
-        smaps,
-        ky_idx,
-        nex_idx,
-        ky_per_motion_state,
-        params,
-        sp_device=None,
-        t_device=None,
-        kz_idx=None,
-        kz_per_motion_state=None,
-    ):
+    def __init__(self, image, smaps, ky_idx, nex_idx, ky_per_motion_state, params,
+        sp_device=None, t_device=None, kz_idx=None, kz_per_motion_state=None,):
         self.image = image
         self.smaps = smaps
         self.ky_idx = ky_idx
@@ -102,9 +91,9 @@ class MotionSimulator:
         # Time axis: one value per k-space line (Ny)
         total_lines = num_motion_readouts(self.ky_idx)
         n_events = int(require_motion_param(self.params, "num_motion_events"))
-        n_events = max(1, min(n_events, total_lines))
+        if n_events > total_lines:
+            raise ValueError("num_motion_events cannot exceed the number of acquired readouts.")
         tau = int(require_motion_param(self.params, "motion_tau"))
-        tau = max(1, tau)
 
         # 1) Generate unique event times over the full acquisition.
         # Each event represents a bounded state-to-state change.
@@ -148,9 +137,9 @@ class MotionSimulator:
         # Time axis: one value per acquired 3D readout.
         n_states = num_motion_readouts(self.ky_idx)
         n_events = int(require_motion_param(self.params, "num_motion_events"))
-        n_events = max(1, min(n_events, n_states))
+        if n_events > n_states:
+            raise ValueError("num_motion_events cannot exceed the number of acquired readouts.")
         tau = int(require_motion_param(self.params, "motion_tau"))
-        tau = max(1, tau)
 
         # Random unique event times over the full acquisition.
         # Each event applies a bounded state-to-state increment.

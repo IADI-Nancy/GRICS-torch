@@ -1,0 +1,4 @@
+[postprocessing]
+# Divide the final image by the smoothed GRICS reference-image magnitude.
+# Applied after reconstruction by the breast pipeline; requires Odille spline coil maps.
+normalize_image_by_grics_reference = false

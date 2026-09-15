@@ -1,11 +1,9 @@
 [from_image]
+# Input images are two-dimensional.
+data_dimension = "2D"
 # Number of synthetic receiver coils used to generate k-space from input images.
 # Must be divisible by 4.
 Ncoils_input = 4
 # Multiplicative resize factor applied to loaded image before synthetic k-space generation.
 # 1.0 keeps original size; values <1 downsample; values >1 upsample.
 image_resize_factor = 1.0
-# In-plane field-of-view in mm (used to convert simulated translation limits from mm to pixels).
-FoVxy_mm = 220.0
-# Through-plane field-of-view in mm (used to convert z-translation limits from mm to voxels).
-FoVz_mm = 160.0

@@ -1,0 +1,9 @@
+[coil_sensitivity]
+# Estimate sensitivity maps with ESPIRiT.
+coil_sensitivity_method = "espirit"
+# Square/cubic calibration region width; must fit every encoded spatial axis.
+espirit_calibration_width = 48
+# ESPIRiT kernel width; cannot exceed espirit_calibration_width.
+espirit_kernel_width = 12
+# ESPIRiT power-method iterations.
+espirit_max_iter = 100

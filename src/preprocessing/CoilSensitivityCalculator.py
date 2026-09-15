@@ -16,7 +16,7 @@ class CoilSensitivityCalculator:
         self.sp_device = sp_device
 
     def calculate(self, kspace, reference_kspace=None):
-        method = str(getattr(self.params, "coil_sensitivity_method", "espirit")).strip().lower()
+        method = str(self.params.coil_sensitivity_method).strip().lower()
         if method not in self.VALID_METHODS:
             raise ValueError(
                 "coil_sensitivity_method must be one of "
@@ -33,29 +33,10 @@ class CoilSensitivityCalculator:
             return kspace[:, 0]
         return torch.mean(kspace, dim=1)
 
-    def _central_ky_calibration_kspace(self, kspace):
-        kspace_calib = self._average_repetitions(kspace)
-        nky = int(kspace_calib.shape[2])
-        n_lines = int(
-            getattr(
-                self.params,
-                "coil_sensitivity_calibration_lines",
-                getattr(self.params, "acs", nky),
-            )
-        )
-        n_lines = max(1, min(n_lines, nky))
-        start = (nky - n_lines) // 2
-        stop = start + n_lines
-
-        central = torch.zeros_like(kspace_calib)
-        central[:, :, start:stop, :] = kspace_calib[:, :, start:stop, :]
-        return central
-
-    def _calibration_kspace(self, kspace, reference_kspace=None, *, use_central_lines=False):
+    def _calibration_kspace(self, kspace, reference_kspace=None):
+        """Return the averaged k-space used by the selected CSM method."""
         if reference_kspace is not None:
             return self._average_repetitions(reference_kspace)
-        if use_central_lines:
-            return self._central_ky_calibration_kspace(kspace)
         return self._average_repetitions(kspace)
 
     @staticmethod
@@ -120,6 +101,7 @@ class CoilSensitivityCalculator:
                 kspace_block, calib_width, kernel_width, sp_device,
             )
         except cp.cuda.memory.OutOfMemoryError:
+            print("[coil sensitivity] GPU memory exhausted; running ESPIRiT on CPU.", flush=True)
             self._cupy_cleanup(cp)
             return self._run_espirit_calibration_cpu(
                 kspace_block, calib_width, kernel_width, sp_device=sp.Device(-1),
@@ -131,26 +113,20 @@ class CoilSensitivityCalculator:
         ncha, _, nx, ny, nz = kspace.shape
         kspace_calib = self._calibration_kspace(kspace, reference_kspace=reference_kspace)
 
-        if nz > 1:
-            calib_width_eff = max(1, min(int(self.params.acs), nx, ny, nz))
-        else:
-            calib_width_eff = max(1, min(int(self.params.acs), nx, ny))
-        kernel_width_eff = max(1, min(int(self.params.kernel_width), calib_width_eff))
+        calib_width_eff = self.params.espirit_calibration_width
+        kernel_width_eff = self.params.espirit_kernel_width
+        spatial_limit = min(nx, ny, nz) if nz > 1 else min(nx, ny)
+        if calib_width_eff > spatial_limit:
+            raise ValueError("espirit_calibration_width exceeds the smallest encoded spatial dimension.")
+        if kernel_width_eff > calib_width_eff:
+            raise ValueError("espirit_kernel_width cannot exceed espirit_calibration_width.")
 
         if nz > 1:
-            return self._run_espirit_calibration(
-                kspace_calib,
-                calib_width_eff,
-                kernel_width_eff,
-            )
+            return self._run_espirit_calibration(kspace_calib, calib_width_eff, kernel_width_eff)
 
         espirit_maps = torch.zeros((ncha, nx, ny, nz), dtype=torch.complex128, device=kspace.device)
         for z in range(nz):
-            espirit_maps[:, :, :, z] = self._run_espirit_calibration(
-                kspace_calib[:, :, :, z],
-                calib_width_eff,
-                kernel_width_eff,
-            )
+            espirit_maps[:, :, :, z] = self._run_espirit_calibration(kspace_calib[:, :, :, z], calib_width_eff, kernel_width_eff)
         return espirit_maps
 
     @staticmethod
@@ -202,8 +178,8 @@ class CoilSensitivityCalculator:
         nonzero_surface_abs = torch.clamp(surface_abs, min=threshold.item())
         surface_phase = coil_images / nonzero_surface_abs
 
-        lambda_magnitude = float(getattr(self.params, "spline_magnitude_smoothing", 1000.0))
-        lambda_phase = float(getattr(self.params, "spline_phase_smoothing", 1000.0))
+        lambda_magnitude = float(self.params.spline_magnitude_smoothing)
+        lambda_phase = float(self.params.spline_phase_smoothing)
 
         if lambda_magnitude > 0:
             surface_abs = self._spline_fft_solver(
@@ -229,7 +205,7 @@ class CoilSensitivityCalculator:
             ).permute(0, 2, 3, 1)
 
         phase_factor = torch.exp(1j * torch.angle(surface_phase))
-        eps = float(getattr(self.params, "coil_sensitivity_eps", 1.0e-8))
+        eps = float(self.params.coil_sensitivity_eps)
         # C++ divides by the smoothed reference directly.  Only guard exact
         # numerical zeros; do not impose an additional relative intensity floor.
         reference_denominator = torch.where(

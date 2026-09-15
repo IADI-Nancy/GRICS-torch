@@ -14,13 +14,13 @@ class RawDataPreparer:
 
     polaris_channel_mode="all" uses tool Tx/Ty/Tz. "largest-amplitude" uses
     the axis with greatest peak-to-peak range at full-sequence MRI readout times,
-    measured after low-pass filtering and before normalization. The default remains all three channels.
+    measured after low-pass filtering and before normalization. The caller selects the mode explicitly.
     Both physiological formats use the same synchronizer before slice selection.
     RawDataReader is responsible only for MRI acquisition reading and mapping.
     """
 
-    def __init__(self, ismrmrd_file, physiological_file, *, physiological_format="SAEC",
-                 sensor_type="BELT", device="cpu", print_raw_calibration_lines=False, polaris_channel_mode="all"):
+    def __init__(self, ismrmrd_file, physiological_file, *, physiological_format,
+                 sensor_type, device, print_raw_calibration_lines, polaris_channel_mode):
         if physiological_format not in {"SAEC", "PolarisInfraredTracker"}:
             raise ValueError("Unsupported physiological format.")
         # Readers own format-specific processing; the logging flag affects only raw calibration messages.
@@ -126,56 +126,28 @@ class RawDataPreparer:
                 raw["reference_kspace"]).detach().cpu().numpy()
         return data
 
-    def _reshape_data_slicewise(
-        self,
-        respiratory_data_interpolated,
-        z_indices,
-        idx_ky,
-        idx_kz,
-        idx_nex,
-        group_by_z_index=True,
-    ):
+    def _reshape_data_slicewise(self, respiratory_data_interpolated, z_indices,
+        idx_ky, idx_kz, idx_nex, group_by_z_index=True):
 
         device = respiratory_data_interpolated.device
 
         if not group_by_z_index:
             # 3D slab acquisition: keep one row per readout and one column per physiological sensor.
-            return (
-                respiratory_data_interpolated,
-                idx_ky.reshape(1, -1),
-                idx_kz.reshape(1, -1),
-                idx_nex.reshape(1, -1),
-            )
+            return (respiratory_data_interpolated, idx_ky.reshape(1, -1), idx_kz.reshape(1, -1), idx_nex.reshape(1, -1))
 
         N_SLI = int(torch.max(z_indices).item()) + 1
 
         counts = torch.bincount(z_indices, minlength=N_SLI)
         if torch.any(counts != counts[0]):
-            raise ValueError(
-                "Acquisition lines per z-index are not uniform; cannot reshape into "
-                "[Nz, Nlines] realworld format."
-            )
+            raise ValueError("Acquisition lines per z-index are not uniform; cannot reshape into " "[Nz, Nlines] realworld format.")
         lines_per_slice = int(counts[0].item())
 
-        motion_data = torch.zeros(
-            (N_SLI, lines_per_slice, respiratory_data_interpolated.shape[1]),
-            dtype=respiratory_data_interpolated.dtype,
-            device=device)
+        motion_data = torch.zeros((N_SLI, lines_per_slice, respiratory_data_interpolated.shape[1]),
+            dtype=respiratory_data_interpolated.dtype, device=device)
 
-        line_idx_y = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_ky.dtype,
-            device=device)
-
-        line_idx_z = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_kz.dtype,
-            device=device)
-
-        line_idx_nex = torch.zeros(
-            (N_SLI, lines_per_slice),
-            dtype=idx_nex.dtype,
-            device=device)
+        line_idx_y = torch.zeros((N_SLI, lines_per_slice), dtype=idx_ky.dtype, device=device)
+        line_idx_z = torch.zeros((N_SLI, lines_per_slice), dtype=idx_kz.dtype, device=device)
+        line_idx_nex = torch.zeros((N_SLI, lines_per_slice), dtype=idx_nex.dtype, device=device)
 
         for i_sli in range(N_SLI):
             mask = (z_indices == i_sli)
@@ -188,6 +160,7 @@ class RawDataPreparer:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
+    # CODEX: here, h5filename is ambiguous. is it siemens raw data, saec or GRICS-torch h5 (preprocessed h5)? to rename
     def read_data(self, h5filename=None, slice_idx=None):
         """Return reconstruction-ready arrays, optionally selecting a slice/exporting H5.
 

@@ -1,0 +1,4 @@
+[sampling]
+# Preserve the acquisition order and repetition counts recorded in real input data.
+# Loaded automatically for real data when no simulated sampling is selected.
+kspace_sampling_type = "from-data"

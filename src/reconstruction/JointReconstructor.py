@@ -104,10 +104,11 @@ class JointReconstructor:
         self.Data_full["SamplingIndices"] = SamplingIndices
         self._initialize_motion_state_schedule()
 
+    # CODEX: what is motion step schedule?
     def _initialize_motion_state_schedule(self):
         full_states = int(self.params.N_motion_states)
-        schedule = getattr(self.params, "N_motion_states_per_level", None)
-        if schedule is None:
+        schedule = self.params.N_motion_states_per_level
+        if schedule == "full":
             schedule = [full_states] * len(self.params.ResolutionLevels)
         self.motion_states_per_level = [int(value) for value in schedule]
         if len(self.motion_states_per_level) != len(self.params.ResolutionLevels):
@@ -279,7 +280,7 @@ class JointReconstructor:
         )
 
         binning_mode = str(
-            getattr(self.params, "motion_binning_mode", "kmeans")
+            self.params.motion_binning_mode
         ).strip().lower()
         if binning_mode == "kspace_energy":
             if kspace is None:
@@ -460,7 +461,8 @@ class JointReconstructor:
             E, reg_lambda=regularization_weight, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
             true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
             max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
-            reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
+            reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
+                                  if self.params.cg_use_reg_scale_proxy else None),
         )
         _assign_cached_reg_scale(self.params, Data_res, "image", solver, b.flatten())
 
@@ -509,7 +511,8 @@ class JointReconstructor:
                 regularization_shape=reg_shape, regularization_spatial_dims=(1, 2, 3) if int(Data_res.get("Nz", 1)) > 1 else (1, 2), verbose=self.params.verbose,
                 early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
                 max_stag_steps=self.params.cg_max_stag_steps, max_more_steps=self.params.cg_max_more_steps,
-                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
+                use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
+                                  if self.params.cg_use_reg_scale_proxy else None),
             )
             # Unscaled _regularization:
             # _A(dm) = J^H J dm + mu * GhG(dm)
@@ -522,7 +525,8 @@ class JointReconstructor:
                 J, reg_lambda=self.params.lambda_m, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
                 true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
                 max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
-                reg_scale_num_probes=self.params.cg_reg_scale_num_probes,
+                reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
+                                  if self.params.cg_use_reg_scale_proxy else None),
             )
             _assign_cached_reg_scale(self.params, Data_res, "motion_rigid", solver, b_data.flatten())
             mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
@@ -763,9 +767,9 @@ class JointReconstructor:
         """
         resolution_levels = self.params.ResolutionLevels
         iterations_per_level = _parse_gn_iterations_per_level(self.params, resolution_levels)
-        save_outputs = bool(getattr(self.params, "save_reconstruction_outputs", True))
-        gn_early_stopping = bool(getattr(self.params, "gn_early_stopping", True))
-        update_final_motion = bool(getattr(self.params, "update_motion_on_final_iteration", False))
+        save_outputs = bool(self.params.save_reconstruction_outputs)
+        gn_early_stopping = bool(self.params.gn_early_stopping)
+        update_final_motion = bool(self.params.update_motion_on_final_iteration)
         logger = _JointReconstructionLogger(self.params, iterations_per_level)
         run_t0 = time.perf_counter()
         previous = None

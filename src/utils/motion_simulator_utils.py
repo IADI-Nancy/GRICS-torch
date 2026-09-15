@@ -11,7 +11,7 @@ def require_motion_param(params, name):
 
 
 def rigid_motion_amplitude_scale(params):
-    scale = float(getattr(params, "rigid_motion_amplitude_scale", 1.0))
+    scale = float(params.rigid_motion_amplitude_scale)
     if scale < 0:
         raise ValueError("rigid_motion_amplitude_scale must be >= 0.")
     return scale
