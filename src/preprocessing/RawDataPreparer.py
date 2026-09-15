@@ -20,16 +20,16 @@ class RawDataPreparer:
     """
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_format="SAEC",
-                 sensor_type="BELT", device="cpu", debug=False, polaris_channel_mode="all"):
+                 sensor_type="BELT", device="cpu", print_raw_calibration_lines=False, polaris_channel_mode="all"):
         if physiological_format not in {"SAEC", "PolarisInfraredTracker"}:
             raise ValueError("Unsupported physiological format.")
-        # Keep the public options compatible; readers own format-specific processing.
+        # Readers own format-specific processing; the logging flag affects only raw calibration messages.
         self.polaris_channel_mode = polaris_channel_mode
         self.physiological_reader = (
             PolarisInfraredTrackerReader(channel_mode=polaris_channel_mode)
             if physiological_format == "PolarisInfraredTracker"
             else SAECReader(sensor_type=sensor_type))
-        self.reader = RawDataReader(ismrmrd_file, device=device, debug=debug)
+        self.reader = RawDataReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
         self.physiological_file = physiological_file
         self.physiological_format = physiological_format
         self.sensor_type = sensor_type

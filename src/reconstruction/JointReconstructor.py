@@ -791,7 +791,7 @@ class JointReconstructor:
                 gn_early_stopping=gn_early_stopping, logger=logger)
 
             # Save optional level diagnostics without mixing them into GN logic.
-            if save_outputs and self.params.debug_flag:
+            if save_outputs and self.params.save_debug_plots:
                 show_and_save_image(data["ReconstructedImage"][0],
                     f"image_resolution_level{level_index + 1}", self.params.debug_folder,
                     flip_for_display=self.params.flip_for_display)

@@ -139,7 +139,7 @@ class MotionSimulator:
         M = torch.stack([tx, ty, phi], dim=0)
         navigator = build_navigator_from_motion_matrix(M)
         # save debug plots
-        if self.params.debug_flag:
+        if self.params.save_debug_plots:
             save_motion_debug_plots(navigator, tx, ty, phi, self.params.debug_folder, event_times)
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
@@ -193,7 +193,7 @@ class MotionSimulator:
         M = torch.stack([tx, ty, tz, rx, ry, rz], dim=0)
         navigator = build_navigator_from_motion_matrix(M)
 
-        if self.params.debug_flag:
+        if self.params.save_debug_plots:
             # Keep existing debug plot signature by visualizing rz as the rotational surrogate.
             save_motion_debug_plots(navigator, tx, ty, rz, self.params.debug_folder, event_times)
 
@@ -316,7 +316,7 @@ class MotionSimulator:
             self.phi = expanded_curves["phi"]
 
         # save debug plots
-        if self.params.debug_flag:
+        if self.params.save_debug_plots:
             save_motion_debug_plots(self.navigator, self.tx, self.ty, self.rz if self.Nz > 1 else self.phi, self.params.debug_folder)
 
         return self.navigator, alpha, centers
@@ -459,7 +459,7 @@ class MotionSimulator:
         alpha_maps = self._create_discrete_non_rigid_alpha_fields().unsqueeze(-1)
         self.alpha_maps = alpha_maps
 
-        if self.params.debug_flag:
+        if self.params.save_debug_plots:
             save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.debug_folder, flip_vertical=self.params.flip_for_display)
 
         self._apply_motion(alpha_maps, centers=None, motion_signal=s, motion_type='non-rigid')
@@ -508,7 +508,7 @@ class MotionSimulator:
         self.navigator = self._create_realistic_non_rigid_motion_curve().reshape(-1, 1)
         self._apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
-        if self.params.debug_flag:
+        if self.params.save_debug_plots:
             save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.debug_folder, flip_vertical=self.params.flip_for_display)
 
     

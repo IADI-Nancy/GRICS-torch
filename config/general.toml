@@ -9,8 +9,16 @@ results_folder = "results/"
 initial_data_folder = "initial_data/"
 
 [runtime]
-# Enable debug visualizations and deterministic behavior where possible.
-debug_flag = true
+# Save diagnostic motion curves/fields, acquisition-order plots, and per-level reconstruction images.
+save_debug_plots = true
+# Run the reconstruction consistency check for simulated non-rigid motion.
+# Its recovered-image figure is saved only when save_debug_plots is also true.
+check_simulated_motion_consistency = true
+# Request deterministic PyTorch/cuDNN algorithms; warn when unavailable. Seeding is controlled below.
+use_deterministic_algorithms = true
+# Print one line per raw parallel-calibration acquisition (acquisition, ky, z, repetition).
+# Independent of diagnostic plots; does not change which raw data are read or retained.
+print_raw_calibration_lines = false
 # Preferred compute device: "gpu" or "cpu".
 runtime_device = "gpu"
 # Random seed for reproducibility. Remove this line to disable seeding.
