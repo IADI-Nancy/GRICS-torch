@@ -180,7 +180,7 @@ class DataLoader:
         self._prepare_motion_plot_context()
         self._save_initial_data()
 
-        if self.params.debug_flag and self._has_simulated_motion():
+        if self.params.check_simulated_motion_consistency and self._has_simulated_motion():
             self._debug_check_true_motion_image_reconstruction(motionSimulator)
 
         del motionSimulator
@@ -887,13 +887,13 @@ class DataLoader:
                                   if self.params.data_type.endswith("-polaris") else "SAEC"),
             sensor_type=getattr(self.params, "rawdata_sensor_type", "BELT"),
             device="cpu",
-            debug=self.params.debug_flag,
+            print_raw_calibration_lines=self.params.print_raw_calibration_lines,
         )
         self.raw_data_preparer = preparer
         data = preparer.read_data()
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        if self.params.debug_flag and hasattr(self, "ky_idx"):
+        if self.params.save_debug_plots and hasattr(self, "ky_idx"):
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
@@ -913,7 +913,7 @@ class DataLoader:
                 data['reference_kspace'] = f['reference_kspace'][:]
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        if self.params.debug_flag and hasattr(self, "ky_idx"):
+        if self.params.save_debug_plots and hasattr(self, "ky_idx"):
             SamplingSimulator._visualize_ky_order(
                 [self.ky_idx.detach().cpu()], Ny=self.Ny,
                 folder=self.params.initial_data_folder,
@@ -966,10 +966,12 @@ class DataLoader:
                 den = torch.linalg.norm(self.image_ground_truth.flatten()) + 1e-12
                 _ = (num / den).item()
 
-            show_and_save_image(
-                img_back[0], "gn_input_consistency_recovered_image", self.params.debug_folder,
-                flip_for_display=self.params.flip_for_display,
-            )
+            # Running the check and saving its recovered image are independent options.
+            if self.params.save_debug_plots:
+                show_and_save_image(
+                    img_back[0], "gn_input_consistency_recovered_image", self.params.debug_folder,
+                    flip_for_display=self.params.flip_for_display,
+                )
 
 
 

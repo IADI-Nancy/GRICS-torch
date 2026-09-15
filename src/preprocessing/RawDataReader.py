@@ -32,10 +32,11 @@ def _is_parallel_calibration(acq):
 
 class RawDataReader:
 
-    def __init__(self, ismrmrd_file, device="cpu", debug=False):
+    def __init__(self, ismrmrd_file, device="cpu", print_raw_calibration_lines=False):
         self.ismrmrd_file = ismrmrd_file
         self.device = device
-        self.debug = bool(debug)
+        # Log each flagged calibration acquisition; does not control data extraction.
+        self.print_raw_calibration_lines = bool(print_raw_calibration_lines)
 
     @staticmethod
     def _encoding_limit_size(limit_obj):
@@ -188,7 +189,7 @@ class RawDataReader:
                 kspace[:, nex, :, ky, z] = acq_data
 
                 if _is_parallel_calibration(acq):
-                    if self.debug:
+                    if self.print_raw_calibration_lines:
                         print(
                             "[RawDataReader] parallel calibration line: "
                             f"acquisition={i}, ky={ky}, z={z}, repetition={rep}"

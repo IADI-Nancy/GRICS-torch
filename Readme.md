@@ -53,6 +53,10 @@ Main config types:
 
 Use `load_config(...)` to load the config files. Use `overrides={...}` for run-specific changes. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
 
+### Runtime diagnostics
+
+Runtime diagnostics are configured independently in `config/general.toml`: `save_debug_plots` saves diagnostic figures; `check_simulated_motion_consistency` runs the simulated non-rigid reconstruction consistency check (its figure also requires `save_debug_plots`); `use_deterministic_algorithms` requests deterministic PyTorch/cuDNN execution; `print_raw_calibration_lines` prints each raw parallel-calibration acquisition and defaults to false. These replace the former combined `debug_flag`; old overrides now raise an error listing the replacement flags. Direct `RawDataReader` and `RawDataPreparer` callers should use `print_raw_calibration_lines=` instead of `debug=`.
+
 ## Data Types
 
 The `data_type` selected in `load_config(...)` controls how input data is built or loaded.
@@ -119,7 +123,7 @@ The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/gene
 
 These data types are planned for the near future. They will accept physiological or motion measurements from a text file instead of requiring the SAEC format, enabling raw-data reconstruction for users without SAEC acquisition files. `ismrmrd-text` will use ISMRMRD MRI data, while `siemens-text` will use Siemens raw MRI data. These modes are not implemented yet.
 
-When `debug_flag=true`, every real-world input mode uses the same source-independent acquisition-order filename in `initial_data_folder`: `ky_order_acquisition_slice{slice_idx}.png`. This convention also applies to the planned text-based modes.
+When `save_debug_plots=true`, every real-world input mode uses the same source-independent acquisition-order filename in `initial_data_folder`: `ky_order_acquisition_slice{slice_idx}.png`. This convention also applies to the planned text-based modes.
 
 ## Sampling Modes (synthetic acquisition)
 

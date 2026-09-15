@@ -139,10 +139,11 @@ def initialize_runtime(params, print_gpu_info=False):
             torch.cuda.manual_seed(params.seed)
             torch.cuda.manual_seed_all(params.seed)
 
-    if params.debug_flag:
-        torch.use_deterministic_algorithms(True, warn_only=True)
-        if use_gpu and torch_cuda_ok:
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
+    # Set both states explicitly so repeated notebook runs honor flag changes.
+    deterministic = params.use_deterministic_algorithms
+    torch.use_deterministic_algorithms(deterministic, warn_only=deterministic)
+    torch.backends.cudnn.deterministic = deterministic
+    if deterministic:
+        torch.backends.cudnn.benchmark = False
 
     return sp_device, t_device
