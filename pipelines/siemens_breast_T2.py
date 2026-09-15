@@ -26,6 +26,7 @@ from pathlib import Path
 # Pipeline-level settings. Reconstruction parameters live in the TOML file below.
 OUTPUT_ROOT = Path("runs/siemens_breast_T2")
 RECONSTRUCTION_CONFIG = "config/reconstruction/nonrigid_2d_breast.toml"
+POSTPROCESSING_CONFIG = "config/postprocessing/nonrigid_2d_breast.toml"
 RUNTIME_DEVICE = "cpu"
 MAX_WORKERS = None
 RECONSTRUCT_SLICE_START = 0
@@ -33,12 +34,8 @@ RECONSTRUCT_SLICE_STOP = None
 JUPYTER_NOTEBOOK_FLAG = False
 # Save diagnostic motion, acquisition-order, and reconstruction figures.
 SAVE_DEBUG_PLOTS = False
-# Run the consistency check when using simulated non-rigid motion.
-CHECK_SIMULATED_MOTION_CONSISTENCY = False
 # Request deterministic PyTorch/cuDNN algorithms independently of the random seed.
 USE_DETERMINISTIC_ALGORITHMS = False
-# Print indices of each raw parallel-calibration acquisition.
-PRINT_RAW_CALIBRATION_LINES = False
 
 
 # Each process reconstructs one slice, so numerical libraries must not create
@@ -69,7 +66,7 @@ import torch
 
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
-from src.runtime.runtime_config import load_config
+from src.runtime.runtime_config import load_config, load_postprocessing_config
 from src.runtime.runtime_setup import initialize_runtime
 from src.utils.dicom_export import write_reconstruction_dicom
 from src.utils.plotting import show_and_save_image
@@ -134,6 +131,7 @@ def require_existing_file(path: Path, name: str) -> None:
 def output_overrides(folder: Path) -> dict:
     return {
         "jupyter_notebook_flag": JUPYTER_NOTEBOOK_FLAG,
+        "flip_for_display": True,
         "clean_output_folders_before_run": False,
         "runtime_device": RUNTIME_DEVICE,
         "debug_folder": str(folder / "debug") + os.sep,
@@ -141,9 +139,7 @@ def output_overrides(folder: Path) -> dict:
         "results_folder": str(folder / "results") + os.sep,
         "initial_data_folder": str(folder / "initial_data") + os.sep,
         "save_debug_plots": SAVE_DEBUG_PLOTS,
-        "check_simulated_motion_consistency": CHECK_SIMULATED_MOTION_CONSISTENCY,
         "use_deterministic_algorithms": USE_DETERMINISTIC_ALGORITHMS,
-        "print_raw_calibration_lines": PRINT_RAW_CALIBRATION_LINES,
         "verbose": False,
         "print_to_console": False,
     }
@@ -157,8 +153,14 @@ def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
     params = load_config(
         data_type=data_type,
         reconstruction_config=RECONSTRUCTION_CONFIG,
+        coil_sensitivity_config="config/coil_sensitivity/odille_spline.toml",
+        real_data_config=("config/real_data/saec.toml" if data_type.endswith("-saec") else None),
+        ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml",
         overrides=output_overrides(OUTPUT_ROOT / "load"),
     )
+    postprocessing = load_postprocessing_config(POSTPROCESSING_CONFIG)
+    if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
+        raise ValueError("Reference-image normalization requires coil_sensitivity_method='odille-spline'.")
     sp_device, t_device = initialize_runtime(params)
     data = DataLoader(
         params=params,
@@ -167,6 +169,7 @@ def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
         filename=(str(raw_data_file), str(saec_file)),
         run_pipeline=False,
     )
+    data.postprocessing = postprocessing
     data.load_data()
     return data
 
@@ -268,7 +271,7 @@ def reconstruct_slice(slice_idx: int) -> dict:
 
     t0 = time.time()
     image, alpha = reconstructor.run()
-    if data.params.normalize_by_reference:
+    if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
         show_and_save_image(
             reference_image[0] if reference_image.ndim == 3 and reference_image.shape[0] == 1 else reference_image,
@@ -463,6 +466,7 @@ def build_manifest(
         "raw_data_file": str(args.raw_data_file),
         "saec_file": str(args.saec_file),
         "reconstruction_config": RECONSTRUCTION_CONFIG,
+        "postprocessing_config": POSTPROCESSING_CONFIG,
         "output_root": str(OUTPUT_ROOT),
         "dicom_dir": str(dicom_dir),
         "dicom_uids": dicom_uids,
@@ -475,7 +479,7 @@ def build_manifest(
         "selected_slices": slice_indices,
         "max_workers": max_workers,
         "runtime_device": RUNTIME_DEVICE,
-        "normalize_by_reference": raw_data.params.normalize_by_reference,
+        "normalize_image_by_grics_reference": raw_data.postprocessing.normalize_image_by_grics_reference,
         "elapsed_s": elapsed_s,
         "slice_results": results,
     }

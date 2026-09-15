@@ -1,22 +1,10 @@
 [motion]
-# Motion simulation data dimensionality tag for compatibility checks.
+include = "common/rigid_2d_common.toml"
+# Dimensionality required by this motion simulation file.
 motion_simulation_config_dimension = "2D"
-# Synthetic motion model and temporal behavior.
+# Smooth rigid-motion events over the acquisition.
 simulated_motion_type = "rigid-realistic"
 # Number of smooth motion events across the acquisition.
 num_motion_events = 4
-# Global scale factor for rigid-motion amplitudes.
-# 1.0 = reference values, 2.0 = double motion, 3.0 = triple motion, etc.
-rigid_motion_amplitude_scale = 1.0
-# Maximum x-translation amplitude in mm (converted to pixels using FoVxy_mm).
-max_tx = 0.2
-# Maximum y-translation amplitude in mm (converted to pixels using FoVxy_mm).
-max_ty = 2.0
-# Maximum in-plane rotation amplitude in degrees.
-max_phi = 0.2
-# Maximum x-offset for rotation center in mm (converted using FoVxy_mm).
-max_center_x = 0
-# Maximum y-offset for rotation center in mm (converted using FoVxy_mm).
-max_center_y = 0
-# Transition duration (in lines) for each motion event (inverse to motion speed).
+# Transition duration in lines for each motion event; larger values are slower.
 motion_tau = 2

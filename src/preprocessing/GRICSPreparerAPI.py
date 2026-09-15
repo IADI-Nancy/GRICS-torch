@@ -46,29 +46,26 @@ class GRICSPreparerAPI:
 
     Args:
         reconstruction_config: Path to the mandatory reconstruction TOML.
-        data_type: External data mode; default ``preprocessed-real``.
-        simulated_motion_type: Motion mode; default ``as-it-is``.
-        data_dimension: ``2D`` or ``3D``.
-        overrides: Optional mapping of configuration overrides.
-        **config_options: Additional keyword arguments accepted by ``load_config``.
+        coil_sensitivity_config: Path to the mandatory CSM-method TOML.
+        data_type: Explicit external real-data mode.
+        overrides: Optional mapping of allowed run-specific overrides.
     """
 
     def __init__(
-        self, reconstruction_config: str | PathLike[str], *,
-        data_type: str = "preprocessed-real",
-        simulated_motion_type: str = "as-it-is", data_dimension: str = "2D",
-        overrides: Mapping[str, Any] | None = None, **config_options: Any,
+        self, reconstruction_config: str | PathLike[str], coil_sensitivity_config: str | PathLike[str], *,
+        data_type: str, overrides: Mapping[str, Any] | None = None,
     ) -> None:
         self.params = load_config(
             data_type=data_type, reconstruction_config=reconstruction_config,
-            simulated_motion_type=simulated_motion_type,
-            data_dimension=data_dimension, overrides=overrides, **config_options,
+            coil_sensitivity_config=coil_sensitivity_config, overrides=overrides,
         )
+        if self.params.kspace_sampling_type != "from-data" or self.params.simulated_motion_type != "as-it-is":
+            raise ValueError("GRICSPreparerAPI bins recorded metadata only; use DataLoader for simulated sampling or motion.")
         self.sp_device, self.device = initialize_runtime(self.params)
 
     def prepare_acquisition(
         self, motion_data: TensorLike, ky_indices: TensorLike,
-        nex_indices: TensorLike, *, Nx: int, Ny: int, Nz: int = 1,
+        nex_indices: TensorLike, *, Nx: int, Ny: int, Nz: int,
         kz_indices: TensorLike | None = None,
         sampling_masks: Mapping[str, TensorLike] | None = None,
         kspace: torch.Tensor | None = None,
@@ -82,7 +79,7 @@ class GRICSPreparerAPI:
             nex_indices: Integer tensor-like ``[Nr]`` with zero-based values.
             Nx: Positive readout matrix size.
             Ny: Positive phase-encode matrix size.
-            Nz: Positive partition count; default ``1`` for 2D.
+            Nz: Positive partition count.
             kz_indices: Integer tensor-like ``[Nr]`` for 3D, otherwise ``None``.
             sampling_masks: Optional mapping from arbitrary names to Boolean
                 tensor-like ``[Nr]`` selections for external undersampling.
@@ -112,8 +109,6 @@ class GRICSPreparerAPI:
 
         params = copy.copy(self.params)
         params.Nex = int(nex.max().item()) + 1
-        params.NshotsPerNex = int(Ny)
-        params.Nshots = int(Ny) * params.Nex
         masks = {"all": torch.ones(ky.numel(), dtype=torch.bool, device=self.device)}
         if sampling_masks is not None:
             masks = {

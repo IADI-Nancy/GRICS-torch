@@ -1,0 +1,6 @@
+[motion]
+include = "common/rigid_2d_common.toml"
+# Dimensionality required by this motion simulation file.
+motion_simulation_config_dimension = "2D"
+# One independently sampled rigid state per acquisition shot.
+simulated_motion_type = "rigid-per-shot"

@@ -4,7 +4,7 @@ reconstruction_dimension = "2D"
 # Motion model. Allowed values: "rigid" or "non-rigid".
 reconstruction_motion_type = "non-rigid"
 # Number of motion states. Must be a positive integer and cannot exceed the
-# number of available physiological samples.
+# number of available physiological samples. Per-shot simulation replaces it with the shot count.
 N_motion_states = 16
 # Motion-state construction method. Allowed values: "kmeans" or "kspace_energy".
 motion_binning_mode = "kspace_energy"
@@ -15,10 +15,8 @@ motion_quantization_bins = 256
 # The list length must match ResolutionLevels. Each value must be between 1 and
 # N_motion_states. State reduction is supported only for non-rigid reconstruction.
 N_motion_states_per_level = [4, 8, 16, 16]
-# Whether to scale motion updates during Gauss-Newton iterations.
-use_scaled_motion_update = false
 # Spatial scale at each reconstruction level, relative to full resolution.
-# Values must be positive; 1.0 represents full resolution.
+# Values must increase in (0, 1] and end at 1.0 (full resolution).
 ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
 # Must contain exactly one positive GN iteration count per ResolutionLevels entry.
 GN_iterations_per_level = [4, 4, 4, 1]
@@ -28,9 +26,6 @@ update_motion_on_final_iteration = false
 gn_early_stopping = true
 # true writes reconstruction logs, residual plots, images, and motion plots.
 save_reconstruction_outputs = true
-
-# Normalize the reconstructed image by the GRICS reference-image magnitude.
-normalize_by_reference = false
 
 # Stop CG when stagnation is detected.
 cg_early_stopping = true
@@ -42,8 +37,6 @@ cg_max_stag_steps = 6
 cg_max_more_steps = 0
 # Estimate regularization scaling internally from probes.
 cg_use_reg_scale_proxy = false
-# Number of probes for the regularization scaling estimate. Must be positive.
-cg_reg_scale_num_probes = 8
 # Image reconstruction regularization weight. Must be non-negative.
 lambda_r = 5.0e-2
 # Maximum CG iterations for each image update. Must be a positive integer.

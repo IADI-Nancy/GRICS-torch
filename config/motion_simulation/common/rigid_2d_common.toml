@@ -1,0 +1,16 @@
+[motion]
+# In-plane field-of-view in mm for translation and rotation-center conversion.
+FoVxy_mm = 220.0
+# Shared in-plane rigid-motion limits.
+# Global scale factor for rigid-motion amplitudes; 1.0 uses the listed limits.
+rigid_motion_amplitude_scale = 1.0
+# Maximum x-translation in mm, converted to pixels using FoVxy_mm.
+max_tx = 0.2
+# Maximum y-translation in mm, converted to pixels using FoVxy_mm.
+max_ty = 2.0
+# Maximum in-plane rotation in degrees.
+max_phi = 0.2
+# Maximum x-offset of the rotation center in mm, converted using FoVxy_mm.
+max_center_x = 0
+# Maximum y-offset of the rotation center in mm, converted using FoVxy_mm.
+max_center_y = 0
