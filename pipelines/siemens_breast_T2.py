@@ -31,7 +31,14 @@ MAX_WORKERS = None
 RECONSTRUCT_SLICE_START = 0
 RECONSTRUCT_SLICE_STOP = None
 JUPYTER_NOTEBOOK_FLAG = False
-DEBUG_FLAG = False
+# Save diagnostic motion, acquisition-order, and reconstruction figures.
+SAVE_DEBUG_PLOTS = False
+# Run the consistency check when using simulated non-rigid motion.
+CHECK_SIMULATED_MOTION_CONSISTENCY = False
+# Request deterministic PyTorch/cuDNN algorithms independently of the random seed.
+USE_DETERMINISTIC_ALGORITHMS = False
+# Print indices of each raw parallel-calibration acquisition.
+PRINT_RAW_CALIBRATION_LINES = False
 
 
 # Each process reconstructs one slice, so numerical libraries must not create
@@ -133,7 +140,10 @@ def output_overrides(folder: Path) -> dict:
         "logs_folder": str(folder / "logs") + os.sep,
         "results_folder": str(folder / "results") + os.sep,
         "initial_data_folder": str(folder / "initial_data") + os.sep,
-        "debug_flag": DEBUG_FLAG,
+        "save_debug_plots": SAVE_DEBUG_PLOTS,
+        "check_simulated_motion_consistency": CHECK_SIMULATED_MOTION_CONSISTENCY,
+        "use_deterministic_algorithms": USE_DETERMINISTIC_ALGORITHMS,
+        "print_raw_calibration_lines": PRINT_RAW_CALIBRATION_LINES,
         "verbose": False,
         "print_to_console": False,
     }

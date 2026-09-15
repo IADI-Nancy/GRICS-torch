@@ -21,7 +21,10 @@ class PolarisDataTypesTest(unittest.TestCase):
                     params = self.config(kind, dimension)
                     self.assertEqual(params.kspace_sampling_type, 'from-data')
                     self.assertTrue(params.flip_for_display)
-                    params.debug_flag = False
+                    params.save_debug_plots = False
+                    params.check_simulated_motion_consistency = False
+                    params.use_deterministic_algorithms = False
+                    params.print_raw_calibration_lines = False
                     is_polaris = kind.endswith('-polaris')
                     if is_polaris:
                         params.rawdata_sensor_type = None

@@ -154,7 +154,10 @@ _PATH_KEYS = {
     "initial_data_folder",
 }
 _RUNTIME_KEYS = {
-    "debug_flag",
+    "save_debug_plots",
+    "check_simulated_motion_consistency",
+    "use_deterministic_algorithms",
+    "print_raw_calibration_lines",
     "runtime_device",
     "verbose",
     "print_to_console",
@@ -274,7 +277,14 @@ class PathsConfig:
 
 @dataclass
 class RuntimeConfig:
-    debug_flag: bool | None = None
+    # Save motion, sampling-order, and reconstruction diagnostic figures.
+    save_debug_plots: bool | None = None
+    # Run the simulated non-rigid motion reconstruction consistency check.
+    check_simulated_motion_consistency: bool | None = None
+    # Request deterministic PyTorch/cuDNN algorithms (warn if unavailable).
+    use_deterministic_algorithms: bool | None = None
+    # Print acquisition indices for each raw parallel-calibration line.
+    print_raw_calibration_lines: bool | None = None
     runtime_device: str | None = None
     verbose: bool | None = None
     print_to_console: bool | None = None
@@ -367,6 +377,12 @@ class ConfigBundle:
     @classmethod
     def from_flat_dict(cls, flat_cfg):
         remaining = dict(flat_cfg)
+        if "debug_flag" in remaining:
+            raise ValueError(
+                "debug_flag has been replaced by save_debug_plots, "
+                "check_simulated_motion_consistency, use_deterministic_algorithms, "
+                "and print_raw_calibration_lines. Set these flags explicitly."
+            )
 
         paths = PathsConfig(**{key: remaining.pop(key, None) for key in _PATH_KEYS})
         runtime = RuntimeConfig(**{key: remaining.pop(key, None) for key in _RUNTIME_KEYS})
@@ -571,6 +587,18 @@ def _apply_display_defaults(cfg, data_type):
 
 
 def _normalize_runtime_config(runtime, data_type):
+    for name, default in (
+        ("save_debug_plots", True),
+        ("check_simulated_motion_consistency", True),
+        ("use_deterministic_algorithms", True),
+        ("print_raw_calibration_lines", False),
+    ):
+        value = getattr(runtime, name)
+        if value is None:
+            value = default
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be a boolean.")
+        setattr(runtime, name, value)
     if runtime.flip_for_display is None:
         runtime.flip_for_display = data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
     if runtime.clean_output_folders_before_run is None:

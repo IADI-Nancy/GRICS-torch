@@ -200,7 +200,10 @@ def main():
             "nonrigid_top_decay": top_decay,
         }
         run_overrides_c = {
-            "debug_flag": False,
+            "save_debug_plots": False,
+            "check_simulated_motion_consistency": False,
+            "use_deterministic_algorithms": False,
+            "print_raw_calibration_lines": False,
             "clean_output_folders_before_run": True,
             "debug_folder": str(run_root / "demo_c" / "debug_outputs"),
             "logs_folder": str(run_root / "demo_c" / "logs"),
@@ -208,7 +211,10 @@ def main():
             "input_data_folder": str(run_root / "demo_c" / "input_data"),
         }
         run_overrides_d = {
-            "debug_flag": False,
+            "save_debug_plots": False,
+            "check_simulated_motion_consistency": False,
+            "use_deterministic_algorithms": False,
+            "print_raw_calibration_lines": False,
             "clean_output_folders_before_run": True,
             "debug_folder": str(run_root / "demo_d" / "debug_outputs"),
             "logs_folder": str(run_root / "demo_d" / "logs"),

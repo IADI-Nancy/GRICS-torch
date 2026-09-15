@@ -75,7 +75,10 @@ def _build_cases():
                         "sampling_config": str(samp.relative_to(ROOT)),
                         "motion_simulation_config": str(mot.relative_to(ROOT)),
                         "overrides": {
-                            "debug_flag": False,
+                            "save_debug_plots": False,
+                            "check_simulated_motion_consistency": False,
+                            "use_deterministic_algorithms": False,
+                            "print_raw_calibration_lines": False,
                             "verbose": False,
                             "N_SheppLogan": 32,
                             "acs": 16,
@@ -101,7 +104,10 @@ def _build_cases():
                     "data_type": "real-world",
                     "reconstruction_config": str(recon.relative_to(ROOT)),
                     "overrides": {
-                        "debug_flag": False,
+                        "save_debug_plots": False,
+                        "check_simulated_motion_consistency": False,
+                        "use_deterministic_algorithms": False,
+                        "print_raw_calibration_lines": False,
                         "verbose": False,
                         "acs": 16,
                         "kernel_width": 6,

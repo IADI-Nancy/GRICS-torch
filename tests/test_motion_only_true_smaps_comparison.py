@@ -65,7 +65,10 @@ def test_motion_only_generated_vs_espirit_smaps():
         motion_simulation_type="discrete-non-rigid",
         overrides={
             "verbose": False,
-            "debug_flag": False,
+            "save_debug_plots": False,
+            "check_simulated_motion_consistency": False,
+            "use_deterministic_algorithms": False,
+            "print_raw_calibration_lines": False,
         },
     )
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
