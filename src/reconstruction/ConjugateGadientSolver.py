@@ -11,22 +11,10 @@ class ConjugateGradientSolver:
         _A(x) = b
     where _A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
-
-    def __init__(
-        self,
-        encoding_operator,
-        reg_lambda=0.0,
-        regularizer="Tikhonov",
-        regularization_shape=None,
-        regularization_spatial_dims=None,
-        verbose=False,
-        early_stopping=True,
-        true_residual_interval=10,
-        max_stag_steps=3,
-        max_more_steps=None,
-        use_reg_scale_proxy=False,
-        reg_scale_num_probes=8,
-    ):
+    #CODEX : there should not be any default values here, if they are not set in the configs, an error should be raised, instead of silently using default values.
+    def __init__(self, encoding_operator, reg_lambda=0.0, regularizer="Tikhonov", regularization_shape=None,
+        regularization_spatial_dims=None, verbose=False, early_stopping=True, true_residual_interval=10,
+        max_stag_steps=3, max_more_steps=None, use_reg_scale_proxy=False, reg_scale_num_probes=8):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -75,8 +63,7 @@ class ConjugateGradientSolver:
         for _ in range(max(1, int(self.reg_scale_num_probes))):
             if is_complex:
                 v = torch.randn(n, device=self.device, dtype=torch.float64) + 1j * torch.randn(
-                    n, device=self.device, dtype=torch.float64
-                )
+                    n, device=self.device, dtype=torch.float64)
                 v = v.to(ref.dtype)
             else:
                 v = torch.randn(n, device=self.device, dtype=ref.dtype)
@@ -95,10 +82,7 @@ class ConjugateGradientSolver:
             self.reg_scale = max(1e-12, torch.median(r).item())
 
         if self.verbose:
-            print(
-                f"Regularizer proxy scale: {self.reg_scale:.6e}, "
-                f"lambda_eff={self._effective_lambda():.6e}"
-            )
+            print(f"Regularizer proxy scale: {self.reg_scale:.6e}, "f"lambda_eff={self._effective_lambda():.6e}")
         return self.reg_scale
     
     def _regularization(self, x):
@@ -171,11 +155,7 @@ class ConjugateGradientSolver:
             curr_idx[d] = slice(1, -1)
             next_idx[d] = slice(2, None)
             inner_idx[d] = slice(1, -1)
-            result[tuple(inner_idx)] += (
-                -field[tuple(prev_idx)]
-                + 2 * field[tuple(curr_idx)]
-                - field[tuple(next_idx)]
-            )
+            result[tuple(inner_idx)] += (-field[tuple(prev_idx)] + 2 * field[tuple(curr_idx)] - field[tuple(next_idx)])
         return result.reshape(-1)
 
 

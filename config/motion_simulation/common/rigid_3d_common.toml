@@ -1,0 +1,26 @@
+[motion]
+# In-plane field-of-view in mm for translation and rotation-center conversion.
+FoVxy_mm = 220.0
+# Through-plane field-of-view in mm for z translation and rotation-center conversion.
+FoVz_mm = 160.0
+# Shared 3D rigid-motion limits from Topolnjak et al., doi: 10.1117/12.3006633.
+# Global scale factor for rigid-motion amplitudes; 1.0 uses the listed limits.
+rigid_motion_amplitude_scale = 2.0
+# Maximum x-translation in mm, converted to voxels using FoVxy_mm.
+max_tx_3d = 0.165
+# Maximum y-translation in mm, converted to voxels using FoVxy_mm.
+max_ty_3d = 1.867
+# Maximum z-translation in mm, converted to voxels using FoVz_mm.
+max_tz_3d = 0.347
+# Maximum rotation around the x axis in degrees.
+max_rx_3d = 0.219
+# Maximum rotation around the y axis in degrees.
+max_ry_3d = 0.378
+# Maximum rotation around the z axis in degrees.
+max_rz_3d = 0.190
+# Maximum x-offset of the rotation center in mm.
+max_center_x_3d = 0.0
+# Maximum y-offset of the rotation center in mm.
+max_center_y_3d = -10.0
+# Maximum z-offset of the rotation center in mm.
+max_center_z_3d = -25.0

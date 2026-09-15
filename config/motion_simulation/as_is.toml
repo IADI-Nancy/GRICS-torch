@@ -1,0 +1,4 @@
+[motion]
+# Use the physiological trace belonging to the original real-data acquisition.
+# Requires from-data sampling; reordered acquisitions require simulated motion.
+simulated_motion_type = "as-it-is"

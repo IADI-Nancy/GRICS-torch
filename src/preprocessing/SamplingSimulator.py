@@ -1,4 +1,5 @@
 import torch
+from src.runtime.runtime_config import validate_sampling_size
 
 from src.utils.plotting import _visualize_ky_order, _visualize_ky_kz_order
 
@@ -23,10 +24,7 @@ class SamplingSimulator:
         return torch.cat(values, dim=0)
 
     @staticmethod
-    def _stack_phase_encode_pairs(
-        ky_values,
-        kz_values,
-    ):
+    def _stack_phase_encode_pairs(ky_values, kz_values):
         ky_values = ky_values.to(torch.int64).reshape(-1)
         kz_values = kz_values.to(torch.int64).reshape(-1)
         if ky_values.numel() != kz_values.numel():
@@ -48,25 +46,18 @@ class SamplingSimulator:
         return mask
 
     def _apply_undersampling(self, ky_values):
-        mask = self._undersampling_mask(self.Ny, self.params.acceleration_factor, getattr(self.params, "calibration_lines", None), ky_values.device)
+        mask = self._undersampling_mask(self.Ny, self.params.acceleration_factor, self.params.calibration_lines, ky_values.device)
         return ky_values[mask[ky_values.to(torch.int64)]]
 
+    # CODEX : why nex is in input arguments, but not used?
     @staticmethod
-    def _build_ordered_ky_values(
-        nex,
-        nshots,
-        Ny,
-        device,
-        kspace_sampling_type,
-    ):
-        if kspace_sampling_type in {"linear", "from-data"}:
+    def _build_ordered_ky_values(nex, nshots, Ny, device, kspace_sampling_type):
+        if kspace_sampling_type == "linear":
             return torch.arange(Ny, device=device, dtype=torch.int64)
 
         if kspace_sampling_type == "interleaved":
-            ky_parts = [
-                torch.arange(shot, Ny, nshots, device=device, dtype=torch.int64)
-                for shot in range(nshots)
-            ]
+            ky_parts = [torch.arange(shot, Ny, nshots, device=device, dtype=torch.int64)
+                for shot in range(nshots)]
             return torch.cat(ky_parts, dim=0)
 
         if kspace_sampling_type == "random":
@@ -75,18 +66,10 @@ class SamplingSimulator:
         raise ValueError(f"Unsupported kspace_sampling_type for 2D sampling: {kspace_sampling_type}")
 
     @staticmethod
-    def _build_ordered_ky_kz_pairs(
-        nex,
-        shot,
-        nshots,
-        Ny,
-        Nz,
-        device,
-        kspace_sampling_type,
-    ):
+    def _build_ordered_ky_kz_pairs(nex, shot, nshots, Ny, Nz, device, kspace_sampling_type):
         kz_values = torch.arange(Nz, device=device, dtype=torch.int64)
 
-        if kspace_sampling_type in {"linear", "from-data"}:
+        if kspace_sampling_type == "linear":
             start = shot * Ny // nshots
             end = (shot + 1) * Ny // nshots
             ky_values = torch.arange(start, end, device=device, dtype=torch.int64)
@@ -123,6 +106,9 @@ class SamplingSimulator:
         raise ValueError(f"Unsupported kspace_sampling_type for 3D sampling: {kspace_sampling_type}")
 
     def _build_phase_encode_indices_and_nex(self, Nz=1):
+        if self.params.kspace_sampling_type == "from-data":
+            raise ValueError("SamplingSimulator cannot generate from-data acquisition order.")
+        validate_sampling_size(self.params, self.Ny, Nz)
         Nshots = self.params.NshotsPerNex
         Nex = self.params.Nex
 
@@ -146,7 +132,7 @@ class SamplingSimulator:
                     torch.arange(self.Ny, device=self.t_device, dtype=torch.int64),
                     torch.arange(Nz, device=self.t_device, dtype=torch.int64),
                 )
-                keep = self._undersampling_mask(self.Ny, self.params.acceleration_factor, getattr(self.params, "calibration_lines", None), self.t_device)[all_pairs[:, 0]]
+                keep = self._undersampling_mask(self.Ny, self.params.acceleration_factor, self.params.calibration_lines, self.t_device)[all_pairs[:, 0]]
                 all_pairs = all_pairs[keep]
                 perm = torch.randperm(all_pairs.shape[0], device=self.t_device, dtype=torch.int64)
                 all_pairs = all_pairs[perm]
@@ -177,7 +163,7 @@ class SamplingSimulator:
                         phase_encode_pairs = self._build_ordered_ky_kz_pairs(
                             nex, shot, Nshots, self.Ny, Nz, self.t_device, self.params.kspace_sampling_type,
                         )
-                        keep = self._undersampling_mask(self.Ny, self.params.acceleration_factor, getattr(self.params, "calibration_lines", None), phase_encode_pairs.device)[phase_encode_pairs[:, 0]]
+                        keep = self._undersampling_mask(self.Ny, self.params.acceleration_factor, self.params.calibration_lines, phase_encode_pairs.device)[phase_encode_pairs[:, 0]]
                         phase_encode_pairs = phase_encode_pairs[keep]
                     ky_block = phase_encode_pairs[:, 0].to(torch.int32)
                     kz_block = phase_encode_pairs[:, 1].to(torch.int32)
@@ -201,20 +187,16 @@ class SamplingSimulator:
             if Nz > 1:
                 kz_idx.append(torch.cat(kz_list, dim=0))
         
-            if Nz > 1:
-                SamplingSimulator._visualize_ky_kz_order(ky_per_shot[nex], kz_per_shot[nex], Ny=self.Ny,
-                                                         Nz=Nz, folder=self.params.initial_data_folder,
-                                                         fname=f"ky_kz_order_nex{nex+1}.png")
-            else:
-                SamplingSimulator._visualize_ky_order(ky_per_shot[nex], Ny=self.Ny,
-                                                      folder=self.params.initial_data_folder,
-                                                      fname=f"ky_order_nex{nex+1}.png")
+            if self.params.save_debug_plots:
+                if Nz > 1:
+                    SamplingSimulator._visualize_ky_kz_order(ky_per_shot[nex], kz_per_shot[nex], Ny=self.Ny,
+                                                             Nz=Nz, folder=self.params.initial_data_folder,
+                                                             fname=f"ky_kz_order_nex{nex+1}.png")
+                else:
+                    SamplingSimulator._visualize_ky_order(ky_per_shot[nex], Ny=self.Ny,
+                                                          folder=self.params.initial_data_folder,
+                                                          fname=f"ky_order_nex{nex+1}.png")
 
-        return (
-            self._flatten_per_nex(ky_idx),
-            self._flatten_per_nex(nex_idx),
-            ky_per_shot,
-            self._flatten_per_nex(kz_idx),
-            kz_per_shot,
-        )
+        return (self._flatten_per_nex(ky_idx), self._flatten_per_nex(nex_idx),
+            ky_per_shot, self._flatten_per_nex(kz_idx), kz_per_shot)
     

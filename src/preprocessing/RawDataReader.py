@@ -29,7 +29,7 @@ def _is_parallel_calibration(acq):
         or _has_ismrmrd_flag(acq, "ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING")
     )
 
-
+# CODEX: to rename this class to ISMRMRDReader
 class RawDataReader:
 
     def __init__(self, ismrmrd_file, device="cpu", print_raw_calibration_lines=False):
@@ -86,7 +86,7 @@ class RawDataReader:
 
         return kspace_cropped
 
-
+# CODEX: make this function less vertical (remove separation to multiple lines)
     def _extract_mri_data(self):
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
         try:

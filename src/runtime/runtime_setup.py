@@ -3,7 +3,6 @@ import gc
 import shutil
 import signal
 import sys
-import warnings
 from pathlib import Path
 
 import torch
@@ -84,10 +83,12 @@ def _install_runtime_safety_guards():
 def initialize_runtime(params, print_gpu_info=False):
     global _GPU_RUNTIME_ACTIVE
     _install_runtime_safety_guards()
+    for folder in (params.debug_folder, params.logs_folder, params.results_folder, params.initial_data_folder):
+        Path(folder).mkdir(parents=True, exist_ok=True)
     if params.clean_output_folders_before_run:
         _clean_run_output_folders(params)
 
-    runtime_device = str(getattr(params, "runtime_device", "cpu")).lower()
+    runtime_device = str(params.runtime_device).lower()
     if runtime_device not in {"cpu", "gpu"}:
         raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
 
@@ -105,10 +106,7 @@ def initialize_runtime(params, print_gpu_info=False):
             cupy_ok = False
 
         if not torch_cuda_ok:
-            warnings.warn(
-                "runtime_device='gpu' requested but PyTorch CUDA is unavailable. Falling back to CPU.",
-                RuntimeWarning,
-            )
+            print("[runtime] GPU requested but PyTorch CUDA is unavailable. Falling back to CPU.", flush=True)
             runtime_device = "cpu"
 
     use_gpu = runtime_device == "gpu"
@@ -119,10 +117,7 @@ def initialize_runtime(params, print_gpu_info=False):
     else:
         sp_device = sp.Device(-1)
         if use_gpu and not cupy_ok:
-            warnings.warn(
-                "CuPy/SigPy GPU backend is unavailable; using CPU for SigPy parts and CUDA for PyTorch parts.",
-                RuntimeWarning,
-            )
+            print("[runtime] CuPy/SigPy GPU backend is unavailable; using CPU for SigPy and CUDA for PyTorch.", flush=True)
 
     t_device = torch.device("cuda:0" if use_gpu else "cpu")
     params.runtime_device = runtime_device
@@ -133,7 +128,8 @@ def initialize_runtime(params, print_gpu_info=False):
             total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
             print(f"Total GPU memory: {total_mem:.2f} GB")
 
-    if hasattr(params, "seed") and params.seed is not None:
+    torch.set_default_dtype(torch.float64)
+    if params.seed_enabled:
         torch.manual_seed(params.seed)
         if use_gpu and torch_cuda_ok:
             torch.cuda.manual_seed(params.seed)

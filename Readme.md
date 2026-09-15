@@ -45,17 +45,75 @@ A Dockerfile is provided in the `build/` folder. The built image is available at
 
 Main config types:
 
-- `config/general.toml`: paths, runtime flags, k-space normalization, and coil-sensitivity settings; loaded automatically
+- `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
+- `config/coil_sensitivity/*.toml`: one explicitly selected coil-sensitivity method and only that method's settings
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
 - `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings
+- `config/real_data/saec.toml`: SAEC physiological sensor selection, loaded only for SAEC inputs
+- `config/real_data/ismrmrd_reader.toml`: ISMRMRD-reader diagnostics, loaded only for ISMRMRD or Siemens raw inputs
 - `config/sampling_simulation/*.toml`: simulated k-space acquisition ordering
-- `config/motion_simulation/*.toml`: simulated rigid or non-rigid motion settings
+- `config/motion_simulation/*.toml`: selected simulated rigid or non-rigid motion modes
+- `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode
+
+Motion configurations may use one `[motion] include = "relative/path.toml"` entry.
+The included common file is loaded first; a selected file cannot redefine any included
+setting, include paths cannot leave their directory tree, and include cycles are rejected.
+Common files are not runnable configurations because they do not declare a motion mode.
 
 Use `load_config(...)` to load the config files. Use `overrides={...}` for run-specific changes. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
 
+### Configuration ownership and validation
+
+Each TOML file accepts only its own settings and sections: general runtime/paths,
+reconstruction, synthetic source, sampling, motion simulation, or postprocessing.
+Unknown keys, misplaced keys, old aliases, invalid types, non-finite numbers, and
+incompatible combinations raise errors. `load_config` selects configuration files;
+run-specific values are supplied only through `overrides`. Notebook mode disables `verbose`
+and `print_to_console` unless explicitly supplied in `overrides`. Each automatic
+change is announced with an informational message. Outside notebooks, TOML logging
+values are preserved.
+
+All numerical and diagnostic settings are specified in TOML. Only `"2D"` and
+`"3D"` are valid dimensions. Real input dimensions follow the selected reconstruction
+file. Every `load_config` call also selects exactly one CSM file: use
+`config/coil_sensitivity/espirit.toml` for ESPIRiT or
+`config/coil_sensitivity/odille_spline.toml` for Odille spline maps. The CSM
+method itself cannot be overridden. For real data, omitted sampling loads
+`config/sampling_simulation/from_data.toml` and reads repetition counts from the
+acquisition. Do not supply simulated shot counts or acceleration settings in this mode. Real data
+without a motion simulation file loads `config/motion_simulation/as_is.toml`.
+
+To simulate a new acquisition order over real k-space, select a simulated sampling
+file and simulated motion. The original acquisition indices and physiological
+trace are ignored; `Nex` must equal the repetitions in the k-space array. A
+preprocessed HDF5 input then needs only `kspace` (and optional `reference_kspace`).
+Raw inputs in this mode can be provided as a single MRI filename, without physiology.
+`from-data` is invalid for synthetic sources. Reordering does not fill missing
+k-space samples or remove motion already present in the supplied values.
+
+Per-shot simulation automatically replaces the positive integer `N_motion_states`
+with the shot count and announces any change. Set
+`N_motion_states_per_level="full"` to use all states at every resolution, or provide
+a list of counts. Resolution levels must increase in `(0, 1]` and end at `1.0`.
+GN iteration counts must be an explicit list of positive integers, one per level.
+
+ESPIRiT settings are named `espirit_calibration_width` and `espirit_kernel_width`.
+Requested calibration widths must fit the data; they are never silently reduced.
+Set `seed_enabled=false` to disable seeding. GPU unavailability still triggers a
+CPU fallback and prints a visible runtime message.
+
+### Postprocessing
+
+`config/postprocessing/nonrigid_2d_breast.toml` owns
+`normalize_image_by_grics_reference`. Load it with
+`load_postprocessing_config(path, overrides=...)`. The breast pipeline loads this
+separately and applies it after reconstruction; it requires Odille spline coil
+maps when enabled. Reconstruction files and reconstruction overrides cannot set
+postprocessing options.
+
 ### Runtime diagnostics
 
-Runtime diagnostics are configured independently in `config/general.toml`: `save_debug_plots` saves diagnostic figures; `check_simulated_motion_consistency` runs the simulated non-rigid reconstruction consistency check (its figure also requires `save_debug_plots`); `use_deterministic_algorithms` requests deterministic PyTorch/cuDNN execution; `print_raw_calibration_lines` prints each raw parallel-calibration acquisition and defaults to false. These replace the former combined `debug_flag`; old overrides now raise an error listing the replacement flags. Direct `RawDataReader` and `RawDataPreparer` callers should use `print_raw_calibration_lines=` instead of `debug=`.
+Runtime diagnostics are configured by scope: `save_debug_plots` and `use_deterministic_algorithms` are global runtime settings; `check_simulated_motion_consistency` belongs to non-rigid motion TOMLs; and `print_raw_calibration_lines` belongs to `config/real_data/ismrmrd_reader.toml`. These replace the former combined `debug_flag`; old overrides are rejected as unknown settings. Direct `RawDataReader` and `RawDataPreparer` callers should use `print_raw_calibration_lines=` instead of `debug=`.
 
 ## Data Types
 
@@ -97,15 +155,17 @@ No synthetic sampling is needed in this mode: acquisition order and motion signa
 Loaded from raw scanner and physiological files using `RawDataReader`:
 - the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
 - physiological data file in SAEC [3, 4] format (`saec_file`)
+- `config/real_data/saec.toml` and `config/real_data/ismrmrd_reader.toml`
 
 The reader converts these files to the arrays used by the `preprocessed-real` mode.
-The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
+The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/real_data/saec.toml`.
 
 ### `ismrmrd-polaris` and `siemens-polaris`
 
 Select these types with `load_config(data_type=...)`. Pass `DataLoader` a pair
-`(mri_file, tracking_tsv)` or a dictionary containing `ismrmrd_file` / `siemens_file`
+`(mri_file, tracking_tsv)` or a dictionary containing `ismrmrd_file` / `siemens_raw_file`
 and `polaris_file`. The Siemens variant converts the MRI file to ISMRMRD first.
+Both require `config/real_data/ismrmrd_reader.toml`.
 Polaris filtering and normalization are handled by `PolarisInfraredTrackerReader`;
 no `rawdata_sensor_type` setting is required. Both types support 2D slice selection
 and 3D volume loading, with sampling read from the acquisition data.
@@ -113,11 +173,12 @@ and 3D volume loading, with sampling read from the acquisition data.
 ### `siemens-saec`
 
 Loaded from Siemens raw scanner data and physiological files:
-- Siemens raw data file (`siemens_file`, `siemens_raw_file`, or `dat_file`)
+- Siemens raw data file (`siemens_raw_file`)
 - physiological data file in SAEC [2, 3] format (`saec_file`)
+- `config/real_data/saec.toml` and `config/real_data/ismrmrd_reader.toml`
 
 The loader first converts the Siemens raw file to ISMRMRD using the `siemens_to_ismrmrd` executable, then reads the result with the same path used by `ismrmrd-saec`.
-The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
+The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/real_data/saec.toml`.
 
 ### Planned: `ismrmrd-text` and `siemens-text`
 
@@ -165,13 +226,13 @@ Implemented in `src/preprocessing/MotionSimulator.py`.
 
 ### `as-it-is`
 
-No synthetic corruption added. Only valid for `preprocessed-real`/`ismrmrd-saec`/`siemens-saec` (already motion-corrupted).
+No synthetic corruption added. Valid only for real-data types with `from-data` sampling, including SAEC and Polaris inputs.
 
 ### `rigid-per-shot`
 
 Shot-wise rigid states:
 - one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
-- optional global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
+- explicit global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
 - random `(tx, ty, phi)` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case) per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
 
@@ -180,7 +241,7 @@ Shot-wise rigid states:
 Continuous rigid curve over full acquisition:
 - random event times over `Ny * Nex` lines
 - smooth raised-cosine transitions (`motion_tau`)
-- optional global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
+- explicit global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
 - random event amplitudes for `tx`, `ty`, `phi` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case)
 - data is then reclustered to `N_motion_states` from the simulated navigator signal (first principal component of the simulated rigid motion parameters)
 
@@ -211,13 +272,13 @@ After loading or simulation, the motion curve is clustered with k-means into rec
 Key points:
 - simulation state count and reconstruction state count can differ.
 - corruption may be line-wise (`Ny * Nz * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
-- `N_motion_states` is a manual reconstruction setting from the reconstruction TOML (or from an explicit `load_config(..., N_motion_states=...)` override).
+- `N_motion_states` is a manual reconstruction setting from the reconstruction TOML, or an explicit `overrides={"N_motion_states": ...}` value.
 
 State-count rules:
-- `rigid-per-shot` and `non-rigid-per-shot`: `N_motion_states = Nshots`
+- `rigid-per-shot` and `non-rigid-per-shot`: `N_motion_states` is automatically replaced by the shot count; changes are announced.
 - `rigid-realistic`, `non-rigid-realistic`, and `as-it-is`: `N_motion_states` stays at the manual reconstruction value
 
-For loaded `preprocessed-real` / `ismrmrd-saec` / `siemens-saec` with an explicit per-shot synthetic simulation mode, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading.
+For real data with generated sampling, configured shot counts are preserved and `Nex` must match the array. With `from-data` sampling and per-shot simulated motion, each recorded readout is a state; the count is resolved from the actual acquisition indices after loading.
 
 
 ## Outputs
@@ -242,10 +303,15 @@ This section covers the standard reconstruction entry point and the additional i
 ```python
 from src.preprocessing.GRICSPreparerAPI import GRICSPreparerAPI
 
-preparer = GRICSPreparerAPI(reconstruction_config, overrides=runtime_overrides)
+preparer = GRICSPreparerAPI(
+    reconstruction_config,
+    "config/coil_sensitivity/odille_spline.toml",
+    data_type="preprocessed-real",
+    overrides=runtime_overrides,
+)
 prepared = preparer.prepare_acquisition(
     motion_data, ky_indices, nex_indices,
-    Nx=Nx, Ny=Ny, kz_indices=kz_indices,
+    Nx=Nx, Ny=Ny, Nz=Nz, kz_indices=kz_indices,
     kspace=kspace, seed=seed,
 )
 sampling_indices = prepared.sampling_indices["all"]

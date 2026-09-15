@@ -35,20 +35,11 @@ def _assign_cached_reg_scale(params, Data_res, cache_key, solver, reference_vec)
 
 def _parse_gn_iterations_per_level(params, res_levels):
     gn_cfg = params.GN_iterations_per_level
-    if isinstance(gn_cfg, int):
-        return [gn_cfg] * len(res_levels)
-    if isinstance(gn_cfg, (list, tuple)):
-        if len(gn_cfg) == 0:
-            raise ValueError("GN_iterations_per_level list/tuple cannot be empty.")
-        gn_list = [int(v) for v in gn_cfg]
-        if len(gn_list) != len(res_levels):
-            raise ValueError(
-                "Inconsistent config: "
-                f"GN_iterations_per_level has {len(gn_list)} values, "
-                f"but ResolutionLevels has {len(res_levels)} values."
-            )
-        return gn_list
-    raise ValueError("GN_iterations_per_level must be int, list, or tuple.")
+    if not isinstance(gn_cfg, list) or len(gn_cfg) != len(res_levels):
+        raise ValueError("GN_iterations_per_level must have one positive integer per ResolutionLevels entry.")
+    if any(type(value) is not int or value < 1 for value in gn_cfg):
+        raise ValueError("GN_iterations_per_level entries must be positive integers.")
+    return list(gn_cfg)
 
 
 def _init_run_logging(params, n_levels, gn_iters_per_level):
@@ -140,7 +131,7 @@ class _JointReconstructionLogger:
 
     def __init__(self, params, iterations_per_level):
         self.params = params
-        self.enabled = bool(getattr(params, "save_reconstruction_outputs", True))
+        self.enabled = bool(params.save_reconstruction_outputs)
         n_levels = len(iterations_per_level)
         self.run_log = (
             _init_run_logging(params, n_levels, iterations_per_level)

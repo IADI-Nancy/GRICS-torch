@@ -119,26 +119,11 @@ class MotionBinner:
         raise TypeError(f"{name} must be a tensor or list of tensors, got {type(values)!r}.")
 
     @staticmethod
-    def bin_motion(
-        motion_curve,
-        ky_idx,
-        kz_idx,
-        nex_idx,
-        t_device,
-        params,
-        tx=None,
-        ty=None,
-        phi=None,
-        tz=None,
-        rx=None,
-        ry=None,
-        rz=None,
-        y_limits=None,
-        return_debug_data=False,
-        kspace=None,
-    ):
-        motion_curve = motion_curve.to(t_device)
+    def bin_motion(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params,
+        tx=None, ty=None, phi=None, tz=None, rx=None, ry=None, rz=None,
+        y_limits=None, return_debug_data=False, kspace=None):
 
+        motion_curve = motion_curve.to(t_device)
         Nbins = params.N_motion_states
         Nex = params.Nex
         if motion_curve.ndim != 2:
@@ -163,21 +148,13 @@ class MotionBinner:
         kz_idx = None if kz_idx is None else MotionBinner._flatten_index_tensor(kz_idx, "kz_idx")
         nex_idx = MotionBinner._flatten_index_tensor(nex_idx, "nex_idx")
 
-        binning_mode = str(getattr(params, "motion_binning_mode", "kmeans")).strip().lower()
+        binning_mode = str(params.motion_binning_mode).strip().lower()
         if binning_mode == "kmeans":
             labels, centers = _kmeans_torch(motion_features, Nbins)
         elif binning_mode == "kspace_energy":
-            readout_energy = _readout_kspace_energy(
-                kspace, ky_idx, kz_idx, nex_idx
-            ).to(device=t_device, dtype=motion_features.dtype)
-            labels, centers = _kspace_energy_binning(
-                motion_features,
-                Nbins,
-                readout_energy,
-                n_quantization_bins=int(
-                    getattr(params, "motion_quantization_bins", 256)
-                ),
-            )
+            readout_energy = _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx).to(device=t_device, dtype=motion_features.dtype)
+            labels, centers = _kspace_energy_binning(motion_features, Nbins, readout_energy,
+                    n_quantization_bins=int(params.motion_quantization_bins))
         else:
             raise ValueError(
                 f"Unsupported motion_binning_mode: {binning_mode!r}. "
@@ -185,16 +162,12 @@ class MotionBinner:
             )
 
         # ---- Allocate output: [Nex][Nbins] ----
-        binned_ky_indices = [
-            [torch.empty(0, dtype=ky_idx.dtype, device=t_device) for _ in range(Nbins)]
-            for _ in range(Nex)
-        ]
+        binned_ky_indices = [[torch.empty(0, dtype=ky_idx.dtype, device=t_device) for _ in range(Nbins)]
+            for _ in range(Nex)]
         binned_kz_indices = None
         if kz_idx is not None:
-            binned_kz_indices = [
-                [torch.empty(0, dtype=kz_idx.dtype, device=t_device) for _ in range(Nbins)]
-                for _ in range(Nex)
-            ]
+            binned_kz_indices = [[torch.empty(0, dtype=kz_idx.dtype, device=t_device) for _ in range(Nbins)]
+                for _ in range(Nex)]
 
         # ---- Fill bins ----
         for nex in range(Nex):
@@ -206,38 +179,12 @@ class MotionBinner:
                 if binned_kz_indices is not None:
                     binned_kz_indices[nex][b] = kz_idx[mask]
 
-        # ---- Input data plots (always saved) ----
-        save_clustered_motion_plots(
-            motion_curve=motion_curve,
-            labels=labels,
-            ky_idx=ky_idx,
-            nex_idx=nex_idx,
-            kz_idx=kz_idx,
-            nbins=Nbins,
-            output_folder=params.initial_data_folder,
-            resolution_levels=params.ResolutionLevels,
-            tx=tx,
-            ty=ty,
-            phi=phi,
-            tz=tz,
-            rx=rx,
-            ry=ry,
-            rz=rz,
-            data_type=params.data_type,
-            y_limits=y_limits,
-        )
+        # save_debug_plots controls diagnostic plots of the input motion bins.
+        if params.save_debug_plots:
+            save_clustered_motion_plots(motion_curve=motion_curve, labels=labels, ky_idx=ky_idx, nex_idx=nex_idx, kz_idx=kz_idx,
+                nbins=Nbins, output_folder=params.initial_data_folder, resolution_levels=params.ResolutionLevels,
+                tx=tx, ty=ty, phi=phi, tz=tz, rx=rx, ry=ry, rz=rz, data_type=params.data_type, y_limits=y_limits)
 
         if return_debug_data:
-            return (
-                binned_ky_indices,
-                binned_kz_indices,
-                centers,
-                labels,
-                ky_idx,
-                kz_idx,
-                nex_idx,
-            )
+            return (binned_ky_indices, binned_kz_indices, centers, labels, ky_idx, kz_idx, nex_idx)
         return binned_ky_indices, binned_kz_indices, centers
-
-    # Compatibility alias for integrations written before bin_motion was public.
-    _bin_motion = bin_motion
