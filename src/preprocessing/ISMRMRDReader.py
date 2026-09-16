@@ -29,8 +29,7 @@ def _is_parallel_calibration(acq):
         or _has_ismrmrd_flag(acq, "ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING")
     )
 
-# CODEX: to rename this class to ISMRMRDReader
-class RawDataReader:
+class ISMRMRDReader:
 
     def __init__(self, ismrmrd_file, device="cpu", print_raw_calibration_lines=False):
         self.ismrmrd_file = ismrmrd_file
@@ -86,7 +85,6 @@ class RawDataReader:
 
         return kspace_cropped
 
-# CODEX: make this function less vertical (remove separation to multiple lines)
     def _extract_mri_data(self):
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
         try:
@@ -191,7 +189,7 @@ class RawDataReader:
                 if _is_parallel_calibration(acq):
                     if self.print_raw_calibration_lines:
                         print(
-                            "[RawDataReader] parallel calibration line: "
+                            "[ISMRMRDReader] parallel calibration line: "
                             f"acquisition={i}, ky={ky}, z={z}, repetition={rep}"
                         )
                     if reference_line_seen[ky, z]:

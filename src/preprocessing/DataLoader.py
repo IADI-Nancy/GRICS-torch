@@ -11,7 +11,7 @@ import math
 import h5py
 
 from src.preprocessing.RawDataPreparer import RawDataPreparer
-from src.preprocessing.RawDataReader import RawDataReader
+from src.preprocessing.ISMRMRDReader import ISMRMRDReader
 from src.runtime.runtime_config import (validate_sampling_size, validate_reconstruction_size,
                                         validate_calibration_size, validate_motion_readout_count)
 from src.preprocessing.MotionSimulator import MotionSimulator
@@ -39,7 +39,6 @@ class DataLoader:
         filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None,
         slice_idx=None,
         run_pipeline=True,
-        polaris_channel_mode="all",
     ):
         """
         Load source data and prepare reconstruction inputs.
@@ -53,13 +52,11 @@ class DataLoader:
                 siemens-polaris. Dictionaries use ismrmrd_file or siemens_raw_file,
                 plus saec_file or polaris_file. Polaris input is a tracking TSV.
             slice_idx: Slice/partition to load for 2D real-data inputs.
-            polaris_channel_mode: "all" or "largest-amplitude" tool-axis selection for Polaris.
             run_pipeline: If true, load data and run the slice-wise preparation pipeline.
                 If false, call load_data() and run_slice_pipeline() explicitly.
         """
-        self._init_runtime_state(params=params, sp_device=sp_device, t_device=t_device, filename=filename, slice_idx=slice_idx)
-        self.polaris_channel_mode = polaris_channel_mode# CODEX : should not be there, move to the init_runtime_state, and polaris_channel_mode to params
-        self.raw_data_preparer = None# CODEX : should not be there, move to the init_runtime_state
+        self._init_runtime_state(params=params, sp_device=sp_device, t_device=t_device, filename=filename,
+                                 slice_idx=slice_idx)
         self._validate_inputs()
         if run_pipeline:
             self.load_data()
@@ -72,6 +69,7 @@ class DataLoader:
         self.sp_device = sp_device
         self.t_device = t_device
         self.filename = filename
+        self.raw_data_preparer = None
         self.rawdata_filenames = None
         self.siemens_filenames = None
         self.slice_idx = slice_idx
@@ -103,20 +101,12 @@ class DataLoader:
         if self.slice_idx is not None:
             self.slice_idx = int(self.slice_idx)
 
-        # CODEX: the newt two ifs can be simplified and contain some inconsistencies
         if self.params.data_type in {"ismrmrd-saec", "ismrmrd-polaris"}:
             self.rawdata_filenames = self._resolve_rawdata_filenames()
-            if self.params.data_type.endswith("-saec") and not self.params.rawdata_sensor_type:
-                raise ValueError(
-                    "rawdata_sensor_type must be set for data_type='ismrmrd-saec'."
-                )
-
-        if self.params.data_type in {"siemens-saec", "siemens-polaris"}:
+        elif self.params.data_type in {"siemens-saec", "siemens-polaris"}:
             self.siemens_filenames = self._resolve_siemens_filenames()
-            if self.params.data_type.endswith("-saec") and not self.params.rawdata_sensor_type:
-                raise ValueError(
-                    "rawdata_sensor_type must be set for data_type='siemens-saec'."
-                )
+        if self.params.data_type.endswith("-saec") and not self.params.rawdata_sensor_type:
+            raise ValueError(f"rawdata_sensor_type must be set for data_type={self.params.data_type!r}.")
 
         if self.slice_idx is not None and not supports_slice_idx:
             raise ValueError(
@@ -186,7 +176,6 @@ class DataLoader:
         self._slice_pipeline_has_run = True
         return self
 
-# CODEX : this function can be integrated in @load_data()
     def _load_source_data(self):
         print(f"[DataLoader] Reading source data (data_type={self.params.data_type})...")
         if self.params.data_type == 'shepp-logan': # Generation of Shepp-Logan phantom with coil sensitivities + sampling simulation   
@@ -812,7 +801,7 @@ class DataLoader:
 
     def _load_realworld_data_from_ismrm_and_physiology(self, path_to_ismrm, path_to_physiology, slice_idx=None):
         if self.params.kspace_sampling_type != "from-data":
-            reader = RawDataReader(path_to_ismrm, device="cpu",
+            reader = ISMRMRDReader(path_to_ismrm, device="cpu",
                                    print_raw_calibration_lines=self.params.print_raw_calibration_lines)
             raw = reader.read_data()
             data = {"kspace": reader._remove_oversampling(raw["kspace"]).cpu().numpy(),
@@ -824,7 +813,8 @@ class DataLoader:
         preparer = RawDataPreparer(
             ismrmrd_file=path_to_ismrm,
             physiological_file=path_to_physiology,
-            polaris_channel_mode=self.polaris_channel_mode,
+            polaris_channel_mode=(self.params.polaris_channel_mode
+                                  if self.params.data_type.endswith("-polaris") else None),
             physiological_format=("PolarisInfraredTracker"
                                   if self.params.data_type.endswith("-polaris") else "SAEC"),
             sensor_type=(self.params.rawdata_sensor_type
@@ -892,8 +882,10 @@ class DataLoader:
             b = encoding_true.adjoint(kspace_vec)
             x0 = torch.zeros_like(b)
             solver = ConjugateGradientSolver(
-                encoding_true, reg_lambda=0.0, verbose=False,
-                early_stopping=self.params.cg_early_stopping, max_stag_steps=self.params.cg_max_stag_steps,
+                encoding_true, reg_lambda=0.0, regularizer="Tikhonov", regularization_shape=None,
+                regularization_spatial_dims=None, verbose=False,
+                early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
+                max_stag_steps=self.params.cg_max_stag_steps,
                 max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
                 reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                       if self.params.cg_use_reg_scale_proxy else None),

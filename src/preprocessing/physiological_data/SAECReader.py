@@ -289,7 +289,6 @@ class SAECReader:
         else:
             raise ValueError(f"Physiological sensor type is not correct: {sersor_type!r}")
 
-    # CODEX: is it really private?
     @staticmethod
     def _read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
         timestamps_saec, respiratory_data_saec = SAECReader._get_respiration_from_saec(saec_filename, sensor_type)

@@ -11,10 +11,9 @@ class ConjugateGradientSolver:
         _A(x) = b
     where _A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
-    #CODEX : there should not be any default values here, if they are not set in the configs, an error should be raised, instead of silently using default values.
-    def __init__(self, encoding_operator, reg_lambda=0.0, regularizer="Tikhonov", regularization_shape=None,
-        regularization_spatial_dims=None, verbose=False, early_stopping=True, true_residual_interval=10,
-        max_stag_steps=3, max_more_steps=None, use_reg_scale_proxy=False, reg_scale_num_probes=8):
+    def __init__(self, encoding_operator, *, reg_lambda, regularizer, regularization_shape,
+        regularization_spatial_dims, verbose, early_stopping, true_residual_interval,
+        max_stag_steps, max_more_steps, use_reg_scale_proxy, reg_scale_num_probes):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)

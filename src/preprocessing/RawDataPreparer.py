@@ -4,7 +4,7 @@ import h5py
 import numpy as np
 import torch
 
-from src.preprocessing.RawDataReader import RawDataReader
+from src.preprocessing.ISMRMRDReader import ISMRMRDReader
 from src.preprocessing.physiological_data.SAECReader import SAECReader
 from src.preprocessing.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
 
@@ -16,7 +16,7 @@ class RawDataPreparer:
     the axis with greatest peak-to-peak range at full-sequence MRI readout times,
     measured after low-pass filtering and before normalization. The caller selects the mode explicitly.
     Both physiological formats use the same synchronizer before slice selection.
-    RawDataReader is responsible only for MRI acquisition reading and mapping.
+    ISMRMRDReader is responsible only for MRI acquisition reading and mapping.
     """
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_format,
@@ -29,7 +29,7 @@ class RawDataPreparer:
             PolarisInfraredTrackerReader(channel_mode=polaris_channel_mode)
             if physiological_format == "PolarisInfraredTracker"
             else SAECReader(sensor_type=sensor_type))
-        self.reader = RawDataReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
+        self.reader = ISMRMRDReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
         self.physiological_file = physiological_file
         self.physiological_format = physiological_format
         self.sensor_type = sensor_type
@@ -160,8 +160,7 @@ class RawDataPreparer:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    # CODEX: here, h5filename is ambiguous. is it siemens raw data, saec or GRICS-torch h5 (preprocessed h5)? to rename
-    def read_data(self, h5filename=None, slice_idx=None):
+    def read_data(self, output_h5_file=None, slice_idx=None):
         """Return reconstruction-ready arrays, optionally selecting a slice/exporting H5.
 
         Synchronization always uses the complete sequence before slice selection.
@@ -189,8 +188,8 @@ class RawDataPreparer:
             if "reference_kspace" in data:
                 data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]
 
-        if h5filename is not None:
-            with h5py.File(h5filename, 'w') as f:
+        if output_h5_file is not None:
+            with h5py.File(output_h5_file, 'w') as f:
                 f.create_dataset('motion_data', data=data['motion_data'])
                 f.create_dataset('idx_ky', data=data['idx_ky'])
                 f.create_dataset('idx_kz', data=data['idx_kz'])
@@ -202,6 +201,6 @@ class RawDataPreparer:
                 f.attrs['nex_source'] = data['nex_source']
                 for name, value in self.physiological_reader.metadata.items():
                     f.attrs[name] = value
-            data['realworld_h5_path'] = h5filename
+            data['realworld_h5_path'] = output_h5_file
 
         return data
