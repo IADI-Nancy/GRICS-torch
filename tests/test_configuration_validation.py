@@ -12,6 +12,7 @@ import torch
 from src.runtime.runtime_config import load_config, load_postprocessing_config, _load_toml_flat
 from src.runtime.runtime_setup import initialize_runtime
 from src.preprocessing.DataLoader import DataLoader
+from src.preprocessing.RawDataPreparer import RawDataPreparer
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculator
 
@@ -26,6 +27,16 @@ SYNTH = dict(data_type='shepp-logan', reconstruction_config='config/reconstructi
              motion_simulation_config='config/motion_simulation/nonrigid_2d.toml')
 
 class StrictConfigurationChecks(unittest.TestCase):
+    def test_physiology_synchronizer_expands_duplicate_timestamps_to_uniform_grid(self):
+        interpolated = RawDataPreparer._synchronize_to_sequence_end(
+            [np.array([-3.0, -2.0, -1.0, -1.0])],
+            [np.array([0.0, 1.0, 2.0, 3.0])],
+            np.array([-2.5, -1.5, -1.0]),
+            source_sequence_end=0.0,
+            bounds='edge',
+        )
+        np.testing.assert_allclose(interpolated[:, 0], [0.75, 2.25, 3.0])
+
     def test_shipped_configs(self):
         for recon in Path('config/reconstruction').glob('*.toml'):
             dim = '3d' if '3d' in recon.stem else '2d'
