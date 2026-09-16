@@ -88,12 +88,20 @@ class ISMRMRDReader:
     def _extract_mri_data(self):
         dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
         try:
-            header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
+            xml_header = dset.read_xml_header()
+            self.ismrmrd_header = (xml_header.decode("utf-8")
+                                   if isinstance(xml_header, bytes) else xml_header)
+            header = ismrmrd.xsd.CreateFromDocument(self.ismrmrd_header)
             enc = header.encoding[0]
             limits = enc.encodingLimits
 
             N_SLI = self._encoding_limit_size(limits.slice)
-            # Use repetition as Nex source for these 3D raw datasets.
+            # Nex currently follows repetition, not the Siemens average counter.
+            # Our Siemens protocol uses two complementary averages at R=2 to
+            # form one fully sampled image for coil-sensitivity estimation.
+            # Combining those averages is intentional for that protocol.
+            # TODO: distinguish it from true multiple-Nex acquisitions, whose
+            # averages must remain separate; this ambiguity is unresolved.
             Nex = self._encoding_limit_size(limits.repetition)
             Nex = max(1, Nex)
 
@@ -237,6 +245,7 @@ class ISMRMRDReader:
         (kspace, times, slices, ky, kz, nex, nex_source, nex_values,
          geometry) = self._extract_mri_data()
         return {
+            "ismrmrd_header": self.ismrmrd_header,
             "kspace": kspace, "time_seconds": times, "slice_indices": slices,
             "idx_ky": ky, "idx_kz": kz, "idx_nex": nex,
             "nex_source": nex_source, "nex_values": nex_values,

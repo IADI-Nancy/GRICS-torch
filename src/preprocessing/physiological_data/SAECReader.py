@@ -223,7 +223,7 @@ class SAECReader:
 
             return timestamps, respiratory_data_filtered
 
-        elif sersor_type == '1MARMOT' : # not tested
+        elif sersor_type == '1MARMOT' :
             if len(respiratory_data) == 0:
                 raise ValueError(
                     "No MARMOT respiratory data was available after reading the SAEC file. "
@@ -236,14 +236,26 @@ class SAECReader:
             for i_sensor in range(len(respiratory_data)):
                 respiratory_data_filtered_hp, sigma = SAECReader._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
 
-                track_idx = np.argmax(sigma)
-                max_sigma[i_sensor] = sigma[track_idx]
+                # A rejected, constant, or nonfinite track cannot be selected.
+                valid = (np.isfinite(sigma) & (sigma > 0)
+                         & np.isfinite(respiratory_data_filtered_hp).all(axis=0))
+                scores = np.where(valid, sigma, 0.0)
+                track_idx = np.argmax(scores)
+                max_sigma[i_sensor] = scores[track_idx]
                 tracks[i_sensor] = track_idx
                 respiratory_data_filtered.append(respiratory_data_filtered_hp[:, track_idx])
 
+            if not np.any(max_sigma > 0):
+                raise ValueError(
+                    "No valid MARMOT accelerometer tracks were detected. "
+                    "All candidate tracks were rejected as displaced or unusable."
+                )
             sensor_idx = np.argmax(max_sigma)
             respiratory_data_MARMOT = respiratory_data_filtered[sensor_idx]
-            respiratory_data_MARMOT = respiratory_data_MARMOT / np.std(respiratory_data_MARMOT)
+            scale = np.std(respiratory_data_MARMOT)
+            if not np.isfinite(scale) or scale <= 0:
+                raise ValueError("Selected 1MARMOT signal has no finite non-zero variance after filtering.")
+            respiratory_data_MARMOT = respiratory_data_MARMOT / scale
 
             timestamps_MARMOT = timestamps[sensor_idx]
 
