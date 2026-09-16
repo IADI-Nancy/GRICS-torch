@@ -1,0 +1,3 @@
+[polaris]
+# Use all tracked tool axes, or only the axis with the largest amplitude.
+polaris_channel_mode = "all"
