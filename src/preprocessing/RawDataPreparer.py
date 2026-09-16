@@ -63,8 +63,9 @@ class RawDataPreparer:
         No clock drift correction is applied. Returns [readout, channel] float64 data.
 
         bounds='raise' rejects uncovered readouts. bounds='edge' holds endpoint values,
-        preserving the existing SAEC interpolation behavior. Invalid values and
-        non-increasing source timestamps are always rejected.
+        preserving the existing SAEC interpolation behavior. Invalid values are
+        rejected. Repeated source timestamps are expanded to a uniform grid,
+        retaining every sample from packetized physiological sensors.
         """
         target = np.asarray(acquisition_times, dtype=np.float64)
         if target.ndim != 1 or not target.size or not np.isfinite(target).all():
@@ -83,8 +84,19 @@ class RawDataPreparer:
                 raise ValueError(f'Channel {index}: times and values must be matching nonempty 1D arrays.')
             if not np.isfinite(times).all() or not np.isfinite(values).all():
                 raise ValueError(f'Channel {index}: invalid physiological times or values; resolve gaps first.')
-            if np.any(np.diff(times) <= 0):
-                raise ValueError(f'Channel {index}: timestamps must be strictly increasing.')
+            differences = np.diff(times)
+            if np.any(differences < 0):
+                raise ValueError(f'Channel {index}: timestamps must be nondecreasing.')
+            if times.size < 2 or times[-1] <= times[0]:
+                raise ValueError(
+                    f'Channel {index}: at least two distinct timestamps are required.'
+                )
+            if np.any(differences == 0):
+                # MARMOT and potentially BELT streams may be packetized: one
+                # transport timestamp labels several uniformly sampled values.
+                # Build one grid per input channel (and thus one grid shared by
+                # all three axes of a MARMOT ACC sample), retaining all values.
+                times = np.linspace(times[0], times[-1], num=times.size)
             end = times[-1] if source_sequence_end is None else source_sequence_end
             relative_times = times - end
             if bounds == 'raise' and (target.min() < relative_times[0] - 1e-9
