@@ -24,7 +24,9 @@ def _make_solver(nx, ny, device):
         reg_lambda=0.0,
         regularizer="Tikhonov_laplacian",
         regularization_shape=(2, nx, ny),
-        verbose=False,
+        regularization_spatial_dims=(1, 2), verbose=False, early_stopping=True,
+        true_residual_interval=10, max_stag_steps=3, max_more_steps=0,
+        use_reg_scale_proxy=False, reg_scale_num_probes=None,
     )
 
 
@@ -41,7 +43,7 @@ def test_laplacian_zero_for_linear_field_including_boundaries():
     f1 = -0.8 * x + 1.4 * y - 5.0
     field = torch.stack([f0, f1], dim=0)
 
-    out = solver.laplacian_op(field.reshape(-1)).reshape(2, nx, ny)
+    out = solver._laplacian_op(field.reshape(-1)).reshape(2, nx, ny)
 
     max_abs = torch.max(torch.abs(out)).item()
     print(f"max |L(affine)| = {max_abs:.6e}")

@@ -47,9 +47,9 @@ class TrackingSynchronizationTest(unittest.TestCase):
         np.testing.assert_allclose(edge, [[0., 0.], [4., 12.]])
 
     def test_preparation_preserves_reader_indices_and_full_sequence_clock(self):
-        from src.preprocessing.RawDataReader import RawDataReader
+        from src.preprocessing.ISMRMRDReader import ISMRMRDReader
         from src.preprocessing.RawDataPreparer import RawDataPreparer
-        reader = RawDataReader('unused')
+        reader = ISMRMRDReader('unused')
         reader.reference_kspace = None
         reader._raw_uses_kz_as_volume_axis = False
         # Two complementary ky lines occupy one existing NEX; slice 1 ends early.
@@ -63,13 +63,13 @@ class TrackingSynchronizationTest(unittest.TestCase):
         tracking = NS(time_seconds=np.array([0., 1., 2.]),
                       tool_positions=np.array([[0., 0., 0.], [2., 4., 6.], [4., 8., 12.]]))
         with tempfile.TemporaryDirectory() as tmp, \
-             patch('src.preprocessing.RawDataPreparer.RawDataReader', return_value=reader), \
+             patch('src.preprocessing.RawDataPreparer.ISMRMRDReader', return_value=reader), \
              patch.object(reader, '_extract_mri_data', return_value=extracted) as read, \
              patch.object(PolarisInfraredTrackerReader, 'read', return_value=tracking), \
              patch.object(PolarisInfraredTrackerReader, '_lowpass', side_effect=lambda t, p: p):
             output = Path(tmp) / 'slice.h5'
-            preparer = RawDataPreparer('unused', 'tracking.tsv', physiological_format='PolarisInfraredTracker')
-            preparer.read_data(h5filename=output, slice_idx=1)
+            preparer = RawDataPreparer('unused', 'tracking.tsv', physiological_format='PolarisInfraredTracker', sensor_type=None, device='cpu', print_raw_calibration_lines=False, polaris_channel_mode='all')
+            preparer.read_data(output_h5_file=output, slice_idx=1)
             sync = preparer.synchronization
             read.assert_called_once_with()
             with h5py.File(output) as f:
@@ -90,7 +90,7 @@ class TrackingSynchronizationTest(unittest.TestCase):
             'nex_values': torch.tensor([0]), 'slice_geometry': {0: {}},
             'reference_kspace': None, 'uses_kz_as_volume_axis': False,
         }
-        preparer = RawDataPreparer('unused', 'physiology.h5')
+        preparer = RawDataPreparer('unused', 'physiology.h5', physiological_format='SAEC', sensor_type='BELT', device='cpu', print_raw_calibration_lines=False, polaris_channel_mode='all')
         with patch.object(preparer.reader, 'read_data', return_value=raw), \
              patch.object(SAECReader, '_read_and_process_data',
                           return_value=(np.array([-2., 0., 2.]), np.array([0., 2., 4.]))), \
@@ -116,14 +116,14 @@ class TrackingSynchronizationTest(unittest.TestCase):
                       tool_positions=np.array([[1000., 0., 100.], [1000., 0., 0.],
                                                [1001., 10., 2.], [1002., 0., 4.]]))
         preparer = RawDataPreparer('unused', 'tracking.tsv',
-                                  physiological_format='PolarisInfraredTracker',
-                                  polaris_channel_mode='largest-amplitude')
+                                  physiological_format='PolarisInfraredTracker', sensor_type=None, device='cpu',
+                                  print_raw_calibration_lines=False, polaris_channel_mode='largest-amplitude')
         with tempfile.TemporaryDirectory() as tmp, \
              patch.object(preparer.reader, 'read_data', return_value=raw), \
              patch.object(PolarisInfraredTrackerReader, 'read', return_value=tracking), \
              patch.object(PolarisInfraredTrackerReader, '_lowpass', side_effect=lambda t, p: p):
             output = Path(tmp) / 'slice.h5'
-            data = preparer.read_data(h5filename=output, slice_idx=0)
+            data = preparer.read_data(output_h5_file=output, slice_idx=0)
             self.assertEqual(data['motion_data'].shape, (1, 3, 1))
             self.assertEqual(preparer.selected_polaris_channels, ['Ty'])
             np.testing.assert_allclose(preparer.polaris_peak_to_peak, [2., 10., 4.])
@@ -141,7 +141,8 @@ class TrackingSynchronizationTest(unittest.TestCase):
         positions = np.column_stack([1000 + noise, respiration, 2 * respiration])
         tracking = NS(time_seconds=times, tool_positions=positions)
         preparer = RawDataPreparer('unused', 'tracking.tsv',
-                                  physiological_format='PolarisInfraredTracker')
+                                  physiological_format='PolarisInfraredTracker', sensor_type=None, device='cpu',
+                                  print_raw_calibration_lines=False, polaris_channel_mode='all')
         with patch.object(PolarisInfraredTrackerReader, 'read', return_value=tracking):
             _, channels, _, _ = preparer._physiological_channels()
         middle = slice(2000, -2000)

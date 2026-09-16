@@ -41,8 +41,9 @@ def _diag_case_metrics():
     solver = ConjugateGradientSolver(
         _DiagNormalOp(diag=diag, device=device),
         reg_lambda=lam,
-        regularizer="Tikhonov",
-        early_stopping=False,
+        regularizer="Tikhonov", regularization_shape=None, regularization_spatial_dims=None,
+        verbose=False, early_stopping=False, true_residual_interval=10, max_stag_steps=3,
+        max_more_steps=0, use_reg_scale_proxy=False, reg_scale_num_probes=None,
     )
 
     x1 = solver.solve_cg(b, x0=torch.zeros_like(b), max_iter=200, tol=1e-12)
@@ -67,8 +68,9 @@ def _spatial_case_metric(regularizer):
         _IdentityNormalOp(device=device),
         reg_lambda=0.4,
         regularizer=regularizer,
-        regularization_shape=shape,
-        early_stopping=False,
+        regularization_shape=shape, regularization_spatial_dims=(1, 2),
+        verbose=False, early_stopping=False, true_residual_interval=10, max_stag_steps=3,
+        max_more_steps=0, use_reg_scale_proxy=False, reg_scale_num_probes=None,
     )
 
     x1 = solver.solve_cg(b, x0=torch.zeros_like(b), max_iter=300, tol=1e-10)

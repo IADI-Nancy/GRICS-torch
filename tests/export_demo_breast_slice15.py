@@ -77,7 +77,7 @@ def main():
         f"to {args.output}..."
     )
     data = reader.read_data(
-        h5filename=args.output,
+        output_h5_file=args.output,
         slice_idx=args.slice_idx,
     )
     print(

@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
-from src.preprocessing.RawDataReader import RawDataReader
+from src.preprocessing.ISMRMRDReader import ISMRMRDReader
 from src.preprocessing.RawDataPreparer import RawDataPreparer
 from src.preprocessing.DataLoader import DataLoader
 
@@ -77,10 +77,10 @@ class DebugFlagChecks(unittest.TestCase):
             rows = acquisitions + ([acquisitions[0]] if duplicate else [])
             ds.number_of_acquisitions.return_value = len(rows)
             ds.read_acquisition.side_effect = rows
-            reader = RawDataReader('unused.h5', print_raw_calibration_lines=enabled)
+            reader = ISMRMRDReader('unused.h5', print_raw_calibration_lines=enabled)
             output = io.StringIO()
-            with patch('src.preprocessing.RawDataReader.ismrmrd.Dataset', return_value=ds), \
-                 patch('src.preprocessing.RawDataReader.ismrmrd.xsd.CreateFromDocument', return_value=header), \
+            with patch('src.preprocessing.ISMRMRDReader.ismrmrd.Dataset', return_value=ds), \
+                 patch('src.preprocessing.ISMRMRDReader.ismrmrd.xsd.CreateFromDocument', return_value=header), \
                  contextlib.redirect_stdout(output):
                 result = reader._extract_mri_data()
             ds.close.assert_called_once()
@@ -99,7 +99,7 @@ class DebugFlagChecks(unittest.TestCase):
         for enabled in (False, True):
             with self.assertRaisesRegex(ValueError, 'Duplicate parallel-calibration'):
                 extract(enabled, duplicate=True)
-        self.assertFalse(RawDataReader('unused').print_raw_calibration_lines)
+        self.assertFalse(ISMRMRDReader('unused').print_raw_calibration_lines)
         for enabled in (False, True):
             preparer = RawDataPreparer('unused', 'unused', print_raw_calibration_lines=enabled)
             self.assertEqual(preparer.reader.print_raw_calibration_lines, enabled)

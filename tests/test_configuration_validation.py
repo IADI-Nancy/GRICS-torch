@@ -17,7 +17,8 @@ from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculato
 
 BASE = dict(data_type='siemens-polaris', reconstruction_config='config/reconstruction/nonrigid_2d.toml',
             coil_sensitivity_config='config/coil_sensitivity/odille_spline.toml',
-            ismrmrd_reader_config='config/real_data/ismrmrd_reader.toml')
+            ismrmrd_reader_config='config/real_data/ismrmrd_reader.toml',
+            polaris_config='config/real_data/polaris.toml')
 SYNTH = dict(data_type='shepp-logan', reconstruction_config='config/reconstruction/nonrigid_2d.toml',
              coil_sensitivity_config='config/coil_sensitivity/odille_spline.toml',
              shepp_logan_config='config/synthetic_data/shepp_logan_2d.toml',
@@ -73,12 +74,12 @@ class StrictConfigurationChecks(unittest.TestCase):
                 load_config(**SYNTH, overrides=values)
 
     def test_real_data_settings_are_loaded_only_for_saec(self):
-        saec = {**BASE, 'data_type':'siemens-saec', 'real_data_config':'config/real_data/saec.toml'}
+        saec = {**BASE, 'data_type':'siemens-saec', 'real_data_config':'config/real_data/saec.toml', 'polaris_config':None}
         self.assertEqual(load_config(**saec).rawdata_sensor_type, '1MARMOT')
         with self.assertRaises(ValueError):
             load_config(**{**BASE, 'data_type':'siemens-saec'})
         with self.assertRaises(ValueError):
-            load_config(**{**BASE, 'real_data_config':'config/real_data/saec.toml','ismrmrd_reader_config':'config/real_data/ismrmrd_reader.toml'})
+            load_config(**{**BASE, 'real_data_config':'config/real_data/saec.toml','ismrmrd_reader_config':'config/real_data/ismrmrd_reader.toml','polaris_config':None})
         with self.assertRaises(ValueError):
             load_config(**SYNTH, overrides={'rawdata_sensor_type':'1MARMOT'})
 
@@ -207,7 +208,7 @@ class StrictConfigurationChecks(unittest.TestCase):
         torch.testing.assert_close(loader.kspace,torch.from_numpy(data))
 
     def test_kspace_only_hdf_and_ismrmrd_reader_routing(self):
-        cfg={**BASE, 'data_type':'preprocessed-real', 'ismrmrd_reader_config':None,
+        cfg={**BASE, 'data_type':'preprocessed-real', 'ismrmrd_reader_config':None, 'polaris_config':None,
              'sampling_config':'config/sampling_simulation/random.toml',
              'motion_simulation_config':'config/motion_simulation/nonrigid_2d.toml'}
         p=load_config(**cfg,overrides={'save_debug_plots':False,'calibration_lines':4})
@@ -218,9 +219,9 @@ class StrictConfigurationChecks(unittest.TestCase):
             loader=DataLoader(p,t_device='cpu',filename=str(path),slice_idx=0,run_pipeline=False)
             loader.load_data()
             torch.testing.assert_close(loader.kspace,torch.from_numpy(kspace))
-        p=load_config(**{**cfg,'data_type':'ismrmrd-polaris','ismrmrd_reader_config':'config/real_data/ismrmrd_reader.toml'},overrides={'save_debug_plots':False,'calibration_lines':4})
+        p=load_config(**{**cfg,'data_type':'ismrmrd-polaris','ismrmrd_reader_config':'config/real_data/ismrmrd_reader.toml','polaris_config':'config/real_data/polaris.toml'},overrides={'save_debug_plots':False,'calibration_lines':4})
         loader=DataLoader(p,t_device='cpu',filename='scan.mrd',slice_idx=0,run_pipeline=False)
-        with patch('src.preprocessing.DataLoader.RawDataReader') as reader, patch('src.preprocessing.DataLoader.RawDataPreparer') as preparer:
+        with patch('src.preprocessing.DataLoader.ISMRMRDReader') as reader, patch('src.preprocessing.DataLoader.RawDataPreparer') as preparer:
             reader.return_value.read_data.return_value={'kspace':torch.ones(1,1,16,8,1,dtype=torch.complex128),
                 'reference_kspace':None,'slice_geometry':{}}
             reader.return_value._remove_oversampling.return_value=torch.from_numpy(kspace)
@@ -253,7 +254,7 @@ class StrictConfigurationChecks(unittest.TestCase):
             load_config(**args,overrides={'NshotsPerNex':129})
 
     def test_filename_aliases(self):
-        p=load_config(**{**BASE,'data_type':'siemens-saec','real_data_config':'config/real_data/saec.toml','ismrmrd_reader_config':'config/real_data/ismrmrd_reader.toml'})
+        p=load_config(**{**BASE,'data_type':'siemens-saec','real_data_config':'config/real_data/saec.toml','ismrmrd_reader_config':'config/real_data/ismrmrd_reader.toml','polaris_config':None})
         for key in ('siemens_file','dat_file'):
             with self.assertRaises(ValueError):
                 DataLoader(p,filename={key:'scan.dat','saec_file':'motion'},run_pipeline=False)
