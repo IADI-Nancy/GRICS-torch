@@ -132,6 +132,7 @@ class RawDataPreparer:
             "idx_nex": nex.detach().cpu().numpy(), "nex_source": raw["nex_source"],
             "nex_values": raw["nex_values"].detach().cpu().numpy(),
             "slice_geometry": raw["slice_geometry"],
+            "ismrmrd_header": raw["ismrmrd_header"],
         }
         if raw["reference_kspace"] is not None:
             data["reference_kspace"] = self.reader._remove_oversampling(
@@ -175,6 +176,8 @@ class RawDataPreparer:
     def read_data(self, output_h5_file=None, slice_idx=None):
         """Return reconstruction-ready arrays, optionally selecting a slice/exporting H5.
 
+        ``ismrmrd_header`` contains the complete original XML header as text;
+        H5 exports store it as a separate scalar UTF-8 dataset of the same name.
         Synchronization always uses the complete sequence before slice selection.
         ``self.synchronization`` retains the full aligned traces for display.
         """
@@ -202,6 +205,8 @@ class RawDataPreparer:
 
         if output_h5_file is not None:
             with h5py.File(output_h5_file, 'w') as f:
+                f.create_dataset('ismrmrd_header', data=data['ismrmrd_header'],
+                                 dtype=h5py.string_dtype(encoding='utf-8'))
                 f.create_dataset('motion_data', data=data['motion_data'])
                 f.create_dataset('idx_ky', data=data['idx_ky'])
                 f.create_dataset('idx_kz', data=data['idx_kz'])
