@@ -90,6 +90,7 @@ class DataLoader:
         self._source_idx_kz = None
         self._source_idx_nex = None
         self.source_ismrmrd_file = None
+        self.ismrmrd_header = None
 
     def _validate_inputs(self):
         if self.params.data_type != "shepp-logan" and self.filename is None:
@@ -417,15 +418,16 @@ class DataLoader:
     @staticmethod
     def _normalize_real_image(arr):
         arr = np.asarray(arr)
-        if arr.ndim > 2:
-            # RGB(A) -> grayscale luminance
-            arr = arr[..., :3]
-            arr = 0.2989 * arr[..., 0] + 0.5870 * arr[..., 1] + 0.1140 * arr[..., 2]
-        arr = np.squeeze(arr).astype(np.float64, copy=False)
         if np.iscomplexobj(arr):
             arr = np.abs(arr)
+        if arr.ndim == 3 and arr.shape[-1] == 1:
+            arr = arr[..., 0]
+        elif arr.ndim == 3 and arr.shape[-1] in {3, 4}:
+            # RGB(A) -> grayscale luminance; ignore alpha.
+            arr = 0.2989 * arr[..., 0] + 0.5870 * arr[..., 1] + 0.1140 * arr[..., 2]
         if arr.ndim != 2:
             raise ValueError(f"Expected a 2D image after conversion, got shape {arr.shape}.")
+        arr = arr.astype(np.float64, copy=True)
         arr -= np.min(arr)
         denom = np.max(arr)
         if denom > 0:
@@ -719,6 +721,7 @@ class DataLoader:
             self._source_idx_kz = torch.from_numpy(data['idx_kz']).to(self.t_device, dtype=torch.int64)
             self._source_idx_nex = torch.from_numpy(data['idx_nex']).to(self.t_device, dtype=torch.int64)
         self._source_slice_geometry = data.get('slice_geometry')
+        self.ismrmrd_header = data.get('ismrmrd_header')
 
         self.kspace = self._source_kspace
         self.reference_kspace = self._source_reference_kspace
@@ -805,7 +808,8 @@ class DataLoader:
                                    print_raw_calibration_lines=self.params.print_raw_calibration_lines)
             raw = reader.read_data()
             data = {"kspace": reader._remove_oversampling(raw["kspace"]).cpu().numpy(),
-                    "slice_geometry": raw["slice_geometry"]}
+                    "slice_geometry": raw["slice_geometry"],
+                    "ismrmrd_header": raw.get("ismrmrd_header")}
             if raw["reference_kspace"] is not None:
                 data["reference_kspace"] = reader._remove_oversampling(raw["reference_kspace"]).cpu().numpy()
             self._ingest_realworld_arrays(data, slice_idx=slice_idx)
@@ -841,6 +845,8 @@ class DataLoader:
                 for key in ('motion_data', 'idx_ky', 'idx_kz', 'idx_nex'):
                     data[key] = f[key][:]
             data['kspace'] = f['kspace'][:]
+            if 'ismrmrd_header' in f:
+                data['ismrmrd_header'] = f['ismrmrd_header'].asstr()[()]
             if 'reference_kspace' in f:
                 data['reference_kspace'] = f['reference_kspace'][:]
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
