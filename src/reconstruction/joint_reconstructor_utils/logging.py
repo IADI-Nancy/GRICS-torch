@@ -1,10 +1,14 @@
+"""Run logging, progress display, and diagnostic plots for joint reconstruction."""
+
 import os
-from contextlib import nullcontext
+import time
+from contextlib import contextmanager, nullcontext
 
 import torch
 from tqdm.auto import tqdm
 
-from src.utils.plotting import save_nonrigid_alpha_plots, save_residual_subplots
+from src.utils.plotting import save_nonrigid_alpha_plots, save_residual_subplots, show_and_save_image
+from src.utils.save_final_motion_plots import save_final_nonrigid_alpha_maps, save_final_rigid_motion_plots
 
 
 def _format_cg_info(cg_info):
@@ -16,31 +20,9 @@ def _format_cg_info(cg_info):
         f"iter = {cg_info.get('iterations', 0)}"
     )
 
-
 def _console(params, message):
     if params.print_to_console:
         print(message)
-
-
-def _assign_cached_reg_scale(params, Data_res, cache_key, solver, reference_vec):
-    if not params.cg_use_reg_scale_proxy:
-        solver.reg_scale = 1.0
-        return
-
-    cache = Data_res.setdefault("_reg_scale_cache", {})
-    if cache_key not in cache:
-        cache[cache_key] = solver._update_regularization_scale(reference_vec)
-    solver.reg_scale = cache[cache_key]
-
-
-def _parse_gn_iterations_per_level(params, res_levels):
-    gn_cfg = params.GN_iterations_per_level
-    if not isinstance(gn_cfg, list) or len(gn_cfg) != len(res_levels):
-        raise ValueError("GN_iterations_per_level must have one positive integer per ResolutionLevels entry.")
-    if any(type(value) is not int or value < 1 for value in gn_cfg):
-        raise ValueError("GN_iterations_per_level entries must be positive integers.")
-    return list(gn_cfg)
-
 
 def _init_run_logging(params, n_levels, gn_iters_per_level):
     os.makedirs(params.logs_folder, exist_ok=True)
@@ -73,11 +55,9 @@ def _init_run_logging(params, n_levels, gn_iters_per_level):
         "motion_residuals_by_level": [[] for _ in range(n_levels)],
     }
 
-
 def _append_run_log(run_log, line=""):
     with open(run_log["path"], "a") as f:
         f.write(line + "\n")
-
 
 def _save_run_residual_plots(logs_folder, run_log):
     recon_path = os.path.join(logs_folder, "recon_residual.png")
@@ -86,16 +66,6 @@ def _save_run_residual_plots(logs_folder, run_log):
                            y_label="Relative residual", out_path=recon_path)
     save_residual_subplots(run_log["motion_residuals_by_level"], title="Motion normalized residuals",
                            y_label="||dm||2 / (||alpha||2 + eps)", out_path=motion_path)
-
-
-def _initialize_level_tracking():
-    residual_recon_norms = []
-    residual_motion_norms = []
-    best_relres = float("inf")
-    best_image = None
-    best_motion = None
-    return residual_recon_norms, residual_motion_norms, best_relres, best_image, best_motion
-
 
 def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, flip_for_display):
     if motion_type != "non-rigid":
@@ -121,7 +91,7 @@ def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, 
             )
 
 
-class _JointReconstructionLogger:
+class JointReconstructionLogger:
     """Own run logging, progress display, residual history, and residual plots.
 
     This helper deliberately does not decide whether an iteration should stop,
@@ -129,8 +99,11 @@ class _JointReconstructionLogger:
     Those algorithm decisions remain in JointReconstructor.
     """
 
-    def __init__(self, params, iterations_per_level):
+    def __init__(self, params, iterations_per_level, motion_plot_context=None):
         self.params = params
+        self.motion_plot_context = motion_plot_context or {}
+        self.iterations_per_level = iterations_per_level
+        self._progress = None
         self.enabled = bool(params.save_reconstruction_outputs)
         n_levels = len(iterations_per_level)
         self.run_log = (
@@ -178,13 +151,13 @@ class _JointReconstructionLogger:
             f"    Resolution level initializations : {elapsed:.6f} s\n"
         )
 
-    def iteration_stopped_early(self, progress):
+    def iteration_stopped_early(self):
         message = "    Relative residual increased - restoring best solution at this level."
         _console(self.params, message)
         self.append(message)
-        self.update_progress(progress)
+        self.update_progress(self._progress)
 
-    def iteration_finished(
+    def _write_iteration(
         self, *, iteration_index, result, relative_residual,
         image_cg_info, motion_cg_info, relative_motion_update=None,
         motion_update_norm=None, elapsed,
@@ -211,12 +184,90 @@ class _JointReconstructionLogger:
             f"motion_norm = {motion_update_norm:.6e} : {elapsed:.6f} s\n"
         )
 
-    def level_finished(self, level_index, reconstruction_residuals, motion_residuals, elapsed):
-        self.run_log["recon_residuals_by_level"][level_index] = reconstruction_residuals
-        self.run_log["motion_residuals_by_level"][level_index] = motion_residuals
-        self.append(f"    Total time of resolution level {level_index}: {elapsed:.6f} s\n")
+    def start_run(self):
+        self._run_started = time.perf_counter()
 
-    def run_finished(self, elapsed):
-        self.append(f"Total time of reconstruction run: {elapsed:.6f} s")
+    def start_level(self, level_index, resolution):
+        self._level_started = time.perf_counter()
+        self._level_index = level_index
+        _console(self.params, f"\n=== Resolution level {level_index + 1}: factor {resolution} ===")
+
+    def level_prepared(self, data, regularization_weight):
+        self.level_started(
+            self._level_index, data, regularization_weight,
+            time.perf_counter() - self._level_started)
+
+    @contextmanager
+    def iterations(self, level_index):
+        """Own progress lifetime and iteration timing, including early exits."""
+        count = self.iterations_per_level[level_index]
+        with self.progress(level_index, count, len(self.iterations_per_level)) as progress:
+            self._progress = progress
+            try:
+                yield self._iteration_indices(count)
+            finally:
+                self._progress = None
+
+    def _iteration_indices(self, count):
+        for index in range(count):
+            self.announce_iteration(index, count)
+            self._iteration_started = time.perf_counter()
+            self._iteration_index = index
+            yield index
+
+    def record_residual(self, relative_residual):
+        self.run_log["recon_residuals_by_level"][self._level_index].append(relative_residual)
+        self.show_residual(self._progress, relative_residual)
+
+    def iteration_finished(self, result, relative_residual, image_cg_info, motion_cg_info):
+        relative_motion_update = None
+        motion_update_norm = None
+        if result.motion_update is not None:
+            motion_update_norm = torch.linalg.norm(result.motion_update.flatten()).item()
+            motion_norm = torch.linalg.norm(result.motion.flatten()).item()
+            relative_motion_update = motion_update_norm / (motion_norm + 1e-12)
+            self.run_log["motion_residuals_by_level"][self._level_index].append(relative_motion_update)
+        self._write_iteration(
+            iteration_index=self._iteration_index, result=result, relative_residual=relative_residual,
+            image_cg_info=image_cg_info, motion_cg_info=motion_cg_info,
+            relative_motion_update=relative_motion_update, motion_update_norm=motion_update_norm,
+            elapsed=time.perf_counter() - self._iteration_started)
+        self.update_progress(self._progress)
+
+    def level_finished(self, data):
+        if self.enabled and self.params.save_debug_plots:
+            show_and_save_image(
+                data["ReconstructedImage"][0], f"image_resolution_level{self._level_index + 1}",
+                self.params.debug_folder, flip_for_display=self.params.flip_for_display)
+            _save_nonrigid_motion_debug(
+                data, self._level_index + 1, self.params.reconstruction_motion_type,
+                self.params.debug_folder, self.params.flip_for_display)
+        self.append(
+            f"    Total time of resolution level {self._level_index}: "
+            f"{time.perf_counter() - self._level_started:.6f} s\n")
+
+    def run_finished(self):
+        self.append(f"Total time of reconstruction run: {time.perf_counter() - self._run_started:.6f} s")
         if self.enabled:
             _save_run_residual_plots(self.params.logs_folder, self.run_log)
+
+    def save_final_outputs(self, image, motion):
+        """Save final reconstructed images and motion diagnostics."""
+        if not self.enabled:
+            return
+        if image.shape[0] == 1:
+            show_and_save_image(image[0], "image_reconstructed", self.params.results_folder,
+                flip_for_display=self.params.flip_for_display)
+        else:
+            show_and_save_image(image.mean(dim=0), "image_reconstructed", self.params.results_folder,
+                flip_for_display=self.params.flip_for_display)
+            for nex_index in range(image.shape[0]):
+                show_and_save_image(image[nex_index], f"image_reconstructed_nex{nex_index + 1}",
+                    self.params.results_folder, flip_for_display=self.params.flip_for_display)
+
+        if self.params.reconstruction_motion_type == "rigid":
+            save_final_rigid_motion_plots(motion, self.motion_plot_context, self.params.results_folder,
+                self.params.N_motion_states, self.params.ResolutionLevels, self.params.data_type)
+        elif self.params.reconstruction_motion_type == "non-rigid":
+            save_final_nonrigid_alpha_maps(motion, image[0], self.params.results_folder,
+                flip_for_display=self.params.flip_for_display, motion_plot_context=self.motion_plot_context)
