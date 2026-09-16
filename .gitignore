@@ -17,6 +17,7 @@ latex/
 .conda-latex/
 tests/*
 !tests/test_configuration_validation.py
+!tests/test_data_loading.py
 data/*
 !data/demo_motion-free_breast_image.png
 demos_data/*.h5
