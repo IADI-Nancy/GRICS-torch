@@ -104,7 +104,6 @@ class JointReconstructor:
         self.Data_full["SamplingIndices"] = SamplingIndices
         self._initialize_motion_state_schedule()
 
-    # CODEX: what is motion step schedule?
     def _initialize_motion_state_schedule(self):
         full_states = int(self.params.N_motion_states)
         schedule = self.params.N_motion_states_per_level
@@ -458,7 +457,8 @@ class JointReconstructor:
         if max_iterations is None:
             max_iterations = self.params.max_iter_recon
         solver = ConjugateGradientSolver(
-            E, reg_lambda=regularization_weight, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
+            E, reg_lambda=regularization_weight, regularizer="Tikhonov", regularization_shape=None,
+            regularization_spatial_dims=None, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
             true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
             max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
             reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
@@ -522,7 +522,8 @@ class JointReconstructor:
             mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         else:
             solver = ConjugateGradientSolver(
-                J, reg_lambda=self.params.lambda_m, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
+                J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov", regularization_shape=None,
+                regularization_spatial_dims=None, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
                 true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
                 max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
                 reg_scale_num_probes=(self.params.cg_reg_scale_num_probes

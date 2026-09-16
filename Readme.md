@@ -51,6 +51,7 @@ Main config types:
 - `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings
 - `config/real_data/saec.toml`: SAEC physiological sensor selection, loaded only for SAEC inputs
 - `config/real_data/ismrmrd_reader.toml`: ISMRMRD-reader diagnostics, loaded only for ISMRMRD or Siemens raw inputs
+- `config/real_data/polaris.toml`: Polaris channel selection, loaded only for Polaris inputs
 - `config/sampling_simulation/*.toml`: simulated k-space acquisition ordering
 - `config/motion_simulation/*.toml`: selected simulated rigid or non-rigid motion modes
 - `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode
@@ -113,7 +114,7 @@ postprocessing options.
 
 ### Runtime diagnostics
 
-Runtime diagnostics are configured by scope: `save_debug_plots` and `use_deterministic_algorithms` are global runtime settings; `check_simulated_motion_consistency` belongs to non-rigid motion TOMLs; and `print_raw_calibration_lines` belongs to `config/real_data/ismrmrd_reader.toml`. These replace the former combined `debug_flag`; old overrides are rejected as unknown settings. Direct `RawDataReader` and `RawDataPreparer` callers should use `print_raw_calibration_lines=` instead of `debug=`.
+Runtime diagnostics are configured by scope: `save_debug_plots` and `use_deterministic_algorithms` are global runtime settings; `check_simulated_motion_consistency` belongs to non-rigid motion TOMLs; and `print_raw_calibration_lines` belongs to `config/real_data/ismrmrd_reader.toml`. These replace the former combined `debug_flag`; old overrides are rejected as unknown settings. Direct `ISMRMRDReader` and `RawDataPreparer` callers should use `print_raw_calibration_lines=` instead of `debug=`.
 
 ## Data Types
 
@@ -152,7 +153,7 @@ No synthetic sampling is needed in this mode: acquisition order and motion signa
 
 ### `ismrmrd-saec`
 
-Loaded from raw scanner and physiological files using `RawDataReader`:
+Loaded from raw scanner and physiological files using `ISMRMRDReader`:
 - the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
 - physiological data file in SAEC [3, 4] format (`saec_file`)
 - `config/real_data/saec.toml` and `config/real_data/ismrmrd_reader.toml`
@@ -165,7 +166,7 @@ The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/real
 Select these types with `load_config(data_type=...)`. Pass `DataLoader` a pair
 `(mri_file, tracking_tsv)` or a dictionary containing `ismrmrd_file` / `siemens_raw_file`
 and `polaris_file`. The Siemens variant converts the MRI file to ISMRMRD first.
-Both require `config/real_data/ismrmrd_reader.toml`.
+Both require `config/real_data/ismrmrd_reader.toml` and `config/real_data/polaris.toml`.
 Polaris filtering and normalization are handled by `PolarisInfraredTrackerReader`;
 no `rawdata_sensor_type` setting is required. Both types support 2D slice selection
 and 3D volume loading, with sampling read from the acquisition data.

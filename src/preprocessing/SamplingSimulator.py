@@ -49,9 +49,8 @@ class SamplingSimulator:
         mask = self._undersampling_mask(self.Ny, self.params.acceleration_factor, self.params.calibration_lines, ky_values.device)
         return ky_values[mask[ky_values.to(torch.int64)]]
 
-    # CODEX : why nex is in input arguments, but not used?
     @staticmethod
-    def _build_ordered_ky_values(nex, nshots, Ny, device, kspace_sampling_type):
+    def _build_ordered_ky_values(nshots, Ny, device, kspace_sampling_type):
         if kspace_sampling_type == "linear":
             return torch.arange(Ny, device=device, dtype=torch.int64)
 
@@ -143,7 +142,7 @@ class SamplingSimulator:
                 start = 0
             else:
                 ky_all = self._build_ordered_ky_values(
-                    nex, Nshots, self.Ny, self.t_device, self.params.kspace_sampling_type,
+                    Nshots, self.Ny, self.t_device, self.params.kspace_sampling_type,
                 ).to(torch.int32)
                 ky_all = self._apply_undersampling(ky_all)
                 n_acquired_ky = int(ky_all.numel())

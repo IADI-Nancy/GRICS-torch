@@ -53,6 +53,7 @@ _RUNTIME_KEYS = {
 _NORMALIZATION_KEYS = {'normalize_kspace', 'kspace_norm_mode', 'kspace_norm_eps'}
 _REAL_DATA_KEYS = {'rawdata_sensor_type'}
 _ISMRMRD_READER_KEYS = {'print_raw_calibration_lines'}
+_POLARIS_KEYS = {'polaris_channel_mode'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
@@ -76,6 +77,7 @@ _FILE_SCHEMAS = {
                 'kspace_normalization': _NORMALIZATION_KEYS},
     'real_data': {'real_data': _REAL_DATA_KEYS},
     'ismrmrd_reader': {'ismrmrd_reader': _ISMRMRD_READER_KEYS},
+    'polaris': {'polaris': _POLARIS_KEYS},
     'reconstruction': {'reconstruction': _RECONSTRUCTION_KEYS},
     'sampling': {'sampling': _SAMPLING_KEYS},
     'shepp-logan': {'shepp_logan': _SHEPP_KEYS},
@@ -86,7 +88,7 @@ _FILE_SCHEMAS = {
 }
 _OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
                   _RECONSTRUCTION_KEYS | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
-                  _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS)
+                  _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS)
 _BOOL_KEYS = {
     'save_debug_plots', 'check_simulated_motion_consistency', 'use_deterministic_algorithms',
     'print_raw_calibration_lines', 'verbose', 'print_to_console', 'clean_output_folders_before_run',
@@ -439,7 +441,8 @@ def load_postprocessing_config(path, *, overrides=None):
 
 def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
                 shepp_logan_config=None, from_image_config=None, real_data_config=None,
-                ismrmrd_reader_config=None, sampling_config=None, motion_simulation_config=None, overrides=None):
+                ismrmrd_reader_config=None, polaris_config=None, sampling_config=None,
+                motion_simulation_config=None, overrides=None):
     _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
     root = Path(__file__).resolve().parents[2] / 'config'
     cfg = _load_toml_flat(root / 'general.toml', 'general')
@@ -464,6 +467,13 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
         if ismrmrd_reader_config is None:
             raise ValueError(f'{data_type} requires an ismrmrd_reader_config.')
         cfg.update(_load_toml_flat(ismrmrd_reader_config, 'ismrmrd_reader'))
+    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
+    if polaris_config is not None and not polaris_data:
+        raise ValueError('polaris_config is only valid for ISMRMRD or Siemens Polaris data.')
+    if polaris_data:
+        if polaris_config is None:
+            raise ValueError(f'{data_type} requires a polaris_config.')
+        cfg.update(_load_toml_flat(polaris_config, 'polaris'))
     if data_type in SYNTHETIC_DATA_TYPES:
         path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
         if path is None:
@@ -495,6 +505,11 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
             raise ValueError('print_raw_calibration_lines must be a boolean.')
     elif cfg.keys() & _ISMRMRD_READER_KEYS:
         raise ValueError(f'ISMRMRD-reader settings incompatible with {data_type}: {sorted(cfg.keys() & _ISMRMRD_READER_KEYS)}.')
+    if polaris_data:
+        _require(cfg, _POLARIS_KEYS, 'Polaris')
+        _choice(cfg['polaris_channel_mode'], 'polaris_channel_mode', {'all', 'largest-amplitude'})
+    elif cfg.keys() & _POLARIS_KEYS:
+        raise ValueError(f'Polaris settings incompatible with {data_type}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
     _validate_csm(cfg)
     _validate_source(cfg)
     _validate_sampling(cfg)
