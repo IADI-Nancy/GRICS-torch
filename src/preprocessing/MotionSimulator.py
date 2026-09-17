@@ -12,7 +12,7 @@ from src.utils.plotting import (
 from src.utils.nonrigid_display import (
     flip_nonrigid_alpha_for_display,
 )
-from src.utils.motion_simulator_utils import (
+from src.preprocessing.motion_simulator_utils.motion_simulator_utils import (
     build_event_transition_curve,
     build_navigator_from_motion_matrix,
     build_rigid_rotation_centers,

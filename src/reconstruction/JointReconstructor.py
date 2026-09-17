@@ -336,7 +336,7 @@ class JointReconstructor:
         return Data_res
 
     def _run_resolution_level(
-        self, data, *, level_index, level_iterations, level_count,
+        self, data, *, level_index, gauss_newton_iterations_at_level, level_count,
         update_final_motion, gn_early_stopping, logger):
         """Alternate image/motion updates and return the last accepted estimate pair.
 
@@ -349,10 +349,10 @@ class JointReconstructor:
         best_relative_residual = float("inf")
         best_image = best_motion = None
 
-        with logger.iterations(level_index) as iterations:
-            for iteration_index in iterations:
+        with logger.iterations(level_index) as gauss_newton_iteration_indices:
+            for gauss_newton_iteration_index in gauss_newton_iteration_indices:
                 # Only the last iteration of the entire run may skip motion.
-                is_final_iteration = (level_index == level_count - 1 and iteration_index == level_iterations - 1)
+                is_final_iteration = (level_index == level_count - 1 and gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1)
                 update_motion = not is_final_iteration or update_final_motion
 
                 result = self.gauss_newton_iteration(
@@ -366,7 +366,7 @@ class JointReconstructor:
                 logger.record_residual(relative_residual)
 
                 # Stop a diverging level and restore its best completed state.
-                if gn_early_stopping and iteration_index > 0 and relative_residual > best_relative_residual:
+                if gn_early_stopping and gauss_newton_iteration_index > 0 and relative_residual > best_relative_residual:
                     data["ReconstructedImage"] = best_image
                     data["MotionModel"] = best_motion
                     logger.iteration_stopped_early()
@@ -416,7 +416,7 @@ class JointReconstructor:
 
             # Run the alternating image/motion updates at this resolution.
             best_image, best_motion = self._run_resolution_level(
-                data, level_index=level_index, level_iterations=iterations_per_level[level_index],
+                data, level_index=level_index, gauss_newton_iterations_at_level=iterations_per_level[level_index],
                 level_count=len(resolution_levels), update_final_motion=update_final_motion,
                 gn_early_stopping=gn_early_stopping, logger=logger)
 
