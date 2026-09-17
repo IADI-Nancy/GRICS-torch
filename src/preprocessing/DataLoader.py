@@ -2,6 +2,10 @@ import numpy as np
 import os
 import subprocess
 import time
+import shutil
+from pathlib import Path
+from src.runtime.data_cache import acquire_cached, cache_key, source_identity
+from src.runtime.output_layout import bind_output_paths, record_reconstruction
 import torch
 from typing import Dict, Optional, Sequence, Union
 from skimage.data import shepp_logan_phantom
@@ -73,6 +77,9 @@ class DataLoader:
         self.rawdata_filenames = None
         self.siemens_filenames = None
         self.slice_idx = slice_idx
+        if hasattr(params, 'run_folder'):
+            unit = 'volume_001' if params.data_dimension == '3D' else f'slice_{(slice_idx or 0) + 1:03d}'
+            bind_output_paths(params, Path(params.run_folder) / 'reconstructions' / unit)
         self.motion_plot_context = None
         self._motion_curve_for_binning = None
         self._motion_plot_kwargs = {}
@@ -157,10 +164,18 @@ class DataLoader:
                 "Call run_slice_pipeline(slice_idx=...) before reconstruction-stage processing."
             )
 
+        if self.params.save_debug_plots and self.params.kspace_sampling_type == 'from-data':
+            SamplingSimulator._visualize_ky_order(
+                [self.ky_idx.detach().cpu()], Ny=self.Ny,
+                folder=self.params.initial_data_folder,
+                fname=f"ky_order_acquisition_slice{self.slice_idx}.png")
         spatial_shape = (self.Nx, self.Ny, self.Nz) if self.params.data_dimension == "3D" else (self.Nx, self.Ny)
         validate_reconstruction_size(self.params, spatial_shape)
         validate_calibration_size(self.params, spatial_shape, has_reference=self.reference_kspace is not None)
         validate_motion_readout_count(self.params, self.ky_idx.numel())
+        if hasattr(self.params, 'reconstruction_folder'):
+            record_reconstruction(self.params, inputs=self.filename, source_slice_index=self.slice_idx,
+                                  status='preprocessing')
         self._normalize_kspace_if_enabled()
         self._compute_reference_image_data()
         motionSimulator = self._apply_or_import_motion()
@@ -387,7 +402,7 @@ class DataLoader:
 
     def _save_initial_data(self):
         folder = self.params.initial_data_folder
-        if not folder:
+        if not folder or not self.params.save_debug_plots:
             return
         os.makedirs(folder, exist_ok=True)
 
@@ -664,47 +679,21 @@ class DataLoader:
         if not os.path.exists(path_to_siemens):
             raise FileNotFoundError(f"Siemens raw data file does not exist: {path_to_siemens}")
 
-        output_folder = os.fspath(self.params.initial_data_folder)
-        os.makedirs(output_folder, exist_ok=True)
-        base = os.path.splitext(os.path.basename(path_to_siemens))[0]
-        output_path = os.path.join(output_folder, f"{base}_meas2.mrd")
-
-        if os.path.exists(output_path):
-            os.remove(output_path)
-
-        print(f"[DataLoader] Converting Siemens raw data to ISMRMRD: {output_path}")
-        t0 = time.time()
-        cmd = [
-            "siemens_to_ismrmrd",
-            "-f",
-            path_to_siemens,
-            "-z",
-            "2",
-            "-o",
-            output_path,
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                "siemens_to_ismrmrd executable was not found. Install it or use "
-                "data_type='ismrmrd-saec' or 'ismrmrd-polaris' with an already converted ISMRMRD file."
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            details = "\n".join(part for part in [exc.stdout, exc.stderr] if part)
-            raise RuntimeError(
-                "siemens_to_ismrmrd failed while converting Siemens raw data "
-                f"with command: {' '.join(cmd)}\n{details}"
-            ) from exc
-
-        if not os.path.exists(output_path):
-            raise RuntimeError(
-                "siemens_to_ismrmrd finished without creating the expected file: "
-                f"{output_path}"
-            )
-
-        print(f"[DataLoader] Siemens conversion finished in {time.time() - t0:.2f} s")
-        return output_path
+        converter = shutil.which('siemens_to_ismrmrd')
+        if converter is None:
+            raise RuntimeError('siemens_to_ismrmrd executable was not found. Install it or supply an existing MRD file.')
+        key = cache_key([path_to_siemens], {'measurement': 2, 'schema': 1,
+                                          'converter': source_identity(converter)})
+        def build(output_path):
+            cmd = [converter, '-f', path_to_siemens, '-z', '2', '-o', str(output_path)]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(f'Siemens conversion failed: {exc.stdout}\n{exc.stderr}') from exc
+        lease = acquire_cached(self.params.cache_root, 'converted', key, '.mrd', build,
+                               remove=self.params.remove_temporary_data_after_run)
+        print(f'[DataLoader] Using cached conversion: {lease.path}')
+        return str(lease.path)
 
     def _ingest_realworld_arrays(self, data, slice_idx=None):
         is_3d = self.params.data_dimension == "3D"
@@ -784,6 +773,9 @@ class DataLoader:
             )
 
         self.slice_idx = slice_idx
+        if hasattr(self.params, 'run_folder'):
+            bind_output_paths(self.params, Path(self.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+            record_reconstruction(self.params, inputs=self.filename, source_slice_index=slice_idx)
         self.kspace = self._source_kspace[..., slice_idx:slice_idx + 1]
         self.reference_kspace = (
             None
@@ -827,16 +819,11 @@ class DataLoader:
             print_raw_calibration_lines=self.params.print_raw_calibration_lines,
         )
         self.raw_data_preparer = preparer
-        data = preparer.read_data()
+        data = preparer.read_data(
+            cache_h5=self.params.cache_preprocessed_data, cache_root=self.params.cache_root,
+            remove_temporary_data_after_run=self.params.remove_temporary_data_after_run)
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        if self.params.save_debug_plots and hasattr(self, "ky_idx"):
-            SamplingSimulator._visualize_ky_order(
-                [self.ky_idx.detach().cpu()], Ny=self.Ny,
-                folder=self.params.initial_data_folder,
-                fname=f"ky_order_acquisition_slice{self.slice_idx}.png",
-            )
-        
 
     def _load_realworld_data(self, path_to_data, slice_idx=None):
         data = {}
@@ -845,18 +832,16 @@ class DataLoader:
                 for key in ('motion_data', 'idx_ky', 'idx_kz', 'idx_nex'):
                     data[key] = f[key][:]
             data['kspace'] = f['kspace'][:]
+            if 'slice_geometry' in f:
+                from src.runtime.hdf5_cache import read_tree
+                data['slice_geometry'] = {int(key): value for key, value in
+                                          read_tree(f['slice_geometry']).items()}
             if 'ismrmrd_header' in f:
                 data['ismrmrd_header'] = f['ismrmrd_header'].asstr()[()]
             if 'reference_kspace' in f:
                 data['reference_kspace'] = f['reference_kspace'][:]
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
-        if self.params.save_debug_plots and hasattr(self, "ky_idx"):
-            SamplingSimulator._visualize_ky_order(
-                [self.ky_idx.detach().cpu()], Ny=self.Ny,
-                folder=self.params.initial_data_folder,
-                fname=f"ky_order_acquisition_slice{self.slice_idx}.png",
-            )
 
     def _debug_check_true_motion_image_reconstruction(self, motionSimulator):
         # This consistency check is meaningful only for simulated non-rigid data.
@@ -910,7 +895,7 @@ class DataLoader:
             # Running the check and saving its recovered image are independent options.
             if self.params.save_debug_plots:
                 show_and_save_image(
-                    img_back[0], "gn_input_consistency_recovered_image", self.params.debug_folder,
+                    img_back[0], "gn_input_consistency_recovered_image", str(Path(self.params.debug_folder) / "consistency_checks"),
                     flip_for_display=self.params.flip_for_display,
                 )
 

@@ -1,3 +1,4 @@
+from src.utils.ismrmrd_io import ReadOnlyDataset
 import ismrmrd
 import torch
 import math
@@ -86,7 +87,7 @@ class ISMRMRDReader:
         return kspace_cropped
 
     def _extract_mri_data(self):
-        dset = ismrmrd.Dataset(self.ismrmrd_file, 'dataset', create_if_needed=False)
+        dset = ReadOnlyDataset(self.ismrmrd_file)
         try:
             xml_header = dset.read_xml_header()
             self.ismrmrd_header = (xml_header.decode("utf-8")

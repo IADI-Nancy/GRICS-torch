@@ -102,7 +102,7 @@ def display_run_panels(
     if has_ground_truth is None:
         has_ground_truth = _infer_has_ground_truth(params)
 
-    logs_folder = Path(params.logs_folder)
+    logs_folder = Path(params.debug_folder) / "residuals"
     input_folder = Path(params.initial_data_folder)
     results_folder = Path(params.results_folder)
 
@@ -126,7 +126,7 @@ def display_run_panels(
     else:
         image_paths = [
             _first_existing_path(input_folder / "image_corrupted.png", input_folder / "input_distorted.png"),
-            _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex1.png"),
+            _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex_001.png"),
         ]
         subtitles = ["Corrupted", "Corrected"]
         if has_ground_truth:
@@ -255,7 +255,7 @@ def display_3d_image_matrix(image_uncorrected, image_corrected, image_gt):
 
 
 def display_logs_and_motion_same_as_2d(params):
-    logs_folder = Path(params.logs_folder)
+    logs_folder = Path(params.debug_folder) / "residuals"
     input_folder = Path(params.initial_data_folder)
     results_folder = Path(params.results_folder)
 

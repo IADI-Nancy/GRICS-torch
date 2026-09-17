@@ -1,6 +1,12 @@
 """Prepare MRI and physiological recordings together, outside their readers."""
 
 import h5py
+import hashlib
+import json
+import warnings
+from pathlib import Path
+from src.runtime.data_cache import acquire_cached, cache_key
+from src.runtime.hdf5_cache import write_tree, read_tree
 import numpy as np
 import torch
 
@@ -10,7 +16,7 @@ from src.preprocessing.physiological_data.PolarisInfraredTrackerReader import Po
 
 
 class RawDataPreparer:
-    """Coordinate reading, synchronization, slice grouping, and optional H5 export.
+    """Coordinate reading, synchronization, slice grouping, and optional shared H5 caching.
 
     polaris_channel_mode="all" uses tool Tx/Ty/Tz. "largest-amplitude" uses
     the axis with greatest peak-to-peak range at full-sequence MRI readout times,
@@ -173,15 +179,53 @@ class RawDataPreparer:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    def read_data(self, output_h5_file=None, slice_idx=None):
-        """Return reconstruction-ready arrays, optionally selecting a slice/exporting H5.
+    def read_data(self, output_h5_file=None, slice_idx=None, *, cache_h5=False,
+                  cache_root=None, remove_temporary_data_after_run=True):
+        """Return reconstruction-ready arrays, optionally selecting a slice/caching H5.
 
         ``ismrmrd_header`` contains the complete original XML header as text;
-        H5 exports store it as a separate scalar UTF-8 dataset of the same name.
+        Cached H5 files store it as a separate scalar UTF-8 dataset of the same name.
+        The shared cache always contains all slices; selection happens after reading it.
         Synchronization always uses the complete sequence before slice selection.
         ``self.synchronization`` retains the full aligned traces for display.
         """
-        data = self._prepare_data()
+        if output_h5_file is not None:
+            warnings.warn('output_h5_file now requests a shared cache entry; use cache_h5=True and '
+                          'cache_root=... instead. The supplied filename is not written.',
+                          DeprecationWarning, stacklevel=2)
+            cache_h5 = True
+        cached_path = None
+        if cache_h5:
+            source_dir = Path(__file__).parent
+            implementation = hashlib.sha256(b''.join(path.read_bytes() for path in sorted(
+                [Path(__file__), source_dir / 'ISMRMRDReader.py',
+                 *source_dir.joinpath('physiological_data').glob('*.py'),
+                 Path(__file__).parents[1] / 'runtime' / 'hdf5_cache.py']))).hexdigest()
+            key = cache_key([self.reader.ismrmrd_file, self.physiological_file],
+                            {'implementation': implementation, 'format': self.physiological_format,
+                             'sensor': self.sensor_type, 'polaris_mode': self.polaris_channel_mode})
+            def build(path):
+                arrays = self._prepare_data()
+                with h5py.File(path, 'w') as handle:
+                    write_tree(handle, arrays)
+                    metadata = handle.create_group('_cache')
+                    metadata.attrs['kind'] = 'dict'
+                    entries = {'synchronization': self.synchronization,
+                               'physiological_metadata': self.physiological_reader.metadata,
+                               'uses_kz_as_volume_axis': self._uses_kz_as_volume_axis}
+                    metadata.attrs['keys'] = json.dumps(list(entries))
+                    write_tree(metadata, entries)
+            lease = acquire_cached(cache_root, 'preprocessed', key, '.h5', build,
+                                   remove=remove_temporary_data_after_run)
+            cached_path = str(lease.path)
+            with h5py.File(lease.path, 'r') as handle:
+                data = read_tree(handle)
+            metadata = data.pop('_cache')
+            self.synchronization = metadata['synchronization']
+            self.physiological_reader.metadata = metadata['physiological_metadata']
+            self._uses_kz_as_volume_axis = metadata['uses_kz_as_volume_axis']
+        else:
+            data = self._prepare_data()
 
         if slice_idx is not None:
             if self._uses_kz_as_volume_axis:
@@ -203,21 +247,7 @@ class RawDataPreparer:
             if "reference_kspace" in data:
                 data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]
 
-        if output_h5_file is not None:
-            with h5py.File(output_h5_file, 'w') as f:
-                f.create_dataset('ismrmrd_header', data=data['ismrmrd_header'],
-                                 dtype=h5py.string_dtype(encoding='utf-8'))
-                f.create_dataset('motion_data', data=data['motion_data'])
-                f.create_dataset('idx_ky', data=data['idx_ky'])
-                f.create_dataset('idx_kz', data=data['idx_kz'])
-                f.create_dataset('idx_nex', data=data['idx_nex'])
-                f.create_dataset('kspace', data=data['kspace'])
-                if 'reference_kspace' in data:
-                    f.create_dataset('reference_kspace', data=data['reference_kspace'])
-                f.create_dataset('nex_values', data=data['nex_values'])
-                f.attrs['nex_source'] = data['nex_source']
-                for name, value in self.physiological_reader.metadata.items():
-                    f.attrs[name] = value
-            data['realworld_h5_path'] = output_h5_file
+        if cached_path is not None:
+            data['realworld_h5_path'] = cached_path
 
         return data
