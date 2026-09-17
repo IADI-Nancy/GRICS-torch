@@ -1,9 +1,7 @@
 import atexit
 import gc
-import shutil
 import signal
 import sys
-from pathlib import Path
 
 import torch
 import sigpy as sp
@@ -46,26 +44,6 @@ def _signal_cleanup_handler(signum, frame):
     raise SystemExit(128 + signum)
 
 
-def _clean_folder_contents(folder):
-    path = Path(folder).expanduser().resolve()
-    if str(path) in {"/", ""}:
-        raise ValueError(f"Refusing to clean unsafe folder path: {folder}")
-
-    path.mkdir(parents=True, exist_ok=True)
-    for child in path.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-
-def _clean_run_output_folders(params):
-    _clean_folder_contents(params.debug_folder)
-    _clean_folder_contents(params.logs_folder)
-    _clean_folder_contents(params.results_folder)
-    _clean_folder_contents(params.initial_data_folder)
-
-
 def _install_runtime_safety_guards():
     global _GUARDS_INSTALLED
     if _GUARDS_INSTALLED:
@@ -83,10 +61,9 @@ def _install_runtime_safety_guards():
 def initialize_runtime(params, print_gpu_info=False):
     global _GPU_RUNTIME_ACTIVE
     _install_runtime_safety_guards()
-    for folder in (params.debug_folder, params.logs_folder, params.results_folder, params.initial_data_folder):
-        Path(folder).mkdir(parents=True, exist_ok=True)
-    if params.clean_output_folders_before_run:
-        _clean_run_output_folders(params)
+    from src.runtime.output_layout import RunOutputs
+    if not hasattr(params, '_run_outputs') or params._run_outputs.closed:
+        RunOutputs(params)
 
     runtime_device = str(params.runtime_device).lower()
     if runtime_device not in {"cpu", "gpu"}:
@@ -142,4 +119,5 @@ def initialize_runtime(params, print_gpu_info=False):
     if deterministic:
         torch.backends.cudnn.benchmark = False
 
+    params._run_outputs.snapshot(params)
     return sp_device, t_device

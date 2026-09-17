@@ -2,6 +2,8 @@
 
 import os
 import time
+from pathlib import Path
+from src.runtime.output_layout import record_reconstruction
 from contextlib import contextmanager, nullcontext
 
 import torch
@@ -26,7 +28,7 @@ def _console(params, message):
 
 def _init_run_logging(params, n_levels, gn_iters_per_level):
     os.makedirs(params.logs_folder, exist_ok=True)
-    log_path = os.path.join(params.logs_folder, "joint_reconstruction.log")
+    log_path = os.path.join(params.logs_folder, "reconstruction.log")
     param_items = {}
     simulation_param_keys = {"simulated_motion_type", "num_motion_events", "max_tx", "max_ty", "max_phi",
                              "max_center_x", "max_center_y", "seed", "motion_tau", "nonrigid_motion_amplitude"}
@@ -60,6 +62,7 @@ def _append_run_log(run_log, line=""):
         f.write(line + "\n")
 
 def _save_run_residual_plots(logs_folder, run_log):
+    os.makedirs(logs_folder, exist_ok=True)
     recon_path = os.path.join(logs_folder, "recon_residual.png")
     motion_path = os.path.join(logs_folder, "motion_residual.png")
     save_residual_subplots(run_log["recon_residuals_by_level"], title="Reconstruction residuals",
@@ -236,25 +239,42 @@ class JointReconstructionLogger:
 
     def level_finished(self, data):
         if self.enabled and self.params.save_debug_plots:
+            level_folder = str(Path(self.params.debug_folder) / f'level_{self._level_index + 1:02d}')
             show_and_save_image(
-                data["ReconstructedImage"][0], f"image_resolution_level{self._level_index + 1}",
-                self.params.debug_folder, flip_for_display=self.params.flip_for_display)
+                data["ReconstructedImage"][0], "image_reconstructed",
+                level_folder, flip_for_display=self.params.flip_for_display)
             _save_nonrigid_motion_debug(
                 data, self._level_index + 1, self.params.reconstruction_motion_type,
-                self.params.debug_folder, self.params.flip_for_display)
+                level_folder, self.params.flip_for_display)
         self.append(
             f"    Total time of resolution level {self._level_index}: "
             f"{time.perf_counter() - self._level_started:.6f} s\n")
 
     def run_finished(self):
         self.append(f"Total time of reconstruction run: {time.perf_counter() - self._run_started:.6f} s")
-        if self.enabled:
-            _save_run_residual_plots(self.params.logs_folder, self.run_log)
+        if self.enabled and self.params.save_debug_plots:
+            _save_run_residual_plots(str(Path(self.params.debug_folder) / "residuals"), self.run_log)
 
     def save_final_outputs(self, image, motion):
         """Save final reconstructed images and motion diagnostics."""
+        if hasattr(self.params, 'reconstruction_folder'):
+            image_axes = ['nex', 'x', 'y'] + (['z'] if image.ndim == 4 else [])
+            motion_axes = (['component', 'motion_state'] if self.params.reconstruction_motion_type == 'rigid'
+                           else ['component'] + image_axes[1:])
+            if len(motion_axes) < motion.ndim:
+                motion_axes.append('sensor')
+            record_reconstruction(self.params, image_shape=list(image.shape), image_axes=image_axes,
+                                  motion_shape=list(motion.shape), motion_axes=motion_axes,
+                                  motion_grid='reconstruction',
+                                  motion_type=self.params.reconstruction_motion_type,
+                                  image_stage='before_postprocessing', status='reconstructed',
+                                  preview_repetition_reduction='mean' if image.shape[0] > 1 else 'none')
         if not self.enabled:
             return
+        folder = Path(self.params.results_folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        torch.save(image.detach().cpu(), folder / 'image_reconstructed.pt')
+        torch.save(motion.detach().cpu(), folder / 'motion_parameters.pt')
         if image.shape[0] == 1:
             show_and_save_image(image[0], "image_reconstructed", self.params.results_folder,
                 flip_for_display=self.params.flip_for_display)
@@ -262,7 +282,7 @@ class JointReconstructionLogger:
             show_and_save_image(image.mean(dim=0), "image_reconstructed", self.params.results_folder,
                 flip_for_display=self.params.flip_for_display)
             for nex_index in range(image.shape[0]):
-                show_and_save_image(image[nex_index], f"image_reconstructed_nex{nex_index + 1}",
+                show_and_save_image(image[nex_index], f"image_reconstructed_nex_{nex_index + 1:03d}",
                     self.params.results_folder, flip_for_display=self.params.flip_for_display)
 
         if self.params.reconstruction_motion_type == "rigid":

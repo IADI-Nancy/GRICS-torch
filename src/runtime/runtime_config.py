@@ -44,10 +44,10 @@ _NONRIGID_MOTION_KEYS = {
     "nonrigid_top_decay",
 }
 
-_PATH_KEYS = {'debug_folder', 'logs_folder', 'results_folder', 'initial_data_folder'}
+_PATH_KEYS = {'output_root', 'workflow_label', 'cache_root'}
 _RUNTIME_KEYS = {
     'save_debug_plots', 'use_deterministic_algorithms', 'runtime_device', 'verbose', 'print_to_console',
-    'clean_output_folders_before_run', 'jupyter_notebook_flag', 'flip_for_display',
+    'remove_temporary_data_after_run', 'cache_preprocessed_data', 'jupyter_notebook_flag', 'flip_for_display',
     'seed', 'seed_enabled',
 }
 _NORMALIZATION_KEYS = {'normalize_kspace', 'kspace_norm_mode', 'kspace_norm_eps'}
@@ -91,7 +91,7 @@ _OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS 
                   _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS)
 _BOOL_KEYS = {
     'save_debug_plots', 'check_simulated_motion_consistency', 'use_deterministic_algorithms',
-    'print_raw_calibration_lines', 'verbose', 'print_to_console', 'clean_output_folders_before_run',
+    'print_raw_calibration_lines', 'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_outputs', 'cg_early_stopping', 'cg_use_reg_scale_proxy',
