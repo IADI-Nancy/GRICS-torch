@@ -4,8 +4,12 @@ from types import SimpleNamespace
 import math
 import tomllib
 
-REAL_DATA_TYPES = {'preprocessed-real', 'ismrmrd-saec', 'siemens-saec', 'ismrmrd-polaris', 'siemens-polaris'}
-ISMRMRD_READER_DATA_TYPES = {'ismrmrd-saec', 'siemens-saec', 'ismrmrd-polaris', 'siemens-polaris'}
+ISMRMRD_READER_DATA_TYPES = {
+    f'{source}-{physiology}'
+    for source in ('ismrmrd', 'siemens')
+    for physiology in ('saec', 'polaris', 'physio_text', 'physio_array')
+}
+REAL_DATA_TYPES = {'preprocessed-real'} | ISMRMRD_READER_DATA_TYPES
 SYNTHETIC_DATA_TYPES = {'shepp-logan', 'from_image'}
 
 _RIGID_MOTION_KEYS = {

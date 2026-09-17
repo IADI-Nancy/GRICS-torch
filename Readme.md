@@ -1,6 +1,6 @@
 # GRICS-torch: GRICS MRI motion-corrected reconstruction in PyTorch
 
-This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS is an algorithm based on modeling of MRI acquisition and motion, and do not use any AI priors. However, it requires a data associated with the displacement (e.g. respiratoiry bellow indications, navigators, PilotTone amplitude variation or other similar data). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
+This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS models MRI acquisition and motion and does not require AI priors. It requires motion-related data (e.g. respiratory belt measurements, navigators, PilotTone amplitude variations, or similar signals). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
 
 Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
@@ -21,6 +21,9 @@ Please cite the GRICS paper if you use this code for your research work.
   year = {2008}
 }
 ```
+## Environment Setup
+
+A Dockerfile is provided in the `build/` folder. The built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
 
 ## Repository layout
 
@@ -29,97 +32,34 @@ Please cite the GRICS paper if you use this code for your research work.
 - `src/runtime/`: config loading and runtime initialization
 - `src/utils/`: plotting, diagnostics, notebook display helpers
 - `config/`: TOML configuration root
-  - `config/reconstruction/`: solver and reconstruction pipelines
-  - `config/sampling_simulation/`: synthetic k-space acquisition ordering
-  - `config/motion_simulation/`: synthetic motion models
-  - `config/synthetic_data/`: Shepp-Logan phantom and image-source generation settings
 - `pipelines/`: executable end-to-end reconstruction pipelines for real acquisitions; `siemens_breast_T2.py` reproduces the Gadgetron pipeline implemented in [2]
 
-\+ four demos. Attention: random initialization was used, therefore the simulated and reconstruction data may look differently and require an adjustment of the reconstruction parameters.
-
-## Environment Setup
-
-A Dockerfile is provided in the `build/` folder. The built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
+Four demo notebooks cover simulated and real-data reconstruction. Simulations and some reconstruction steps use random initialization; `seed_enabled` and `seed` in `config/general.toml` control reproducibility. Results can vary with the seed and compute backend.
 
 ## Configuration
-
-Main config types:
 
 - `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
 - `config/coil_sensitivity/*.toml`: one explicitly selected coil-sensitivity method and only that method's settings
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
-- `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings
-- `config/real_data/saec.toml`: SAEC physiological sensor selection, loaded only for SAEC inputs
-- `config/real_data/ismrmrd_reader.toml`: ISMRMRD-reader diagnostics, loaded only for ISMRMRD or Siemens raw inputs
-- `config/real_data/polaris.toml`: Polaris channel selection, loaded only for Polaris inputs
+- `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings (only if synthetic data is used)
+- `config/real_data/`: configurations for loading real MRI and physiological data
+    - `config/real_data/ismrmrd_reader.toml`: ISMRMRD-reader settings, loaded only for ISMRMRD or Siemens raw inputs
+    - `config/real_data/saec.toml`: SAEC physiological sensor selection, loaded only if a SAEC file is used
+    - `config/real_data/polaris.toml`: Polaris infrared camera channel selection, required only if this sensor is used
 - `config/sampling_simulation/*.toml`: simulated k-space acquisition ordering
 - `config/motion_simulation/*.toml`: selected simulated rigid or non-rigid motion modes
 - `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode
+- `config/postprocessing/nonrigid_2d_breast.toml`: reference-image normalization for the Siemens breast pipeline, loaded with `load_postprocessing_config(...)`
 
-Motion configurations may use one `[motion] include = "relative/path.toml"` entry.
-The included common file is loaded first; a selected file cannot redefine any included
-setting, include paths cannot leave their directory tree, and include cycles are rejected.
-Common files are not runnable configurations because they do not declare a motion mode.
-
-Use `load_config(...)` to load the config files. Use `overrides={...}` for run-specific changes. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
-
-### Configuration ownership and validation
-
-Each TOML file accepts only its own settings and sections: general runtime/paths,
-reconstruction, synthetic source, sampling, motion simulation, or postprocessing.
-Unknown keys, misplaced keys, old aliases, invalid types, non-finite numbers, and
-incompatible combinations raise errors. `load_config` selects configuration files;
-run-specific values are supplied only through `overrides`. Notebook mode disables `verbose`
-and `print_to_console` unless explicitly supplied in `overrides`. Each automatic
-change is announced with an informational message. Outside notebooks, TOML logging
-values are preserved.
-
-All numerical and diagnostic settings are specified in TOML. Only `"2D"` and
-`"3D"` are valid dimensions. Real input dimensions follow the selected reconstruction
-file. Every `load_config` call also selects exactly one CSM file: use
-`config/coil_sensitivity/espirit.toml` for ESPIRiT or
-`config/coil_sensitivity/odille_spline.toml` for Odille spline maps. The CSM
-method itself cannot be overridden. For real data, omitted sampling loads
-`config/sampling_simulation/from_data.toml` and reads repetition counts from the
-acquisition. Do not supply simulated shot counts or acceleration settings in this mode. Real data
-without a motion simulation file loads `config/motion_simulation/as_is.toml`.
-
-To simulate a new acquisition order over real k-space, select a simulated sampling
-file and simulated motion. The original acquisition indices and physiological
-trace are ignored; `Nex` must equal the repetitions in the k-space array. A
-preprocessed HDF5 input then needs only `kspace` (and optional `reference_kspace`).
-Raw inputs in this mode can be provided as a single MRI filename, without physiology.
-`from-data` is invalid for synthetic sources. Reordering does not fill missing
-k-space samples or remove motion already present in the supplied values.
-
-Per-shot simulation automatically replaces the positive integer `N_motion_states`
-with the shot count and announces any change. Set
-`N_motion_states_per_level="full"` to use all states at every resolution, or provide
-a list of counts. Resolution levels must increase in `(0, 1]` and end at `1.0`.
-GN iteration counts must be an explicit list of positive integers, one per level.
-
-ESPIRiT settings are named `espirit_calibration_width` and `espirit_kernel_width`.
-Requested calibration widths must fit the data; they are never silently reduced.
-Set `seed_enabled=false` to disable seeding. GPU unavailability still triggers a
-CPU fallback and prints a visible runtime message.
-
-### Postprocessing
-
-`config/postprocessing/nonrigid_2d_breast.toml` owns
-`normalize_image_by_grics_reference`. Load it with
-`load_postprocessing_config(path, overrides=...)`. The breast pipeline loads this
-separately and applies it after reconstruction; it requires Odille spline coil
-maps when enabled. Reconstruction files and reconstruction overrides cannot set
-postprocessing options.
-
-### Runtime diagnostics
-
-Runtime diagnostics are configured by scope: `save_debug_plots` and `use_deterministic_algorithms` are global runtime settings; `check_simulated_motion_consistency` belongs to non-rigid motion TOMLs; and `print_raw_calibration_lines` belongs to `config/real_data/ismrmrd_reader.toml`. These replace the former combined `debug_flag`; old overrides are rejected as unknown settings. Direct `ISMRMRDReader` and `RawDataPreparer` callers should use `print_raw_calibration_lines=` instead of `debug=`.
+Use `load_config(...)` to load the config files. Always supply `reconstruction_config` and `coil_sensitivity_config`. Real data defaults to `from-data` sampling and `as-it-is` motion when those configuration files are omitted. Use `overrides={...}` for run-specific changes. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
 
 ## Data Types
 
 The `data_type` selected in `load_config(...)` controls how input data is built or loaded.
+For 2D real data, `slice_idx` selects the slice/partition to reconstruct. It may be omitted only when the source contains exactly one slice; multi-slice sources require an explicit value before running the slice pipeline.
+For synthetic data and for all 3D data, do not provide `slice_idx`; the loader raises an error if it is set.
 
+### Synthetic data types
 ### `shepp-logan`
 
 Required config files:
@@ -137,55 +77,63 @@ Required config files:
 - a sampling simulation config file
 - a motion simulation config file
 
+### Real data types
+When `save_debug_plots=true` and sampling is `from-data`, every real-world input mode uses the same source-independent acquisition-order filename in the reconstruction’s `preprocessing/` folder: `ky_order_acquisition_slice{slice_idx}.png`.
+
 ### `preprocessed-real`
 
-Loaded from a preprocessed HDF5 file with datasets:
+For 2D multi-slice data, load a preprocessed HDF5 file with datasets:
 - `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
-- `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
+- `motion_data`: shape `(Nslices, Nlines)` for one channel or `(Nslices, Nlines, Nchannels)` for multiple channels, real (`float32`/`float64`) - motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
 - `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 - `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 - `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
 
-For 2D `preprocessed-real`, `ismrmrd-saec`, and `siemens-saec`, `slice_idx` selects the slice/partition to load. It may be omitted only when the source contains exactly one slice; multi-slice sources require an explicit value.
-For synthetic data and for all 3D data, do not provide `slice_idx`; the loader raises an error if it is set.
+For 3D data, `kspace` has shape `(Ncoils, Nex, Nx, Ny, Nz)` and `motion_data` has shape `(Nreadout, Nchannels)`. Acquisition indices contain one entry per readout in full acquisition order; the reader-generated layout is `(1, Nreadout)`. Index values are zero-based.
 
-No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
+No synthetic sampling is needed with `from-data`: acquisition order and motion signals come from the file. Additional motion simulation can still be applied. If simulated sampling and motion are selected instead, only `kspace` is required; the recorded acquisition indices and physiological signals are not used.
 
-### `ismrmrd-saec`
+### `ismrmrd-physio_array`
+- MRI raw data in ISMRMRD format (`ismrmrd_file`) is loaded using `ISMRMRDReader` with `config/real_data/ismrmrd_reader.toml`. `RawDataPreparer` combines it with the physiological data and converts the inputs to the arrays used by the `preprocessed-real` mode.
+- External physiological data is provided as two `.npy` files: `physio_timestamps_file`, of shape `(Nsensors, Nsamples, 1)`, containing timestamps in seconds, and `physio_values_file`, of shape `(Nsensors, Nsamples, Ntracks)`, containing real data values. Tracks of the same sensor share timestamps. Each sensor's last timestamp must correspond to the end of the MRI sequence; timestamps must be strictly increasing and cover all MRI readouts after end alignment.
+- If the data is already synchronized with MRI readouts, set every timestamp to `-1`. In this case, each sensor/track must contain exactly one value for every retained MRI imaging readout in full-acquisition order, before slice selection; no interpolation is performed. Do not mix channels whose timestamps are all `-1` with timestamped channels. An isolated `-1` in a strictly increasing timestamp sequence is an ordinary time value.
 
-Loaded from raw scanner and physiological files using `ISMRMRDReader`:
-- the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
-- physiological data file in SAEC [3, 4] format (`saec_file`)
-- `config/real_data/saec.toml` and `config/real_data/ismrmrd_reader.toml`
+Pass `filename` to `DataLoader` as a dictionary with the three keys above, or as `(ismrmrd_file, physio_timestamps_file, physio_values_file)`. All sensor/track pairs are kept as separate motion channels, ordered by sensor and then track, without filtering or normalization.
 
-The reader converts these files to the arrays used by the `preprocessed-real` mode.
-The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/real_data/saec.toml`.
+### `siemens-physio_array`
+Uses the same physiological data format together with Siemens raw scanner data (`siemens_raw_file`). The loader first converts the Siemens raw file to ISMRMRD using the `siemens_to_ismrmrd` executable, then reads the result with `ISMRMRDReader`. Replace `ismrmrd_file` with `siemens_raw_file` in the dictionary or tuple above.
+
+### `ismrmrd-physio_text` and `siemens-physio_text`
+
+Use the corresponding MRI data format together with a whitespace-separated physiological text file (`physio_file`). Each nonempty, non-comment row is one sample from one sensor:
+
+```text
+SENSOR TIMESTAMP VALUE1 [VALUE2 ...]
+```
+
+The first line may be a header whose first two fields are `SENSOR TIMESTAMP`; lines may include comments after `#`. `SENSOR` is a nonnegative integer identifier. `TIMESTAMP` is in seconds. `VALUE1`, `VALUE2`, and subsequent value columns are that sensor's tracks. Every data row must have the same positive number of value columns, and timestamped rows for each sensor must be in strictly increasing timestamp order; sensors may be interleaved and may have different sample counts or sampling rates. Each sensor’s final timestamp must correspond to the end of the MRI sequence, and its recording must cover every MRI readout after end alignment.
+
+Use `-1` for every timestamp when values are already synchronized to MRI readouts. Then every track must provide one value for every retained full-acquisition MRI imaging readout, before slice selection; no interpolation is performed. Do not mix channels whose timestamps are all `-1` with timestamped channels. An isolated `-1` in a strictly increasing timestamp sequence is an ordinary time value.
+
+Pass `filename` as `(ismrmrd_file, physio_file)` or `(siemens_raw_file, physio_file)`, or as a dictionary with the corresponding keys. Text channels are ordered by numeric sensor ID and then value-column order. These four generic physiological modes require `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` in `load_config(...)`.
+
+### `ismrmrd-saec` and `siemens-saec`
+Uses the corresponding MRI data format together with physiological data file in SAEC [3, 4] format (`saec_file`). Pass `real_data_config="config/real_data/saec.toml"` and `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` to `load_config(...)`. Select the sensor type in `saec.toml`.
+
+SAEC processing depends on `rawdata_sensor_type`:
+
+- `BELT`: selects the belt track with the larger standard deviation, applies a first-order zero-phase Butterworth low-pass filter with a 1 Hz cutoff, and removes quadratic drift. The drift is fitted to a copy clipped to the mean plus or minus two standard deviations, then subtracted from the unclipped filtered signal. The returned single channel is not standardized.
+- `1MARMOT`: for every MARMOT sensor, each of the three accelerometer tracks is low-pass filtered at 0.3 Hz and then high-pass filtered at 0.03 Hz, using first-order zero-phase Butterworth filters. Tracks identified as displaced, constant, non-finite, or otherwise invalid are rejected. The valid track with the largest standard deviation is selected across all sensors and normalized by its standard deviation.
+- `ALL_MARMOTS` (also accepted as `ALL_MARMOTs`): applies the same 0.3/0.03 Hz filtering and displacement checks, selects the highest-variance valid track from each usable sensor, and returns one standard-deviation-normalized channel per usable sensor.
+
+Timestamped SAEC channels are aligned to the full MRI sequence before slice selection and interpolated onto MRI readout times. SAEC timestamps are referenced to the Siemens stop trigger. The filters are applied before this interpolation; readouts outside the SAEC recording use the nearest endpoint value.
 
 ### `ismrmrd-polaris` and `siemens-polaris`
+Uses the corresponding MRI data format together with a single-tool NDI ToolBox `.tsv` export from a Polaris Vega infrared camera tracker (`polaris_file`). Pass `polaris_config="config/real_data/polaris.toml"` and `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` to `load_config(...)`. Select the tracks in `polaris.toml`. The final timestamp must correspond to the end of the MRI sequence; the filtered recording must cover all MRI readouts after end alignment.
 
-Select these types with `load_config(data_type=...)`. Pass `DataLoader` a pair
-`(mri_file, tracking_tsv)` or a dictionary containing `ismrmrd_file` / `siemens_raw_file`
-and `polaris_file`. The Siemens variant converts the MRI file to ISMRMRD first.
-Both require `config/real_data/ismrmrd_reader.toml` and `config/real_data/polaris.toml`.
-Polaris filtering and normalization are handled by `PolarisInfraredTrackerReader`;
-no `rawdata_sensor_type` setting is required. Both types support 2D slice selection
-and 3D volume loading, with sampling read from the acquisition data.
+Polaris reads the XYZ tool-position channels and applies a first-order zero-phase Butterworth low-pass filter with a 1 Hz cutoff to each axis. The sampling rate is estimated from the recording duration; at least seven samples are required, and the rate must exceed twice the cutoff. The filtered signals are then linearly interpolated onto full-sequence MRI readout times. With `polaris_channel_mode = "all"`, the Tx, Ty, and Tz channels are retained. With `"largest-amplitude"`, only the axis with the largest peak-to-peak range is retained (ties are resolved in Tx, Ty, Tz order). Each retained channel is centered by subtracting its mean, then all retained channels are divided by their largest standard deviation, if nonzero. Channel selection, centering, and scaling are computed at full-sequence MRI readout times, before slice selection.
 
-### `siemens-saec`
-
-Loaded from Siemens raw scanner data and physiological files:
-- Siemens raw data file (`siemens_raw_file`)
-- physiological data file in SAEC [2, 3] format (`saec_file`)
-- `config/real_data/saec.toml` and `config/real_data/ismrmrd_reader.toml`
-
-The loader first converts the Siemens raw file to ISMRMRD using the `siemens_to_ismrmrd` executable, then reads the result with the same path used by `ismrmrd-saec`.
-The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/real_data/saec.toml`.
-
-### Planned: `ismrmrd-text` and `siemens-text`
-
-These data types are planned for the near future. They will accept physiological or motion measurements from a text file instead of requiring the SAEC format, enabling raw-data reconstruction for users without SAEC acquisition files. `ismrmrd-text` will use ISMRMRD MRI data, while `siemens-text` will use Siemens raw MRI data. These modes are not implemented yet.
-
-When `save_debug_plots=true`, every real-world input mode uses the same source-independent acquisition-order filename in the reconstruction’s `preprocessing/` folder: `ky_order_acquisition_slice{slice_idx}.png`. This convention also applies to the planned text-based modes.
+Generic `physio_text` and `physio_array` inputs are not filtered, centered, or normalized. Their channels are preserved in sensor/track order after timestamp alignment and interpolation. If all timestamps are `-1`, values are treated as already synchronized and must contain one sample for every full-acquisition MRI readout; interpolation is skipped.
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -196,26 +144,25 @@ Configured with:
 
 Implemented in `src/preprocessing/SamplingSimulator.py`.
 
-When synthetic sampling is generated, per-`nex` debug plots are written to the reconstruction’s `preprocessing/` folder with hardcoded names:
+When synthetic sampling is generated and `save_debug_plots=true`, per-repetition debug plots are written to the reconstruction’s `preprocessing/` folder with hardcoded names:
 - 2D sampling: `ky_order_nex{nex}.png`
 - 3D sampling: `ky_kz_order_nex{nex}.png`
 
-For each `nex`, ky lines are split into `NshotsPerNex` chronological shot blocks:
+Here, `nex` in the filename is one-based.
+
+For each repetition, acquired readouts are divided into `NshotsPerNex` chronological shot blocks. `acceleration_factor` selects regularly spaced ky lines, and `calibration_lines` retains a central calibration band when acceleration is greater than one. The ordering below is applied to the retained readouts.
 
 ### `linear`
 
-Shot `s` acquires contiguous band:
-- start = `s * Ny / NshotsPerNex`
-- end = `(s+1) * Ny / NshotsPerNex`
+In 2D, ky increases monotonically and is split into blocks of approximately equal size. In 3D, each shot covers a contiguous ky band and all kz partitions.
 
 ### `interleaved`
 
-Shot `s` acquires:
-- `ky = s, s + NshotsPerNex, s + 2*NshotsPerNex, ...`
+The ky ordering is built from groups `ky = s, s + NshotsPerNex, s + 2*NshotsPerNex, ...`. In 2D, retained lines are then split into approximately equal shot blocks. In 3D, each shot uses its interleaved ky group, with repetition-dependent ky/kz ordering and alternating ky traversal direction between partition blocks.
 
 ### `random`
 
-Independent random permutation per `nex`, then split into `NshotsPerNex` chunks.
+Each repetition independently shuffles ky lines in 2D, or all retained `(ky, kz)` pairs in 3D, then splits them into approximately equal shot blocks.
 
 ## Motion Simulation Modes
 
@@ -232,7 +179,7 @@ No synthetic corruption added. Valid only for real-data types with `from-data` s
 ### `rigid-per-shot`
 
 Shot-wise rigid states:
-- one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
+- one rigid transform per shot (`Nshots = Nex * NshotsPerNex` for simulated sampling; one state per recorded readout with `from-data`)
 - explicit global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
 - random `(tx, ty, phi)` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case) per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
@@ -240,13 +187,13 @@ Shot-wise rigid states:
 ### `rigid-realistic`
 
 Continuous rigid curve over full acquisition:
-- random event times over `Ny * Nex` lines
+- random event times over the acquired readouts across all repetitions
 - smooth raised-cosine transitions (`motion_tau`)
 - explicit global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
 - random event amplitudes for `tx`, `ty`, `phi` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case)
 - data is then reclustered to `N_motion_states` from the simulated navigator signal (first principal component of the simulated rigid motion parameters)
 
-For corruption, simulation uses one global state per acquired line (`Ny * Nz * Nex` states).
+For corruption, motion is defined per acquired readout (`Ny * Nz * Nex` for fully sampled data). Consecutive identical rigid states may share an operator.
 
 ### `non-rigid-per-shot`
 
@@ -260,19 +207,22 @@ Shot-wise non-rigid with fixed spatial basis maps:
 
 Continuous sinusoidal temporal curve:
 - random phase
-- random cycles per image in `[nonrigid_resp_cycles_min, nonrigid_resp_cycles_max]`
+- random cycles per image/volume repetition in `[nonrigid_resp_cycles_min, nonrigid_resp_cycles_max]`
 - normalized to unit amplitude
 
 Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z` for 3D) scaled by `nonrigid_motion_amplitude`.
-For corruption, simulation uses one state per acquired line (`Ny * Nz * Nex` states).
+For corruption, simulation uses one state per acquired readout (`Ny * Nz * Nex` for fully sampled data).
 
 ## Motion Binning and Reconstruction States
 
-After loading or simulation, the motion curve is clustered with k-means into reconstruction states.
+After loading or simulation, motion signals are grouped into reconstruction states using `motion_binning_mode` from the reconstruction configuration:
+
+- `"kmeans"`: clusters the motion-channel values with k-means.
+- `"kspace_energy"`: quantizes motion-channel values using `motion_quantization_bins`, selects the highest-energy virtual states, and assigns the others to their nearest selected state. This mode requires k-space data and is used by `nonrigid_2d_breast.toml`.
 
 Key points:
 - simulation state count and reconstruction state count can differ.
-- corruption may be line-wise (`Ny * Nz * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
+- corruption may be readout-wise (`Ny * Nz * Nex` states for fully sampled data), but reconstruction uses binned virtual states (`N_motion_states`).
 - `N_motion_states` is a manual reconstruction setting from the reconstruction TOML, or an explicit `overrides={"N_motion_states": ...}` value.
 
 State-count rules:
@@ -284,11 +234,9 @@ For real data with generated sampling, configured shot counts are preserved and 
 
 ## Outputs
 
-Every notebook and the Siemens pipeline creates a timestamped directory under
-`output_root/workflow_label/` (configured in `config/general.toml`). Previous runs are
-preserved. The former four configurable output folders and
-`clean_output_folders_before_run` setting have been replaced by `output_root` and
-`workflow_label`; paths below a run are derived consistently.
+### Run outputs
+
+Every notebook and the Siemens pipeline creates a timestamped directory under `output_root/workflow_label/`, configured in `config/general.toml` (`output_root="runs"` by default).
 
 ```text
 runs/<workflow_label>/YYYYMMDDTHHMMSS/
@@ -318,56 +266,25 @@ runs/<workflow_label>/YYYYMMDDTHHMMSS/
         └── slice_001.dcm
 ```
 
-Directories are created when used. Figures and tensors share their stage folder.
-Slice filenames use one-based, zero-padded source slice numbers; the manifest also
-records the zero-based source index. Volume reconstructions are not split into
-slice directories. No shared `load/` or preprocessing directory is created.
+`image_reconstructed.pt` is the complex reconstruction before reference-image normalization and zero-filling, preserving the repetition dimension. Its PNG shows the magnitude of the repetition mean; individual repetition previews are also saved when multiple repetitions exist. In the Siemens pipeline, `image_postprocessed.pt` contains the complex image after configured reference-image normalization and zero-filling, still preserving repetitions. It is saved only when both saving flags below are enabled. DICOM export uses the magnitude of the repetition mean with DICOM intensity scaling. Motion overlays use the reconstruction grid.
 
-`image_reconstructed.pt` is the complex reconstruction **before** reference
-normalization and zero-filling, preserving the repetition dimension. Its PNG is
-an averaged preview when multiple repetitions exist; separate repetition previews
-are also saved. Motion parameters stay on the reconstruction grid. The Siemens
-pipeline applies configured reference normalization and zero-filling in memory,
-then exports DICOMs using the magnitude of the repetition mean and DICOM intensity
-scaling. `image_postprocessed.pt` retains the repetitions before that DICOM
-representation conversion and is saved only for debugging. Motion overlays use
-the reconstruction image, not its resampled postprocessed grid.
+Saving flags:
 
-Saving controls:
+- `save_debug_plots=true`: save preprocessing figures. Per-level reconstruction diagnostics, residual plots, and pipeline postprocessing tensors additionally require `save_reconstruction_outputs=true`.
+- `save_reconstruction_outputs=true`: save reconstruction tensors, final plots, and `reconstruction.log`. Turning it off does not disable explicitly requested DICOM export or preprocessing diagnostics.
+- `check_simulated_motion_consistency`: controls the simulated-motion numerical check; its figure additionally requires `save_debug_plots=true`.
 
-- `save_debug_plots=true`: save preprocessing figures and diagnostic artifacts,
-  including postprocessing tensors. Reconstruction diagnostics additionally
-  require `save_reconstruction_outputs=true`.
-- `save_reconstruction_outputs=true`: save reconstruction tensors, final plots,
-  and `reconstruction.log`. Turning it off does not disable explicitly requested
-  DICOM export or preprocessing diagnostics.
-- `check_simulated_motion_consistency`: controls the simulated-motion numerical
-  check; its figure additionally requires `save_debug_plots=true`.
+To remove inactive run outputs under the configured `output_root`:
 
-`manifest.json` records inputs, status, timestamps, code revision, per-reconstruction
-settings/shapes and output paths relative to the run. `config_resolved.json` stores
-resolved settings rather than just references to TOML files. Postprocessing
-settings are included in the pipeline manifest. Per-worker `.metadata.json` files
-are merged into the manifest at execution end, avoiding concurrent manifest writes.
-A failed managed execution is marked `failed`; execution interrupted without normal
-finalization may leave a `running` manifest. A standalone runtime finalized only
-at interpreter exit is marked `incomplete`.
-
-Scripts and notebooks use `@managed_execution` on their `main()` function to
-finalize manifests and release cached data on success, exceptions, or interrupts.
-External callers can use the same decorator or an explicit scope:
-
-```python
-from src.runtime.output_layout import execution_scope
-
-with execution_scope():
-    # load_config(...), initialize_runtime(params), load and reconstruct data
-    ...
+```bash
+python -m src.utils.clear_runs
 ```
+
+This permanently removes each matching inactive run directory, including its tensors, figures, logs, manifest, and DICOM exports. Active runs are skipped. Use `--dry-run` to preview or `--workflow-label LABEL` to restrict cleanup.
 
 ### Shared data cache
 
-Generated MRD and optional preprocessed HDF5 files live outside run outputs:
+Generated ISMRMRD (`.mrd`) files and optional preprocessed HDF5 files live outside run outputs. Enable `cache_preprocessed_data=true` to cache full-acquisition preprocessing; its default is `false`.
 
 ```text
 <data-root>/cache/grics/
@@ -375,32 +292,10 @@ Generated MRD and optional preprocessed HDF5 files live outside run outputs:
 └── preprocessed/<source-and-preprocessing-key>.h5
 ```
 
-`cache_root = "auto"` defaults to `<repository-parent>/data/cache/grics`, outside
-this code repository. Set an explicit absolute `cache_root` in `config/general.toml`
-or an override to use another data disk. Cache keys contain no run ID. They depend
-on source paths, sizes and modification/change timestamps, plus converter identity
-or preprocessing settings and implementation. They do not hash the large source
-files. Changing inputs/settings produces a different cache entry.
+`cache_root = "auto"` defaults to `<repository-parent>/data/cache/grics`, outside this code repository.
 
-Existing entries are reused. File locks coordinate readers and builders; atomic
-publication prevents reuse of partially written files. Only one complete artifact
-is kept for a key. `cache_preprocessed_data=false` avoids generating an additional
-large HDF5 file by default; enable it to cache full-acquisition preprocessing,
-including geometry and synchronization metadata. Slice selection happens after
-reading this shared entry. Direct `RawDataPreparer.read_data(cache_h5=True,
-cache_root=..., remove_temporary_data_after_run=False)` callers use the same cache.
-The legacy `output_h5_file=` argument now requests a shared cached HDF5 rather
-than writing the supplied path; use the new keyword arguments instead.
-
-`remove_temporary_data_after_run=true` is the default. At execution end, generated
-cache entries used by that execution are removed when no process still uses them.
-Set it to `false` to retain files for reuse across later executions. A removal
-request from another execution is honored after the final reader releases its
-lease, even if that reader requested retention. Existing user input files are
-never registered for deletion. Library callers without an execution scope release
-leases at interpreter exit, or can explicitly call
-`src.runtime.data_cache.release_leases()` when finished. Hard process termination
-may leave cache artifacts; the utility below can clear them.
+Existing entries are reused. `remove_temporary_data_after_run=true` is the default. At the end of a managed execution (`@managed_execution` or `execution_scope()`), generated
+cache entries used by that execution are removed when no process still uses them. Set `remove_temporary_data_after_run=false` to retain files for reuse across later executions. Standalone callers release cache leases at interpreter exit or by calling `src.runtime.data_cache.release_leases()`.
 
 To empty the cache:
 
@@ -410,36 +305,8 @@ python -m src.utils.clear_cache
 python -m src.utils.clear_cache --cache-root /path/to/data/cache/grics
 ```
 
-The utility removes inactive MRD/HDF5 cache entries and abandoned partial files,
-reports entries still in use, and leaves active files untouched. Small lock files
-are retained intentionally so concurrent processes keep locking the same files.
-It does not delete original input data or run results. Without `--cache-root`, it
-uses `cache_root` from `config/general.toml`.
+The utility removes inactive MRD/HDF5 cache entries and abandoned partial files, reports entries still in use, and leaves active files untouched.
 
-
-### Removing run outputs
-
-To delete inactive runs under `output_root` from `config/general.toml`:
-
-```bash
-python -m src.utils.clear_runs
-# Preview without deleting:
-python -m src.utils.clear_runs --dry-run
-# Limit cleanup to a label and/or an age:
-python -m src.utils.clear_runs --workflow-label siemens_breast_T2 --older-than-days 7
-# Use another output location:
-python -m src.utils.clear_runs --output-root /path/to/runs
-```
-
-This permanently removes each matching run directory, including its tensors,
-figures, logs, manifest, and DICOM exports. Age is measured from completion time
-(or start time for an unfinished run). Labels can be combined with `--dry-run`.
-Active runs are protected by a lifecycle lock. Abandoned runs with an unlocked
-lifecycle lock can be removed even if their manifest still says `running`.
-Older runs without locks are removed only if their status is `complete`, `failed`,
-or `incomplete`. Directories without a recognized run manifest and symlinked run
-or label directories are skipped. The shared data cache and original inputs are
-not removed; use `clear_cache` separately. Empty label directories may remain.
 
 ## External Integration APIs
 
@@ -489,7 +356,7 @@ retained_sampling_indices = prepared.sampling_indices["retained"]
 heldout_sampling_indices = prepared.sampling_indices["heldout"]
 ```
 
-Every mask contains one Boolean per chronological readout. Keys are caller-defined, and all named layouts share the same motion-state labels.
+`kspace` is required when using `motion_binning_mode="kspace_energy"`; otherwise it may be omitted. Every mask contains one Boolean per chronological readout. Keys are caller-defined, and all named layouts share the same motion-state labels.
 
 ### Standard reconstruction entry point
 
@@ -507,7 +374,7 @@ reconstructor = JointReconstructor(
 image, motion_model = reconstructor.run()
 ```
 
-For `params`, use `data.params` from `DataLoader` or `prepared.params` from `GRICSPreparerAPI`.
+For `params`, use `data.params` from `DataLoader` or `prepared.params` from `GRICSPreparerAPI`. When using normalized k-space from `DataLoader`, pass `kspace_scale=data.kspace_scale` to restore the image scale in `run()` outputs.
 
 ### Full-resolution iteration and prediction APIs
 
