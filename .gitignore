@@ -3,10 +3,6 @@
 *.pt
 __pycache__/
 
-debug_outputs/
-logs/
-results/
-initial_data/
 tests/artifacts/
 bart-*
 .env
