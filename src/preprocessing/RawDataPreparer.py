@@ -12,6 +12,7 @@ import torch
 
 from src.preprocessing.ISMRMRDReader import ISMRMRDReader
 from src.preprocessing.physiological_data.SAECReader import SAECReader
+from src.preprocessing.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
 from src.preprocessing.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
 
 
@@ -21,20 +22,22 @@ class RawDataPreparer:
     polaris_channel_mode="all" uses tool Tx/Ty/Tz. "largest-amplitude" uses
     the axis with greatest peak-to-peak range at full-sequence MRI readout times,
     measured after low-pass filtering and before normalization. The caller selects the mode explicitly.
-    Both physiological formats use the same synchronizer before slice selection.
+    Timestamped physiological formats use the same synchronizer before slice selection.
     ISMRMRDReader is responsible only for MRI acquisition reading and mapping.
     """
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_format,
                  sensor_type, device, print_raw_calibration_lines, polaris_channel_mode):
-        if physiological_format not in {"SAEC", "PolarisInfraredTracker"}:
+        if physiological_format not in {"SAEC", "PolarisInfraredTracker", "physio_text", "physio_array"}:
             raise ValueError("Unsupported physiological format.")
         # Readers own format-specific processing; the logging flag affects only raw calibration messages.
         self.polaris_channel_mode = polaris_channel_mode
-        self.physiological_reader = (
-            PolarisInfraredTrackerReader(channel_mode=polaris_channel_mode)
-            if physiological_format == "PolarisInfraredTracker"
-            else SAECReader(sensor_type=sensor_type))
+        if physiological_format in {"physio_text", "physio_array"}:
+            self.physiological_reader = PreprocessedPhysioReader(physiological_format)
+        elif physiological_format == "PolarisInfraredTracker":
+            self.physiological_reader = PolarisInfraredTrackerReader(channel_mode=polaris_channel_mode)
+        else:
+            self.physiological_reader = SAECReader(sensor_type=sensor_type)
         self.reader = ISMRMRDReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
         self.physiological_file = physiological_file
         self.physiological_format = physiological_format
@@ -116,10 +119,18 @@ class RawDataPreparer:
         raw = self.reader.read_data()
         times, values, end, bounds = self._physiological_channels()
         acquisition_times = raw["time_seconds"].detach().cpu().numpy()
-        interpolated = self._synchronize_to_sequence_end(
-            times, values, acquisition_times, source_sequence_end=end, bounds=bounds)
+        if getattr(self.physiological_reader, 'already_synchronized', False):
+            if any(len(channel) != len(acquisition_times) for channel in values):
+                raise ValueError('Already-synchronized channels must contain exactly one value per '
+                                 'retained MRI imaging readout in full acquisition order, before slice selection.')
+            interpolated = np.column_stack(values)
+            aligned_times = [acquisition_times.copy() for _ in times]
+        else:
+            interpolated = self._synchronize_to_sequence_end(
+                times, values, acquisition_times, source_sequence_end=end, bounds=bounds)
+            aligned_times = [t - (t[-1] if end is None else end) for t in times]
         self.synchronization = {
-            "physiological_time_seconds": [t - (t[-1] if end is None else end) for t in times],
+            "physiological_time_seconds": aligned_times,
             "physiological_values": values,
             "acquisition_time_seconds": acquisition_times,
             "acquisition_values": interpolated,
@@ -201,7 +212,10 @@ class RawDataPreparer:
                 [Path(__file__), source_dir / 'ISMRMRDReader.py',
                  *source_dir.joinpath('physiological_data').glob('*.py'),
                  Path(__file__).parents[1] / 'runtime' / 'hdf5_cache.py']))).hexdigest()
-            key = cache_key([self.reader.ismrmrd_file, self.physiological_file],
+            physiology_files = (list(self.physiological_file)
+                                if self.physiological_format == 'physio_array'
+                                else [self.physiological_file])
+            key = cache_key([self.reader.ismrmrd_file, *physiology_files],
                             {'implementation': implementation, 'format': self.physiological_format,
                              'sensor': self.sensor_type, 'polaris_mode': self.polaris_channel_mode})
             def build(path):

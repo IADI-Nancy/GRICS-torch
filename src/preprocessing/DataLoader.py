@@ -16,8 +16,10 @@ import h5py
 
 from src.preprocessing.RawDataPreparer import RawDataPreparer
 from src.preprocessing.ISMRMRDReader import ISMRMRDReader
-from src.runtime.runtime_config import (validate_sampling_size, validate_reconstruction_size,
-                                        validate_calibration_size, validate_motion_readout_count)
+from src.runtime.runtime_config import (
+    REAL_DATA_TYPES, ISMRMRD_READER_DATA_TYPES, validate_sampling_size,
+    validate_reconstruction_size, validate_calibration_size, validate_motion_readout_count,
+)
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimensions
 from src.preprocessing.SamplingSimulator import SamplingSimulator
@@ -52,9 +54,10 @@ class DataLoader:
             sp_device: SigPy device.
             t_device: Torch device.
             filename: Source path, or a pair (MRI file, physiological file) for raw data.
-                Raw types are ismrmrd-saec, siemens-saec, ismrmrd-polaris, and
-                siemens-polaris. Dictionaries use ismrmrd_file or siemens_raw_file,
-                plus saec_file or polaris_file. Polaris input is a tracking TSV.
+                Dictionaries use ismrmrd_file or siemens_raw_file, plus saec_file,
+                polaris_file, or physio_file. Generic array input uses three paths:
+                (MRI file, timestamps .npy, values .npy), or dictionary keys
+                physio_timestamps_file and physio_values_file alongside the MRI key.
             slice_idx: Slice/partition to load for 2D real-data inputs.
             run_pipeline: If true, load data and run the slice-wise preparation pipeline.
                 If false, call load_data() and run_slice_pipeline() explicitly.
@@ -104,14 +107,14 @@ class DataLoader:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
 
         is_3d = self.params.data_dimension == "3D"
-        supports_slice_idx = self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
+        supports_slice_idx = self.params.data_type in REAL_DATA_TYPES
 
         if self.slice_idx is not None:
             self.slice_idx = int(self.slice_idx)
 
-        if self.params.data_type in {"ismrmrd-saec", "ismrmrd-polaris"}:
+        if self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("ismrmrd-"):
             self.rawdata_filenames = self._resolve_rawdata_filenames()
-        elif self.params.data_type in {"siemens-saec", "siemens-polaris"}:
+        elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("siemens-"):
             self.siemens_filenames = self._resolve_siemens_filenames()
         if self.params.data_type.endswith("-saec") and not self.params.rawdata_sensor_type:
             raise ValueError(f"rawdata_sensor_type must be set for data_type={self.params.data_type!r}.")
@@ -146,7 +149,7 @@ class DataLoader:
         if (
             slice_idx is None and self.slice_idx is None
             and self.params.data_dimension == "2D"
-            and self.params.data_type in {"preprocessed-real", "ismrmrd-saec", "siemens-saec", "ismrmrd-polaris", "siemens-polaris"}
+            and self.params.data_type in REAL_DATA_TYPES
         ):
             if int(self.Nz) == 1:
                 slice_idx = 0
@@ -198,11 +201,11 @@ class DataLoader:
             self._generate_shepp_logan(N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan, Nz=self.params.Nz_SheppLogan, random_phase=True)
         elif self.params.data_type == 'preprocessed-real': # Preprocessed real data with acquisition order and motion data
             self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
-        elif self.params.data_type in {'ismrmrd-saec', 'ismrmrd-polaris'}: # Preprocessed real data with acquisition order and motion data, loaded from raw data files
+        elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("ismrmrd-"): # Preprocessed real data with acquisition order and motion data, loaded from raw data files
             path_to_ismrm, path_to_physiology = self.rawdata_filenames
             self.source_ismrmrd_file = path_to_ismrm
             self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology, slice_idx=self.slice_idx)
-        elif self.params.data_type in {'siemens-saec', 'siemens-polaris'}:
+        elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("siemens-"):
             path_to_siemens, path_to_physiology = self.siemens_filenames
             path_to_ismrm = self._convert_siemens_to_ismrmrd(path_to_siemens)
             self.source_ismrmrd_file = path_to_ismrm
@@ -647,29 +650,36 @@ class DataLoader:
         return self._resolve_mri_physiology_filenames("siemens_raw_file")
 
     def _resolve_mri_physiology_filenames(self, mri_key):
-        physiology_key = "polaris_file" if self.params.data_type.endswith("-polaris") else "saec_file"
-        pair = None
+        suffix = self.params.data_type.split('-', 1)[1]
+        physiology_keys = {
+            'saec': ('saec_file',), 'polaris': ('polaris_file',),
+            'physio_text': ('physio_file',),
+            'physio_array': ('physio_timestamps_file', 'physio_values_file'),
+        }[suffix]
+        keys = (mri_key, *physiology_keys)
+        paths = None
         resampling = self.params.kspace_sampling_type != "from-data"
         if resampling and isinstance(self.filename, (str, os.PathLike)):
             return self.filename, None
-        if isinstance(self.filename, (tuple, list)) and len(self.filename) == 2:
-            pair = self.filename
+        if isinstance(self.filename, (tuple, list)) and len(self.filename) == len(keys):
+            paths = tuple(self.filename)
         elif isinstance(self.filename, dict):
-            mri_file = self.filename.get(mri_key)
-            unknown = set(self.filename) - {mri_key, physiology_key}
+            unknown = set(self.filename) - set(keys)
             if unknown:
                 raise ValueError(f"Unknown input filename keys: {sorted(unknown)}.")
-            pair = (mri_file, self.filename.get(physiology_key))
-        required = pair[:1] if resampling and pair is not None else pair
-        if required is None or any(value is None or value == "" for value in required):
+            paths = tuple(self.filename.get(key) for key in keys)
+        required = paths[:1] if resampling and paths is not None else paths
+        if required is None or any(not isinstance(value, (str, os.PathLike)) or not os.fspath(value)
+                                   for value in required):
             if resampling:
                 raise ValueError(f"Reordered raw input requires an MRI path or a dict containing {mri_key!r}.")
+            description = "both files" if len(keys) == 2 else "all three files"
             raise ValueError(
-                f"For data_type={self.params.data_type!r}, filename must contain both files: "
-                f"a 2-item tuple/list ({mri_key}, {physiology_key}) or a dict with keys "
-                f"{mri_key!r} and {physiology_key!r}."
+                f"For data_type={self.params.data_type!r}, filename must contain {description}: "
+                f"a {len(keys)}-item tuple/list or a dict with keys {keys}."
             )
-        return pair
+        physiology = paths[1:] if suffix == 'physio_array' else paths[1]
+        return paths[0], physiology
 
     def _convert_siemens_to_ismrmrd(self, path_to_siemens):
         if path_to_siemens is None:
@@ -811,8 +821,10 @@ class DataLoader:
             physiological_file=path_to_physiology,
             polaris_channel_mode=(self.params.polaris_channel_mode
                                   if self.params.data_type.endswith("-polaris") else None),
-            physiological_format=("PolarisInfraredTracker"
-                                  if self.params.data_type.endswith("-polaris") else "SAEC"),
+            physiological_format={
+                "polaris": "PolarisInfraredTracker", "saec": "SAEC",
+                "physio_text": "physio_text", "physio_array": "physio_array",
+            }[self.params.data_type.split("-", 1)[1]],
             sensor_type=(self.params.rawdata_sensor_type
                          if self.params.data_type.endswith("-saec") else None),
             device="cpu",

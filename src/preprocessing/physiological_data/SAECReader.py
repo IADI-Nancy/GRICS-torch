@@ -193,7 +193,7 @@ class SAECReader:
             timestamps = np.squeeze(timestamps[0])
             respiratory_data = respiratory_data[0]
             order = 1
-            fcut = 3.
+            fcut = 1.
             fsampling = np.float64(len(timestamps)) / (timestamps[-1] - timestamps[0])
             normal_cutoff = fcut / (fsampling / 2)
 
