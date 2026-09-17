@@ -185,7 +185,7 @@ The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/real
 
 These data types are planned for the near future. They will accept physiological or motion measurements from a text file instead of requiring the SAEC format, enabling raw-data reconstruction for users without SAEC acquisition files. `ismrmrd-text` will use ISMRMRD MRI data, while `siemens-text` will use Siemens raw MRI data. These modes are not implemented yet.
 
-When `save_debug_plots=true`, every real-world input mode uses the same source-independent acquisition-order filename in `initial_data_folder`: `ky_order_acquisition_slice{slice_idx}.png`. This convention also applies to the planned text-based modes.
+When `save_debug_plots=true`, every real-world input mode uses the same source-independent acquisition-order filename in the reconstruction’s `preprocessing/` folder: `ky_order_acquisition_slice{slice_idx}.png`. This convention also applies to the planned text-based modes.
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -196,7 +196,7 @@ Configured with:
 
 Implemented in `src/preprocessing/SamplingSimulator.py`.
 
-When synthetic sampling is generated, per-`nex` debug plots are written to `initial_data_folder` with hardcoded names:
+When synthetic sampling is generated, per-`nex` debug plots are written to the reconstruction’s `preprocessing/` folder with hardcoded names:
 - 2D sampling: `ky_order_nex{nex}.png`
 - 3D sampling: `ky_kz_order_nex{nex}.png`
 
@@ -284,14 +284,162 @@ For real data with generated sampling, configured shot counts are preserved and 
 
 ## Outputs
 
-Each run writes into folders from `config/general.toml`:
+Every notebook and the Siemens pipeline creates a timestamped directory under
+`output_root/workflow_label/` (configured in `config/general.toml`). Previous runs are
+preserved. The former four configurable output folders and
+`clean_output_folders_before_run` setting have been replaced by `output_root` and
+`workflow_label`; paths below a run are derived consistently.
 
-- `initial_data/`: sampling order, motion curves, corrupted and ground-truth images (if they exist), and simulated motion (if it exists)
-- `debug_outputs/`: results per reconstruction level
-- `logs/`: residual curves and run log
-- `results/`: final reconstructed outputs
+```text
+runs/<workflow_label>/YYYYMMDDTHHMMSS/
+├── manifest.json
+├── config_resolved.json
+├── reconstructions/
+│   └── slice_001/                    # volume_001 for a 3D reconstruction
+│       ├── preprocessing/           # Sampling, input motion, ground truth,
+│       │                            # corrupted image, optional synchronization
+│       ├── results/
+│       │   ├── image_reconstructed.pt
+│       │   ├── image_reconstructed.png
+│       │   ├── image_reconstructed_nex_001.png  # Multiple repetitions only
+│       │   ├── motion_parameters.pt
+│       │   └── ...                  # Final motion curves/maps
+│       ├── diagnostics/
+│       │   ├── level_01/            # Image and available nonrigid motion plots
+│       │   ├── level_02/
+│       │   ├── .../
+│       │   ├── residuals/           # Curves across resolution levels
+│       │   ├── consistency_checks/
+│       │   └── postprocessing/     # Reference tensors/figures, normalized image,
+│       │                            # image_postprocessed.pt and .png
+│       └── reconstruction.log
+└── exports/
+    └── dicom/                       # If requested in the pipeline
+        └── slice_001.dcm
+```
 
-By default, these folders are cleaned before each run (`clean_output_folders_before_run = true`).
+Directories are created when used. Figures and tensors share their stage folder.
+Slice filenames use one-based, zero-padded source slice numbers; the manifest also
+records the zero-based source index. Volume reconstructions are not split into
+slice directories. No shared `load/` or preprocessing directory is created.
+
+`image_reconstructed.pt` is the complex reconstruction **before** reference
+normalization and zero-filling, preserving the repetition dimension. Its PNG is
+an averaged preview when multiple repetitions exist; separate repetition previews
+are also saved. Motion parameters stay on the reconstruction grid. The Siemens
+pipeline applies configured reference normalization and zero-filling in memory,
+then exports DICOMs using the magnitude of the repetition mean and DICOM intensity
+scaling. `image_postprocessed.pt` retains the repetitions before that DICOM
+representation conversion and is saved only for debugging. Motion overlays use
+the reconstruction image, not its resampled postprocessed grid.
+
+Saving controls:
+
+- `save_debug_plots=true`: save preprocessing figures and diagnostic artifacts,
+  including postprocessing tensors. Reconstruction diagnostics additionally
+  require `save_reconstruction_outputs=true`.
+- `save_reconstruction_outputs=true`: save reconstruction tensors, final plots,
+  and `reconstruction.log`. Turning it off does not disable explicitly requested
+  DICOM export or preprocessing diagnostics.
+- `check_simulated_motion_consistency`: controls the simulated-motion numerical
+  check; its figure additionally requires `save_debug_plots=true`.
+
+`manifest.json` records inputs, status, timestamps, code revision, per-reconstruction
+settings/shapes and output paths relative to the run. `config_resolved.json` stores
+resolved settings rather than just references to TOML files. Postprocessing
+settings are included in the pipeline manifest. Per-worker `.metadata.json` files
+are merged into the manifest at execution end, avoiding concurrent manifest writes.
+A failed managed execution is marked `failed`; execution interrupted without normal
+finalization may leave a `running` manifest. A standalone runtime finalized only
+at interpreter exit is marked `incomplete`.
+
+Scripts and notebooks use `@managed_execution` on their `main()` function to
+finalize manifests and release cached data on success, exceptions, or interrupts.
+External callers can use the same decorator or an explicit scope:
+
+```python
+from src.runtime.output_layout import execution_scope
+
+with execution_scope():
+    # load_config(...), initialize_runtime(params), load and reconstruct data
+    ...
+```
+
+### Shared data cache
+
+Generated MRD and optional preprocessed HDF5 files live outside run outputs:
+
+```text
+<data-root>/cache/grics/
+├── converted/<source-and-converter-key>.mrd
+└── preprocessed/<source-and-preprocessing-key>.h5
+```
+
+`cache_root = "auto"` defaults to `<repository-parent>/data/cache/grics`, outside
+this code repository. Set an explicit absolute `cache_root` in `config/general.toml`
+or an override to use another data disk. Cache keys contain no run ID. They depend
+on source paths, sizes and modification/change timestamps, plus converter identity
+or preprocessing settings and implementation. They do not hash the large source
+files. Changing inputs/settings produces a different cache entry.
+
+Existing entries are reused. File locks coordinate readers and builders; atomic
+publication prevents reuse of partially written files. Only one complete artifact
+is kept for a key. `cache_preprocessed_data=false` avoids generating an additional
+large HDF5 file by default; enable it to cache full-acquisition preprocessing,
+including geometry and synchronization metadata. Slice selection happens after
+reading this shared entry. Direct `RawDataPreparer.read_data(cache_h5=True,
+cache_root=..., remove_temporary_data_after_run=False)` callers use the same cache.
+The legacy `output_h5_file=` argument now requests a shared cached HDF5 rather
+than writing the supplied path; use the new keyword arguments instead.
+
+`remove_temporary_data_after_run=true` is the default. At execution end, generated
+cache entries used by that execution are removed when no process still uses them.
+Set it to `false` to retain files for reuse across later executions. A removal
+request from another execution is honored after the final reader releases its
+lease, even if that reader requested retention. Existing user input files are
+never registered for deletion. Library callers without an execution scope release
+leases at interpreter exit, or can explicitly call
+`src.runtime.data_cache.release_leases()` when finished. Hard process termination
+may leave cache artifacts; the utility below can clear them.
+
+To empty the cache:
+
+```bash
+python -m src.utils.clear_cache
+# For a custom cache location, pass the same path used by your runs:
+python -m src.utils.clear_cache --cache-root /path/to/data/cache/grics
+```
+
+The utility removes inactive MRD/HDF5 cache entries and abandoned partial files,
+reports entries still in use, and leaves active files untouched. Small lock files
+are retained intentionally so concurrent processes keep locking the same files.
+It does not delete original input data or run results. Without `--cache-root`, it
+uses `cache_root` from `config/general.toml`.
+
+
+### Removing run outputs
+
+To delete inactive runs under `output_root` from `config/general.toml`:
+
+```bash
+python -m src.utils.clear_runs
+# Preview without deleting:
+python -m src.utils.clear_runs --dry-run
+# Limit cleanup to a label and/or an age:
+python -m src.utils.clear_runs --workflow-label siemens_breast_T2 --older-than-days 7
+# Use another output location:
+python -m src.utils.clear_runs --output-root /path/to/runs
+```
+
+This permanently removes each matching run directory, including its tensors,
+figures, logs, manifest, and DICOM exports. Age is measured from completion time
+(or start time for an unfinished run). Labels can be combined with `--dry-run`.
+Active runs are protected by a lifecycle lock. Abandoned runs with an unlocked
+lifecycle lock can be removed even if their manifest still says `running`.
+Older runs without locks are removed only if their status is `complete`, `failed`,
+or `incomplete`. Directories without a recognized run manifest and symlinked run
+or label directories are skipped. The shared data cache and original inputs are
+not removed; use `clear_cache` separately. Empty label directories may remain.
 
 ## External Integration APIs
 

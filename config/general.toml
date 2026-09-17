@@ -1,12 +1,10 @@
 [paths]
-# Folder for debug plots and intermediate diagnostics.
-debug_folder = "debug_outputs/"
-# Folder for optimizer logs and residual curves.
-logs_folder = "logs/"
-# Folder for final outputs (images, motion model).
-results_folder = "results/"
-# Folder for saved input data artifacts (ground truth/distorted images, motion signals, etc.).
-initial_data_folder = "initial_data/"
+# Each execution creates output_root/workflow_label/<unique-run-id>/.
+output_root = "runs"
+# Label grouping related runs under output_root; notebooks and pipelines override this with their demo/pipeline name.
+workflow_label = "reconstruction"
+# "auto" resolves to <repository-parent>/data/cache/grics, outside this repository.
+cache_root = "auto"
 
 [runtime]
 # Save diagnostic motion curves/fields, acquisition-order plots, and per-level reconstruction images.
@@ -28,8 +26,10 @@ flip_for_display = false
 verbose = true
 # Print JointReconstructor progress to console.
 print_to_console = true
-# Clean debug/log/results/initial_data folders before each run.
-clean_output_folders_before_run = true
+# Release generated cache files at execution end; false retains them for reuse.
+remove_temporary_data_after_run = true
+# Optional reusable HDF5 preprocessing cache; avoids creating a second large file by default.
+cache_preprocessed_data = false
 
 
 [kspace_normalization]

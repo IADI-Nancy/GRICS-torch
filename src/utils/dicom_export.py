@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import ismrmrd
+from src.utils.ismrmrd_io import acquisition_header
 import numpy as np
 import torch
 
@@ -41,7 +41,7 @@ def write_reconstruction_dicom(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    header = _read_ismrmrd_header(_resolve_ismrmrd_file(raw_data, ismrmrd_file))
+    header = acquisition_header(raw_data, ismrmrd_file)
     geometry = _require_slice_geometry(raw_data, slice_index)
     pixels_float = _prepare_single_frame_image(image, geometry=geometry)
     reference_dicom = _find_reference_dicom(reference_dicom_path, geometry, slice_index)
@@ -68,7 +68,7 @@ def write_reconstruction_dicom(
     _set_pixel_fields(ds, pixel_array, reference_dicom)
     _add_minimal_mr_fields(ds, header, only_missing=reference_dicom is not None)
 
-    ds.save_as(output_path, write_like_original=False)
+    ds.save_as(output_path, enforce_file_format=True)
     return output_path
 
 
@@ -207,30 +207,6 @@ def _ensure_pydicom_available() -> None:
         ) from exc
 
 
-def _resolve_ismrmrd_file(raw_data: Any | None, ismrmrd_file: str | Path | None) -> Path:
-    if ismrmrd_file is not None:
-        return Path(ismrmrd_file)
-
-    if raw_data is not None:
-        for attr in ("source_ismrmrd_file", "ismrmrd_file"):
-            value = getattr(raw_data, attr, None)
-            if value:
-                return Path(value)
-        filenames = getattr(raw_data, "rawdata_filenames", None)
-        if filenames:
-            return Path(filenames[0])
-
-    raise ValueError("Pass either raw_data with a source_ismrmrd_file or ismrmrd_file=...")
-
-
-def _read_ismrmrd_header(path: Path):
-    dset = ismrmrd.Dataset(str(path), "dataset", create_if_needed=False)
-    try:
-        return ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
-    finally:
-        dset.close()
-
-
 def _prepare_single_frame_image(image: Any, geometry: Any | None = None) -> np.ndarray:
     if isinstance(image, torch.Tensor):
         arr = image.detach().cpu().numpy()
@@ -312,8 +288,6 @@ def _base_dataset(output_path: Path):
     file_meta.ImplementationClassUID = generate_uid()
 
     ds = FileDataset(str(output_path), {}, file_meta=file_meta, preamble=b"\0" * 128)
-    ds.is_little_endian = True
-    ds.is_implicit_VR = False
     ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
     ds.Modality = "MR"

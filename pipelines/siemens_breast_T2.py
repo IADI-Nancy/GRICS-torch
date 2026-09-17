@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 import multiprocessing as mp
 import os
 import sys
@@ -61,13 +60,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import ismrmrd
+from src.utils.ismrmrd_io import acquisition_header
 import torch
 
 from src.preprocessing.DataLoader import DataLoader
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.runtime_config import load_config, load_postprocessing_config
 from src.runtime.runtime_setup import initialize_runtime
+from src.runtime.output_layout import managed_execution, bind_output_paths, record_reconstruction
 from src.utils.dicom_export import write_reconstruction_dicom
 from src.utils.plotting import show_and_save_image
 from src.utils.zero_fill import zero_fill_grics_image_to_shape
@@ -128,16 +128,13 @@ def require_existing_file(path: Path, name: str) -> None:
         raise FileNotFoundError(f"{name} does not exist: {path}")
 
 
-def output_overrides(folder: Path) -> dict:
+def output_overrides() -> dict:
     return {
         "jupyter_notebook_flag": JUPYTER_NOTEBOOK_FLAG,
         "flip_for_display": True,
-        "clean_output_folders_before_run": False,
+        "output_root": str(OUTPUT_ROOT.parent),
+        "workflow_label": OUTPUT_ROOT.name,
         "runtime_device": RUNTIME_DEVICE,
-        "debug_folder": str(folder / "debug") + os.sep,
-        "logs_folder": str(folder / "logs") + os.sep,
-        "results_folder": str(folder / "results") + os.sep,
-        "initial_data_folder": str(folder / "initial_data") + os.sep,
         "save_debug_plots": SAVE_DEBUG_PLOTS,
         "use_deterministic_algorithms": USE_DETERMINISTIC_ALGORITHMS,
         "verbose": False,
@@ -156,7 +153,7 @@ def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
         coil_sensitivity_config="config/coil_sensitivity/odille_spline.toml",
         real_data_config=("config/real_data/saec.toml" if data_type.endswith("-saec") else None),
         ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml",
-        overrides=output_overrides(OUTPUT_ROOT / "load"),
+        overrides=output_overrides(),
     )
     postprocessing = load_postprocessing_config(POSTPROCESSING_CONFIG)
     if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
@@ -184,8 +181,7 @@ def selected_slices(nslices: int) -> list[int]:
 
 
 def set_worker_output_folders(data: DataLoader, slice_output_dir: Path) -> None:
-    for key, value in output_overrides(slice_output_dir).items():
-        setattr(data.params, key, value)
+    bind_output_paths(data.params, slice_output_dir)
 
 
 def grics_reference_image_for_normalization(data: DataLoader, image: torch.Tensor) -> torch.Tensor:
@@ -247,7 +243,8 @@ def reconstruct_slice(slice_idx: int) -> dict:
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
 
-    slice_output_dir = OUTPUT_ROOT / "reconstructions" / f"slice{slice_idx + 1:03d}"
+    output_root = Path(LOADED_DATA.params.run_folder)
+    slice_output_dir = output_root / "reconstructions" / f"slice_{slice_idx + 1:03d}"
     slice_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Isolate mutable slice state while retaining the large inherited source tensors.
@@ -271,47 +268,51 @@ def reconstruct_slice(slice_idx: int) -> dict:
 
     t0 = time.time()
     image, alpha = reconstructor.run()
+    debug = data.params.save_debug_plots and data.params.save_reconstruction_outputs
+    post_dir = Path(data.params.debug_folder) / 'postprocessing'
     if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
-        show_and_save_image(
-            reference_image[0] if reference_image.ndim == 3 and reference_image.shape[0] == 1 else reference_image,
-            "GricsReferenceImage_smoothed",
-            str(slice_output_dir),
-            flip_for_display=data.params.flip_for_display,
-        )
         image, reference_denominator = normalize_reconstruction_by_grics_reference(image, reference_image)
-        show_and_save_image(
-            reference_denominator[0] if reference_denominator.ndim == 3 and reference_denominator.shape[0] == 1 else reference_denominator,
-            "GricsReferenceImage_denominator",
-            str(slice_output_dir),
-            flip_for_display=data.params.flip_for_display,
-        )
-        torch.save(reference_image, slice_output_dir / "GricsReferenceImage_smoothed.pt")
-        torch.save(reference_denominator, slice_output_dir / "GricsReferenceImage_denominator.pt")
+        if debug:
+            post_dir.mkdir(parents=True, exist_ok=True)
+            for name, tensor in [('reference_smoothed', reference_image),
+                                 ('reference_denominator', reference_denominator),
+                                 ('image_normalized', image)]:
+                torch.save(tensor.detach().cpu(), post_dir / f'{name}.pt')
+                show_and_save_image(tensor[0] if tensor.ndim == 3 else tensor,
+                                    name, str(post_dir), flip_for_display=data.params.flip_for_display)
+
+    target_shape, encoded_shape = LOADED_DATA.zero_fill_shapes
+    image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
+    if debug:
+        post_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(image.detach().cpu(), post_dir / 'image_postprocessed.pt')
+        show_and_save_image(image.mean(dim=0), 'image_postprocessed', str(post_dir),
+                            flip_for_display=data.params.flip_for_display)
+    dicom_path = output_root / 'exports' / 'dicom' / f'slice_{slice_idx + 1:03d}.dcm'
+    write_reconstruction_dicom(
+        image, dicom_path, raw_data=LOADED_DATA, slice_index=slice_idx,
+        series_description='GRICS reconstruction RESEARCH ONLY',
+        images_in_acquisition=LOADED_DATA.export_slice_count,
+        series_number=LOADED_DATA.export_series_number,
+        reference_dicom_path=LOADED_DATA.export_reference,
+        **LOADED_DATA.export_uids)
     elapsed_s = time.time() - t0
-
-    torch.save(image, slice_output_dir / "GricsRecon.pt")
-    torch.save(alpha, slice_output_dir / "GricsAlphaMaps.pt")
-
+    record_reconstruction(data.params, status='complete', elapsed_s=elapsed_s,
+                          postprocessed_shape=list(image.shape),
+                          postprocessing=vars(data.postprocessing),
+                          dicom_file=str(dicom_path.relative_to(output_root)),
+                          dicom_representation='magnitude of repetition mean, scaled to uint12')
     return {
-        "slice_idx": slice_idx,
-        "slice_number": slice_idx + 1,
-        "elapsed_s": elapsed_s,
-        "output_dir": str(slice_output_dir),
+        'slice_idx': slice_idx, 'slice_number': slice_idx + 1, 'elapsed_s': elapsed_s,
+        'output_dir': str(slice_output_dir.relative_to(output_root)),
+        'dicom_file': str(dicom_path.relative_to(output_root)),
     }
 
 
 def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple[int, int]]:
     """Read encoded and reconstruction matrix sizes from the ISMRMRD header."""
-    ismrmrd_file = getattr(raw_data, "source_ismrmrd_file", None)
-    if not ismrmrd_file:
-        raise ValueError("Cannot determine GRICS zero-fill sizes: raw_data.source_ismrmrd_file is not set.")
-
-    dset = ismrmrd.Dataset(str(ismrmrd_file), "dataset", create_if_needed=False)
-    try:
-        header = ismrmrd.xsd.CreateFromDocument(dset.read_xml_header())
-    finally:
-        dset.close()
+    header = acquisition_header(raw_data)
 
     enc = header.encoding[0]
     recon = enc.reconSpace.matrixSize
@@ -344,79 +345,16 @@ def zero_fill_loaded_reconstruction(
     )
 
 
-def zero_fill_reconstructed_images(results: list[dict], raw_data: DataLoader) -> tuple[int, int]:
-    """Zero-fill every reconstruction to the scanner reconstruction matrix."""
-    target_shape, encoded_shape = grics_zero_fill_shapes(raw_data)
-    print(
-        f"[zero-fill] Loading GRICS images, padding to encoded matrix {encoded_shape}, "
-        f"then cropping to recon matrix {target_shape}"
-    )
-
-    for result in results:
-        image_path = Path(result["output_dir"]) / "GricsRecon.pt"
-        zero_filled_path = Path(result["output_dir"]) / "GricsReconZeroFilled.pt"
-        image = torch.load(image_path, map_location="cpu")
-        image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
-        torch.save(image, zero_filled_path)
-        result["zero_filled_recon_file"] = str(zero_filled_path)
-        print(f"[zero-fill] slice {result['slice_number']:03d}: {zero_filled_path}")
-
-    return target_shape
-
-
-def write_reconstruction_dicoms(
-    results: list[dict],
-    raw_data: DataLoader,
-    reference_dicom_path: Path | None,
-    series_number: int,
-) -> tuple[Path, dict[str, str]]:
-    """Export all reconstructed slices as one DICOM series."""
-    from pydicom.uid import generate_uid
-
-    dicom_dir = OUTPUT_ROOT / "dicoms"
-    dicom_dir.mkdir(parents=True, exist_ok=True)
-    dicom_uids = {
-        "study_instance_uid": generate_uid(),
-        "series_instance_uid": generate_uid(),
-        "frame_of_reference_uid": generate_uid(),
-    }
-    print(f"[dicom] Exporting {len(results)} reconstructed slices to {dicom_dir}...")
-    print(f"[dicom] SeriesInstanceUID: {dicom_uids['series_instance_uid']}")
-    for result in results:
-        slice_idx = int(result["slice_idx"])
-        image_path = Path(result["zero_filled_recon_file"])
-        dicom_path = dicom_dir / f"GricsRecon_slice{slice_idx + 1:03d}.dcm"
-        image = torch.load(image_path, map_location="cpu")
-        write_reconstruction_dicom(
-            image,
-            dicom_path,
-            raw_data=raw_data,
-            slice_index=slice_idx,
-            series_description="GRICS reconstruction RESEARCH ONLY",
-            images_in_acquisition=len(results),
-            series_number=series_number,
-            reference_dicom_path=reference_dicom_path,
-            **dicom_uids,
-        )
-        result["dicom_file"] = str(dicom_path)
-        print(f"[dicom] slice {result['slice_number']:03d}: {dicom_path}")
-    return dicom_dir, dicom_uids
-
-
-def write_manifest(manifest: dict) -> None:
-    """Persist the inputs, settings, outputs, and timing of this pipeline run."""
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    with (OUTPUT_ROOT / "run_manifest.json").open("w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, sort_keys=True)
-
-
 def initialize_source_data(args: argparse.Namespace) -> DataLoader:
     """Load source data and expose it to forked reconstruction workers."""
     global LOADED_DATA
-
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     print(f"[load pid={os.getpid()}] Loading all slices with DataLoader...")
     LOADED_DATA = load_all_slices(args.raw_data_file, args.saec_file)
+    LOADED_DATA.params._run_outputs.manifest['inputs'] = {
+        'raw_data_file': str(args.raw_data_file.resolve()), 'saec_file': str(args.saec_file.resolve())}
+    LOADED_DATA.params._run_outputs.manifest['postprocessing'] = vars(LOADED_DATA.postprocessing)
+    LOADED_DATA.params._run_outputs.snapshot(LOADED_DATA.params)
+    LOADED_DATA.params._run_outputs.flush()
     print(
         f"[load pid={os.getpid()}] Source data loaded once: "
         f"kspace_shape={tuple(LOADED_DATA._source_kspace.shape)}, "
@@ -467,8 +405,8 @@ def build_manifest(
         "saec_file": str(args.saec_file),
         "reconstruction_config": RECONSTRUCTION_CONFIG,
         "postprocessing_config": POSTPROCESSING_CONFIG,
-        "output_root": str(OUTPUT_ROOT),
-        "dicom_dir": str(dicom_dir),
+        "output_root": ".",
+        "dicom_dir": str(dicom_dir.relative_to(Path(raw_data.params.run_folder))),
         "dicom_uids": dicom_uids,
         "dicom_header_dir": (
             str(args.dicom_header_dir) if args.dicom_header_dir is not None else None
@@ -478,13 +416,14 @@ def build_manifest(
         "nslices": int(raw_data.Nz),
         "selected_slices": slice_indices,
         "max_workers": max_workers,
-        "runtime_device": RUNTIME_DEVICE,
+        "runtime_device": raw_data.params.runtime_device,
         "normalize_image_by_grics_reference": raw_data.postprocessing.normalize_image_by_grics_reference,
         "elapsed_s": elapsed_s,
         "slice_results": results,
     }
 
 
+@managed_execution
 def main() -> None:
     """Run the Siemens breast T2 reconstruction and export pipeline."""
     args = parse_args()
@@ -494,17 +433,21 @@ def main() -> None:
     raw_data = initialize_source_data(args)
     slice_indices = selected_slices(int(raw_data.Nz))
 
-    # 2. Preprocess and reconstruct the selected slices in parallel.
+    from pydicom.uid import generate_uid
+    raw_data.zero_fill_shapes = grics_zero_fill_shapes(raw_data)
+    raw_data.export_uids = {key: generate_uid() for key in
+                           ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
+    raw_data.export_reference = args.dicom_header_dir
+    raw_data.export_series_number = args.dicom_series_number
+    raw_data.export_slice_count = len(slice_indices)
+
+    # Workers save reconstruction results, then postprocess and export in memory.
     results, max_workers = reconstruct_slices_in_parallel(slice_indices)
 
-    # 3. Match the scanner matrix and export a single DICOM series.
-    zero_filled_shape = zero_fill_reconstructed_images(results, raw_data)
-    dicom_dir, dicom_uids = write_reconstruction_dicoms(
-        results,
-        raw_data,
-        reference_dicom_path=args.dicom_header_dir,
-        series_number=args.dicom_series_number,
-    )
+    zero_filled_shape = raw_data.zero_fill_shapes[0]
+    output_root = Path(raw_data.params.run_folder)
+    dicom_dir = output_root / 'exports' / 'dicom'
+    dicom_uids = raw_data.export_uids
 
     # 4. Save complete run provenance after all outputs have been produced.
     elapsed_s = time.time() - run_started_at
@@ -519,8 +462,9 @@ def main() -> None:
         dicom_uids,
         elapsed_s,
     )
-    write_manifest(manifest)
-    print(f"[run] Done in {elapsed_s:.2f} s. Manifest: {OUTPUT_ROOT / 'run_manifest.json'}")
+    raw_data.params._run_outputs.manifest.update(manifest)
+    raw_data.params._run_outputs.flush()
+    print(f"[run] Done in {elapsed_s:.2f} s. Manifest: {output_root / 'manifest.json'}")
 
 
 if __name__ == "__main__":
