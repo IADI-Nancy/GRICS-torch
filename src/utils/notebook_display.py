@@ -147,6 +147,12 @@ def display_run_panels(
             figsize=(images_figsize[0], 3.4),
         )
     elif motion_type == "non-rigid":
+        # Single-sensor models now retain a trailing sensor axis. The 3D
+        # comparison takes one spatial field per component, as legacy runs did.
+        if getattr(alpha_sim, "ndim", None) == 5 and alpha_sim.shape[-1] == 1:
+            alpha_sim = alpha_sim[..., 0]
+        if getattr(alpha_rec, "ndim", None) == 5 and alpha_rec.shape[-1] == 1:
+            alpha_rec = alpha_rec[..., 0]
         if (
             alpha_sim is not None
             and alpha_rec is not None
@@ -163,18 +169,32 @@ def display_run_panels(
                 flip_vertical=bool(params.flip_for_display),
             )
         else:
+            # Reconstruction saves one field per physiological sensor. Prefer
+            # those files, but continue to support outputs from older runs.
+            reconstructed_paths = sorted(
+                results_folder.glob("final_sensor[0-9]*_quiver.png"),
+                key=lambda path: int(path.stem.split("_")[1][len("sensor"):]),
+            )
+            if reconstructed_paths:
+                reconstructed_titles = [
+                    f"Reconstructed motion (sensor {path.stem.split('_')[1][len('sensor'):]})"
+                    for path in reconstructed_paths
+                ]
+            else:
+                reconstructed_paths = [_first_existing_path(
+                    results_folder / "final_quiver.png",
+                    results_folder / "final_motion_quiver.png",
+                )]
+                reconstructed_titles = ["Reconstructed motion"]
             _display_image_row(
                 [
                     _first_existing_path(
                         input_folder / "simulated_input_quiver.png",
                         input_folder / "simulated_motion_quiver_input.png",
                     ),
-                    _first_existing_path(
-                        results_folder / "final_quiver.png",
-                        results_folder / "final_motion_quiver.png",
-                    ),
+                    *reconstructed_paths,
                 ],
-                ["", ""],
+                ["Simulated / input motion", *reconstructed_titles],
                 title="Non-rigid motion model",
             )
 
