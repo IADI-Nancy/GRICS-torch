@@ -27,10 +27,16 @@ class RawDataPreparer:
     """
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_format,
-                 sensor_type, device, print_raw_calibration_lines, polaris_channel_mode):
+                 sensor_type, device, print_raw_calibration_lines, polaris_channel_mode,
+                 physio_clock_drift_seconds=0.0):
         if physiological_format not in {"SAEC", "PolarisInfraredTracker", "physio_text", "physio_array"}:
             raise ValueError("Unsupported physiological format.")
         # Readers own format-specific processing; the logging flag affects only raw calibration messages.
+        if isinstance(physio_clock_drift_seconds, bool) or not isinstance(physio_clock_drift_seconds, (int, float)) or not np.isfinite(physio_clock_drift_seconds):
+            raise ValueError("physio_clock_drift_seconds must be a finite number.")
+        if physiological_format == "SAEC" and physio_clock_drift_seconds != 0:
+            raise ValueError("Clock correction is supported only for Polaris, text and array physiology.")
+        self.physio_clock_drift_seconds = float(physio_clock_drift_seconds)
         self.polaris_channel_mode = polaris_channel_mode
         if physiological_format in {"physio_text", "physio_array"}:
             self.physiological_reader = PreprocessedPhysioReader(physiological_format)
@@ -58,7 +64,8 @@ class RawDataPreparer:
 
     @staticmethod
     def _synchronize_to_sequence_end(channel_times, channel_values, acquisition_times,
-                                    *, source_sequence_end=None, bounds='raise'):
+                                    *, source_sequence_end=None, bounds='raise',
+                                    physio_clock_drift_seconds=0.0):
         """Align physiological channels and interpolate onto full-sequence MRI times.
 
         channel_times and channel_values are lists of 1D arrays, one per channel;
@@ -69,8 +76,9 @@ class RawDataPreparer:
         source_sequence_end is the physiological sequence-end timestamp. Use zero
         for SAEC times already referenced to its recorded Siemens stop trigger. If
         None, each channel's last sample defines sequence end (Polaris convention).
-        No clock drift correction is applied. Returns [readout, channel] float64 data.
+        The clock correction is added after end alignment. Returns [readout, channel] float64 data.
 
+        bounds='autoregression' extends up to one second at either edge.
         bounds='raise' rejects uncovered readouts. bounds='edge' holds endpoint values,
         preserving the existing SAEC interpolation behavior. Invalid values are
         rejected. Repeated source timestamps are expanded to a uniform grid,
@@ -79,8 +87,10 @@ class RawDataPreparer:
         target = np.asarray(acquisition_times, dtype=np.float64)
         if target.ndim != 1 or not target.size or not np.isfinite(target).all():
             raise ValueError('Acquisition times must be a nonempty finite 1D array.')
-        if bounds not in {'raise', 'edge'}:
-            raise ValueError("bounds must be 'raise' or 'edge'.")
+        if not np.isfinite(physio_clock_drift_seconds):
+            raise ValueError('physio_clock_drift_seconds must be finite.')
+        if bounds not in {'raise', 'edge', 'autoregression'}:
+            raise ValueError("bounds must be 'raise', 'edge' or 'autoregression'.")
         if not len(channel_values) or len(channel_times) != len(channel_values):
             raise ValueError('Provide one timestamp array per physiological channel.')
         if source_sequence_end is not None and not np.isfinite(source_sequence_end):
@@ -107,7 +117,10 @@ class RawDataPreparer:
                 # all three axes of a MARMOT ACC sample), retaining all values.
                 times = np.linspace(times[0], times[-1], num=times.size)
             end = times[-1] if source_sequence_end is None else source_sequence_end
-            relative_times = times - end
+            relative_times = times - end + physio_clock_drift_seconds
+            if bounds == "autoregression":
+                relative_times, values = RawDataPreparer._extend_autoregression(
+                    relative_times, values, target, index)
             if bounds == 'raise' and (target.min() < relative_times[0] - 1e-9
                                       or target.max() > relative_times[-1] + 1e-9):
                 raise ValueError(f'Channel {index}: physiological data do not cover MRI readouts; '
@@ -115,11 +128,66 @@ class RawDataPreparer:
             interpolated.append(np.interp(target, relative_times, values))
         return np.column_stack(interpolated)
 
+    @staticmethod
+    def _extend_autoregression(times, values, target, channel):
+        """Fit local AR(p) with an intercept; reverse history for left extrapolation.
+
+        Fit on up to ten seconds of uniformly resampled history, with at most
+        20 lags and at least roughly three observations per fitted lag.
+        Keep original samples for interpolation within the measured interval.
+        """
+        left = max(0.0, times[0] - target.min())
+        right = max(0.0, target.max() - times[-1])
+        if max(left, right) > 1.0 + 1e-9:
+            raise ValueError(f'Channel {channel}: not reasonable to extrapolate so far '
+                             f'({max(left, right):.6g} seconds); maximum is 1 second.')
+        if max(left, right) <= 1e-9:
+            return times, values
+        step = float(np.median(np.diff(times)))
+
+        def predict(reverse, duration):
+            history_span = min(10.0, times[-1] - times[0])
+            size = max(2, int(np.floor(history_span / step)) + 1)
+            grid = (np.linspace(times[0], times[0] + history_span, size) if reverse
+                    else np.linspace(times[-1] - history_span, times[-1], size))
+            history = np.interp(grid, times, values)
+            if reverse:
+                history = history[::-1]
+            # Use the actual uniform spacing, including for short recordings.
+            spacing = history_span / (size - 1)
+            count = int(np.ceil(duration / spacing))
+            offset = history.mean()
+            history = history - offset
+            order = min(20, max(1, (size - 1) // 3))
+            if size == 2:
+                coefficients = np.array([history[-1] - history[-2], 1.0])
+            else:
+                design = np.column_stack([np.ones(size - order)] + [
+                    history[order - lag:size - lag] for lag in range(1, order + 1)])
+                coefficients = np.linalg.lstsq(design, history[order:], rcond=None)[0]
+            buffer = list(history)
+            for _ in range(count):
+                value = coefficients[0] + np.dot(coefficients[1:], buffer[-order:][::-1])
+                if not np.isfinite(value):
+                    raise ValueError(f'Channel {channel}: autoregressive extrapolation is nonfinite.')
+                buffer.append(value)
+            extension = np.asarray(buffer[-count:]) + offset
+            distances = spacing * np.arange(1, count + 1)
+            return ((times[0] - distances)[::-1], extension[::-1]) if reverse else (times[-1] + distances, extension)
+
+        left_times, left_values = predict(True, left) if left > 1e-9 else ([], [])
+        right_times, right_values = predict(False, right) if right > 1e-9 else ([], [])
+        return (np.concatenate([left_times, times, right_times]),
+                np.concatenate([left_values, values, right_values]))
+
     def _prepare_data(self):
         raw = self.reader.read_data()
         times, values, end, bounds = self._physiological_channels()
         acquisition_times = raw["time_seconds"].detach().cpu().numpy()
         if getattr(self.physiological_reader, 'already_synchronized', False):
+            if self.physio_clock_drift_seconds != 0:
+                raise ValueError('physio_clock_drift_seconds must be zero for already-synchronized '
+                                 'physiological data (all timestamps are -1).')
             if any(len(channel) != len(acquisition_times) for channel in values):
                 raise ValueError('Already-synchronized channels must contain exactly one value per '
                                  'retained MRI imaging readout in full acquisition order, before slice selection.')
@@ -127,8 +195,11 @@ class RawDataPreparer:
             aligned_times = [acquisition_times.copy() for _ in times]
         else:
             interpolated = self._synchronize_to_sequence_end(
-                times, values, acquisition_times, source_sequence_end=end, bounds=bounds)
-            aligned_times = [t - (t[-1] if end is None else end) for t in times]
+                times, values, acquisition_times, source_sequence_end=end,
+                bounds=bounds if self.physiological_format == "SAEC" else "autoregression",
+                physio_clock_drift_seconds=self.physio_clock_drift_seconds)
+            aligned_times = [t - (t[-1] if end is None else end) + self.physio_clock_drift_seconds
+                             for t in times]
         self.synchronization = {
             "physiological_time_seconds": aligned_times,
             "physiological_values": values,
@@ -217,7 +288,8 @@ class RawDataPreparer:
                                 else [self.physiological_file])
             key = cache_key([self.reader.ismrmrd_file, *physiology_files],
                             {'implementation': implementation, 'format': self.physiological_format,
-                             'sensor': self.sensor_type, 'polaris_mode': self.polaris_channel_mode})
+                             'sensor': self.sensor_type, 'polaris_mode': self.polaris_channel_mode,
+                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds})
             def build(path):
                 arrays = self._prepare_data()
                 with h5py.File(path, 'w') as handle:

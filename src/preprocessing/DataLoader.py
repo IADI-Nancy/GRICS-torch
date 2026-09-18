@@ -141,7 +141,8 @@ class DataLoader:
         self._source_data_loaded = True
         return self
 
-    def run_slice_pipeline(self, slice_idx=None):
+    def run_slice_pipeline(self, slice_idx=None, *, output_folder=None):
+        """Prepare a slice, optionally routing all outputs to a caller-owned folder."""
         if not self._source_data_loaded:
             raise RuntimeError("DataLoader.run_slice_pipeline() requires load_data() to be called first.")
         if self._slice_pipeline_has_run:
@@ -159,7 +160,9 @@ class DataLoader:
                     "slice_idx must be specified explicitly."
                 )
         if slice_idx is not None:
-            self._select_loaded_slice(slice_idx)
+            self._select_loaded_slice(slice_idx, output_folder=output_folder)
+        elif output_folder is not None:
+            bind_output_paths(self.params, output_folder)
         if self.params.data_dimension == "2D" and int(self.Nz) != 1:
             raise ValueError(
                 f"DataLoader.run_slice_pipeline() requires exactly one 2D slice, "
@@ -765,7 +768,7 @@ class DataLoader:
         kz_all = self._source_idx_kz.reshape(-1)
         self._configure_realworld_motion_inputs(self._source_motion_data, kz_all=kz_all)
 
-    def _select_loaded_slice(self, slice_idx):
+    def _select_loaded_slice(self, slice_idx, *, output_folder=None):
         if self.params.data_dimension == "3D":
             raise ValueError("slice_idx must not be provided when data_dimension='3D'.")
         if self._source_kspace is None:
@@ -784,7 +787,9 @@ class DataLoader:
 
         self.slice_idx = slice_idx
         if hasattr(self.params, 'run_folder'):
-            bind_output_paths(self.params, Path(self.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+            folder = (Path(output_folder) if output_folder is not None else
+                      Path(self.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+            bind_output_paths(self.params, folder)
             record_reconstruction(self.params, inputs=self.filename, source_slice_index=slice_idx)
         self.kspace = self._source_kspace[..., slice_idx:slice_idx + 1]
         self.reference_kspace = (
@@ -819,6 +824,7 @@ class DataLoader:
         preparer = RawDataPreparer(
             ismrmrd_file=path_to_ismrm,
             physiological_file=path_to_physiology,
+            physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
             polaris_channel_mode=(self.params.polaris_channel_mode
                                   if self.params.data_type.endswith("-polaris") else None),
             physiological_format={

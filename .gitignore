@@ -12,6 +12,8 @@ bart-*
 latex/
 .conda-latex/
 tests/*
+!tests/test_physio_clock_correction.py
+!tests/test_vienna_clock_optimization.py
 data/*
 !data/demo_motion-free_breast_image.png
 demos_data/*.h5
