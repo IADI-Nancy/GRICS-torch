@@ -56,7 +56,8 @@ _RUNTIME_KEYS = {
 }
 _NORMALIZATION_KEYS = {'normalize_kspace', 'kspace_norm_mode', 'kspace_norm_eps'}
 _REAL_DATA_KEYS = {'rawdata_sensor_type'}
-_ISMRMRD_READER_KEYS = {'print_raw_calibration_lines', 'physio_clock_drift_seconds'}
+_ISMRMRD_READER_KEYS = {'print_raw_calibration_lines'}
+_PHYSIO_CLOCK_KEYS = {'physio_clock_drift_seconds'}
 _POLARIS_KEYS = {'polaris_channel_mode'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
@@ -81,7 +82,8 @@ _FILE_SCHEMAS = {
                 'kspace_normalization': _NORMALIZATION_KEYS},
     'real_data': {'real_data': _REAL_DATA_KEYS},
     'ismrmrd_reader': {'ismrmrd_reader': _ISMRMRD_READER_KEYS},
-    'polaris': {'polaris': _POLARIS_KEYS},
+    'polaris': {'polaris': _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS},
+    'physio': {'physio': _PHYSIO_CLOCK_KEYS},
     'reconstruction': {'reconstruction': _RECONSTRUCTION_KEYS},
     'sampling': {'sampling': _SAMPLING_KEYS},
     'shepp-logan': {'shepp_logan': _SHEPP_KEYS},
@@ -92,7 +94,7 @@ _FILE_SCHEMAS = {
 }
 _OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
                   _RECONSTRUCTION_KEYS | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
-                  _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS)
+                  _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
 _BOOL_KEYS = {
     'save_debug_plots', 'check_simulated_motion_consistency', 'use_deterministic_algorithms',
     'print_raw_calibration_lines', 'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
@@ -445,7 +447,7 @@ def load_postprocessing_config(path, *, overrides=None):
 
 def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
                 shepp_logan_config=None, from_image_config=None, real_data_config=None,
-                ismrmrd_reader_config=None, polaris_config=None, sampling_config=None,
+                ismrmrd_reader_config=None, polaris_config=None, physio_config=None, sampling_config=None,
                 motion_simulation_config=None, overrides=None):
     _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
     root = Path(__file__).resolve().parents[2] / 'config'
@@ -478,6 +480,15 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
         if polaris_config is None:
             raise ValueError(f'{data_type} requires a polaris_config.')
         cfg.update(_load_toml_flat(polaris_config, 'polaris'))
+    generic_physio_data = data_type in {
+        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
+        for kind in ('physio_text', 'physio_array')
+    }
+    if physio_config is not None and not generic_physio_data:
+        raise ValueError('physio_config is only valid for physiological text or array inputs.')
+    if generic_physio_data:
+        cfg.update(_load_toml_flat(
+            physio_config if physio_config is not None else root / 'real_data/physio.toml', 'physio'))
     if data_type in SYNTHETIC_DATA_TYPES:
         path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
         if path is None:
@@ -505,10 +516,6 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
         raise ValueError(f'Real-data settings incompatible with {data_type}: {sorted(cfg.keys() & _REAL_DATA_KEYS)}.')
     if ismrmrd_reader_data:
         _require(cfg, _ISMRMRD_READER_KEYS, 'ISMRMRD-reader')
-        cfg['physio_clock_drift_seconds'] = float(_number(
-            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
-        if saec_data and cfg['physio_clock_drift_seconds'] != 0:
-            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
         if type(cfg['print_raw_calibration_lines']) is not bool:
             raise ValueError('print_raw_calibration_lines must be a boolean.')
     elif cfg.keys() & _ISMRMRD_READER_KEYS:
@@ -518,6 +525,18 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
         _choice(cfg['polaris_channel_mode'], 'polaris_channel_mode', {'all', 'largest-amplitude'})
     elif cfg.keys() & _POLARIS_KEYS:
         raise ValueError(f'Polaris settings incompatible with {data_type}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
+    if polaris_data or generic_physio_data:
+        _require(cfg, _PHYSIO_CLOCK_KEYS, 'physiological sensor')
+        cfg['physio_clock_drift_seconds'] = float(_number(
+            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
+    elif saec_data:
+        # SAEC uses its Siemens stop trigger; retain zero for the shared preparer.
+        shift = _number(cfg.get('physio_clock_drift_seconds', 0.0), 'physio_clock_drift_seconds')
+        if shift != 0:
+            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
+        cfg['physio_clock_drift_seconds'] = 0.0
+    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
+        raise ValueError(f'Physiological clock settings incompatible with {data_type}.')
     _validate_csm(cfg)
     _validate_source(cfg)
     _validate_sampling(cfg)
