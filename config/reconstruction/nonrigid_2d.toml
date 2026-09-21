@@ -17,31 +17,32 @@ gn_early_stopping = true
 # Save reconstruction tensors, final figures, and logs; diagnostics also require save_debug_plots.
 save_reconstruction_outputs = true
 
-# Stop CG when stagnation is detected.
-cg_early_stopping = true
+# Enable stopping after consecutive updates too small to change the CG iterate.
+cg_stop_on_stagnation = true
 # Iteration interval for recomputing the true residual in CG.
 cg_true_residual_interval = 10
-# Allowed consecutive stagnating CG steps.
-cg_max_stag_steps = 6
-# Extra CG steps after the first stopping criterion is met.
-cg_max_more_steps = 0
+# Consecutive numerically tiny updates required to start the stagnation countdown.
+cg_stagnation_consecutive_steps = 3
+# Countdown length including the triggering iteration; 0 or 1 stops immediately.
+cg_stagnation_countdown_steps = 0
 # Estimate regularization scaling internally from probes.
 cg_use_reg_scale_proxy = true
 # Number of probes for regularization scaling estimate.
 cg_reg_scale_num_probes = 8
+
 # Image reconstruction regularization weight.
 lambda_r = 5.0e-2
 # Maximum CG/GN inner iterations for image update.
-max_iter_recon = 96
+max_iter_recon = 20
 # Convergence tolerance for image update.
 tol_recon = 1.0e-3
 
 # Motion reconstruction regularization weight.
 lambda_m = 10.0
 # Maximum CG/GN inner iterations for motion update.
-max_iter_motion = 64
+max_iter_motion = 10
 # Convergence tolerance for motion update.
-tol_motion = 1.0e-3
+tol_motion = 1.0e-2
 
 # Motion-state grouping method: "kmeans" or "kspace_energy".
 motion_binning_mode = "kmeans"

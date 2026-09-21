@@ -12,8 +12,8 @@ class ConjugateGradientSolver:
     where _A(x) = Eh(E) ('E' is the encoding operator, "h" - Hermitian conjugate).
     """
     def __init__(self, encoding_operator, *, reg_lambda, regularizer, regularization_shape,
-        regularization_spatial_dims, verbose, early_stopping, true_residual_interval,
-        max_stag_steps, max_more_steps, use_reg_scale_proxy, reg_scale_num_probes):
+        regularization_spatial_dims, verbose, stop_on_stagnation, true_residual_interval,
+        stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -30,10 +30,10 @@ class ConjugateGradientSolver:
             if self.regularization_spatial_dims is None:
                 raise ValueError(f"regularization_spatial_dims must be set for {self.regularizer} regularization.")
         self.verbose = verbose
-        self.early_stopping = early_stopping
+        self.stop_on_stagnation = stop_on_stagnation
         self.true_residual_interval = true_residual_interval
-        self.max_stag_steps = max_stag_steps
-        self.max_more_steps = max_more_steps
+        self.stagnation_consecutive_steps = stagnation_consecutive_steps
+        self.stagnation_countdown_steps = stagnation_countdown_steps
         self.use_reg_scale_proxy = use_reg_scale_proxy
         self.reg_scale_num_probes = reg_scale_num_probes
         self.reg_scale = 1.0
@@ -183,25 +183,33 @@ class ConjugateGradientSolver:
             else:
                 x = x0.clone().to(self.device)
 
-            # _A(x)
+            # Here A includes regularization: A(x) = E^H E(x) + lambda_eff R(x).
+            # For a motion solve, E is the linearized motion operator J.
             Ax = self._A(x)
 
-            # Residual
+            # The "true residual" is b - A(x), evaluated directly at the current x.
+            # It measures how well x solves this regularized linear system.
+            # It is NOT the k-space data mismatch y - E(x), nor an error against
+            # a known ground-truth image/motion. "True" means directly recomputed;
+            # this calculation still has ordinary floating-point rounding error.
             r = b - Ax
             b_norm = torch.linalg.norm(b) + 1e-12
+            # Convergence means ||b - A(x)|| / ||b|| <= tol (with a tiny guard
+            # in b_norm for zero RHS). This is a residual tolerance, not a direct
+            # bound on image or motion error.
             tolb = tol * b_norm
 
             z = r.clone()
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
             eps = torch.finfo(r.real.dtype).eps
-            stag = 0
-            moresteps = 0
-            max_stag_steps = self.max_stag_steps
-            if self.max_more_steps is None:
-                max_more_steps = max(1, min(n // 50, 5, max(n - max_iter, 1)))
+            consecutive_tiny_updates = 0       # Consecutive updates too small relative to x.
+            stagnation_countdown_elapsed = 0  # 0: no stagnation countdown; >0: countdown is active.
+            stagnation_consecutive_steps = self.stagnation_consecutive_steps
+            if self.stagnation_countdown_steps is None:
+                stagnation_countdown_steps = max(1, min(n // 50, 5, max(n - max_iter, 1)))
             else:
-                max_more_steps = max(1, int(self.max_more_steps))
+                stagnation_countdown_steps = max(1, int(self.stagnation_countdown_steps))
             best_x = x.clone()
             best_rel = torch.linalg.norm(r) / b_norm
             iters_done = 0
@@ -222,25 +230,43 @@ class ConjugateGradientSolver:
                     break
 
                 alpha = rz_old / denom
+                # The proposed change is delta_x = alpha * p. If its norm is
+                # below machine precision times ||x||, adding it may barely
+                # change the stored iterate. Count consecutive such steps.
+                # This detects numerical stagnation, NOT a slowly decreasing
+                # residual or a visually unchanged reconstructed image.
                 if torch.linalg.norm(p) * alpha.abs() < eps * torch.linalg.norm(x):
-                    stag += 1
+                    consecutive_tiny_updates += 1
                 else:
-                    stag = 0
+                    consecutive_tiny_updates = 0
 
                 x = x + alpha * p
+                # Cheap recursive residual: reuse Ap from this iteration.
+                # In exact arithmetic this equals b - A(x), since A is linear.
+                # In floating-point arithmetic, accumulated rounding can make
+                # this recursively updated r drift away from b - A(x).
                 r = r - alpha * Ap
                 res_norm = torch.linalg.norm(r)
+                # Recompute directly in four situations:
+                # 1. Periodically, to limit drift (not a stopping condition).
+                # 2. When r suggests convergence, to verify before accepting it.
+                # 3. When enough consecutive tiny updates suggest stagnation.
+                # 4. On every step of an already active stagnation countdown.
                 refresh_true_residual = (
                     (it + 1) % self.true_residual_interval == 0
                     or res_norm <= tolb
-                    or (self.early_stopping and stag >= max_stag_steps)
-                    or (self.early_stopping and moresteps > 0)
+                    or (self.stop_on_stagnation and consecutive_tiny_updates >= stagnation_consecutive_steps)
+                    or (self.stop_on_stagnation and stagnation_countdown_elapsed > 0)
                 )
                 if refresh_true_residual:
-                    # MATLAB-style stabilization: periodically recompute true residual.
+                    # Costs an extra A evaluation (encoding + adjoint, plus
+                    # regularization). Replace the accumulated residual with
+                    # a fresh one; this does not reset x or the search direction.
                     r = b - self._A(x)
                     res_norm = torch.linalg.norm(r)
                 rel_res = (res_norm / b_norm).item()
+                # History uses the direct residual on refresh steps and the
+                # recursive residual on other steps.
                 residual_norm_history.append(float(res_norm.item()))
                 relres_history.append(float(rel_res))
                 if rel_res < best_rel:
@@ -253,15 +279,25 @@ class ConjugateGradientSolver:
                     )
                 # torch.cuda.synchronize()
 
+                # Any apparent convergence above has now been checked using
+                # the direct residual. This stop remains enabled even when
+                # stop_on_stagnation=False (that flag controls stagnation only).
                 if res_norm <= tolb:
                     converged = True
                     stop_reason = "tolerance"
                     break
-                if self.early_stopping and refresh_true_residual:
-                    if stag >= max_stag_steps and moresteps == 0:
-                        stag = 0
-                    moresteps += 1
-                    if moresteps >= max_more_steps:
+                # Only detected stagnation starts this countdown; routine
+                # residual refreshes must not start it. Allow a few more steps
+                # using freshly checked residuals before giving up.
+                # The triggering iteration counts as step 1, so a budget of 6
+                # allows at most 5 subsequent iterations. Once started, this
+                # countdown continues even if a later update is no longer tiny.
+                # Convergence or max_iter can still end the solve sooner.
+                if self.stop_on_stagnation and (consecutive_tiny_updates >= stagnation_consecutive_steps or stagnation_countdown_elapsed > 0):
+                    if consecutive_tiny_updates >= stagnation_consecutive_steps and stagnation_countdown_elapsed == 0:
+                        consecutive_tiny_updates = 0
+                    stagnation_countdown_elapsed += 1
+                    if stagnation_countdown_elapsed >= stagnation_countdown_steps:
                         stop_reason = "early_stopping"
                         break
 
@@ -291,6 +327,10 @@ class ConjugateGradientSolver:
                 "stop_reason": stop_reason,
             }
 
+            # Return the iterate with the smallest recorded relative residual,
+            # which need not be the last iterate. last_info above describes the
+            # final attempted iteration; residual history is not all "true"
+            # residuals because direct recomputation happens only on refreshes.
             return best_x
         
     # --------------------------------------------------------------

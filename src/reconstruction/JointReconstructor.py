@@ -138,9 +138,9 @@ class JointReconstructor:
             max_iterations = self.params.max_iter_recon
         solver = ConjugateGradientSolver(
             E, reg_lambda=regularization_weight, regularizer="Tikhonov", regularization_shape=None,
-            regularization_spatial_dims=None, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
-            true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
-            max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+            regularization_spatial_dims=None, verbose=self.params.verbose, stop_on_stagnation=self.params.cg_stop_on_stagnation,
+            true_residual_interval=self.params.cg_true_residual_interval, stagnation_consecutive_steps=self.params.cg_stagnation_consecutive_steps,
+            stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
             reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                   if self.params.cg_use_reg_scale_proxy else None),
         )
@@ -201,8 +201,8 @@ class JointReconstructor:
             solver = ConjugateGradientSolver(
                 J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov_gradient",
                 regularization_shape=reg_shape, regularization_spatial_dims=(1, 2, 3) if int(Data_res.get("Nz", 1)) > 1 else (1, 2), verbose=self.params.verbose,
-                early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
-                max_stag_steps=self.params.cg_max_stag_steps, max_more_steps=self.params.cg_max_more_steps,
+                stop_on_stagnation=self.params.cg_stop_on_stagnation, true_residual_interval=self.params.cg_true_residual_interval,
+                stagnation_consecutive_steps=self.params.cg_stagnation_consecutive_steps, stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                   if self.params.cg_use_reg_scale_proxy else None),
             )
@@ -218,9 +218,9 @@ class JointReconstructor:
             # (J^H J + mu I) dm = J^H residual.
             solver = ConjugateGradientSolver(
                 J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov", regularization_shape=None,
-                regularization_spatial_dims=None, verbose=self.params.verbose, early_stopping=self.params.cg_early_stopping,
-                true_residual_interval=self.params.cg_true_residual_interval, max_stag_steps=self.params.cg_max_stag_steps,
-                max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+                regularization_spatial_dims=None, verbose=self.params.verbose, stop_on_stagnation=self.params.cg_stop_on_stagnation,
+                true_residual_interval=self.params.cg_true_residual_interval, stagnation_consecutive_steps=self.params.cg_stagnation_consecutive_steps,
+                stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
                 reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                   if self.params.cg_use_reg_scale_proxy else None),
             )
