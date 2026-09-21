@@ -66,7 +66,7 @@ _RECONSTRUCTION_KEYS = {
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping', 'save_reconstruction_outputs',
-    'cg_early_stopping', 'cg_true_residual_interval', 'cg_max_stag_steps', 'cg_max_more_steps',
+    'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
@@ -98,7 +98,7 @@ _BOOL_KEYS = {
     'print_raw_calibration_lines', 'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
-    'save_reconstruction_outputs', 'cg_early_stopping', 'cg_use_reg_scale_proxy',
+    'save_reconstruction_outputs', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
 }
 
 
@@ -386,7 +386,7 @@ def _validate_reconstruction(cfg):
         _integer(cfg[key], key)
     if cfg['cg_use_reg_scale_proxy']:
         _integer(cfg['cg_reg_scale_num_probes'], 'cg_reg_scale_num_probes')
-    for key in ('cg_max_stag_steps', 'cg_max_more_steps'):
+    for key in ('cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps'):
         _integer(cfg[key], key, 0)
     for key in ('tol_recon', 'tol_motion'):
         _number(cfg[key], key, positive=True)
