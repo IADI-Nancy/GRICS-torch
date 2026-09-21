@@ -2,6 +2,3 @@
 # Print one line per raw parallel-calibration acquisition (acquisition, ky, z, repetition).
 # This affects logging only; it does not change which raw data are read or retained.
 print_raw_calibration_lines = false
-
-# Physiological timestamp shift in seconds (Polaris/text/array): positive moves later.
-physio_clock_drift_seconds = 0.0

@@ -1,6 +1,4 @@
-[polaris]
-# Use all tracked tool axes, or only the axis with the largest amplitude.
-polaris_channel_mode = "all"
-
+[physio]
+# Shared synchronization settings for physiological text and array inputs.
 # Timestamp shift after sequence-end alignment, in seconds; positive moves later.
 physio_clock_drift_seconds = 0.0
