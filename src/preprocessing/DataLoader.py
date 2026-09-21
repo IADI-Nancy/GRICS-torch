@@ -819,6 +819,7 @@ class DataLoader:
         preparer = RawDataPreparer(
             ismrmrd_file=path_to_ismrm,
             physiological_file=path_to_physiology,
+            physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
             polaris_channel_mode=(self.params.polaris_channel_mode
                                   if self.params.data_type.endswith("-polaris") else None),
             physiological_format={

@@ -56,7 +56,7 @@ _RUNTIME_KEYS = {
 }
 _NORMALIZATION_KEYS = {'normalize_kspace', 'kspace_norm_mode', 'kspace_norm_eps'}
 _REAL_DATA_KEYS = {'rawdata_sensor_type'}
-_ISMRMRD_READER_KEYS = {'print_raw_calibration_lines'}
+_ISMRMRD_READER_KEYS = {'print_raw_calibration_lines', 'physio_clock_drift_seconds'}
 _POLARIS_KEYS = {'polaris_channel_mode'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
@@ -505,6 +505,10 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
         raise ValueError(f'Real-data settings incompatible with {data_type}: {sorted(cfg.keys() & _REAL_DATA_KEYS)}.')
     if ismrmrd_reader_data:
         _require(cfg, _ISMRMRD_READER_KEYS, 'ISMRMRD-reader')
+        cfg['physio_clock_drift_seconds'] = float(_number(
+            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
+        if saec_data and cfg['physio_clock_drift_seconds'] != 0:
+            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
         if type(cfg['print_raw_calibration_lines']) is not bool:
             raise ValueError('print_raw_calibration_lines must be a boolean.')
     elif cfg.keys() & _ISMRMRD_READER_KEYS:
