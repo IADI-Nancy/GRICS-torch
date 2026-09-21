@@ -9,10 +9,11 @@ def downsample_sampling_indices(Data_full, Sampling_full, Nx_res, Ny_res, Nz_res
     Nx_full, Ny_full = Data_full["Nx"], Data_full["Ny"]
     Nz_full = int(Data_full.get("Nz", 1))
 
-    # central crop coordinates
-    x0 = (Nx_full - Nx_res) // 2
-    y0 = (Ny_full - Ny_res) // 2
-    z0 = (Nz_full - Nz_res) // 2
+    # fftshift puts zero frequency at size // 2. Align those bins on both
+    # grids; (full - res) // 2 is off by one for even-to-odd crops.
+    x0 = Nx_full // 2 - Nx_res // 2
+    y0 = Ny_full // 2 - Ny_res // 2
+    z0 = Nz_full // 2 - Nz_res // 2
 
     Sampling_res = []
 
@@ -62,10 +63,11 @@ def downsample_kspace(Data_full, Nx_res, Ny_res, Nz_res=1):
     Nz_full = int(Data_full.get("Nz", 1))
     kspace_full = Data_full["KspaceData"]
 
-    # central crop coordinates
-    x0 = (Nx_full - Nx_res) // 2
-    y0 = (Ny_full - Ny_res) // 2
-    z0 = (Nz_full - Nz_res) // 2
+    # fftshift puts zero frequency at size // 2. Align those bins on both
+    # grids; (full - res) // 2 is off by one for even-to-odd crops.
+    x0 = Nx_full // 2 - Nx_res // 2
+    y0 = Ny_full // 2 - Ny_res // 2
+    z0 = Nz_full // 2 - Nz_res // 2
 
     if Nz_full > 1:
         kspace_res = kspace_full[:, :, x0:x0 + Nx_res, y0:y0 + Ny_res, z0:z0 + Nz_res]
@@ -159,8 +161,10 @@ def downsample_data(Data_full, res_factor, target_states, motion_signal, params,
     Nx = int(round(Data_full["Nx"] * res_factor))
     Ny = int(round(Data_full["Ny"] * res_factor))
     Nz_full = int(Data_full.get("Nz", 1))
-    Nz = int(round(Nz_full * res_factor)) if Nz_full > 1 else 1
-    Nz = max(Nz, 1)
+    # Preserve 3D motion at every level: its spatial gradients require at
+    # least two depth samples. A singleton depth would select 2D operators
+    # and misinterpret the original volume axis during sensitivity resizing.
+    Nz = max(2, int(round(Nz_full * res_factor))) if Nz_full > 1 else 1
 
     Data_res = {}
     Data_res["Nx"] = Nx

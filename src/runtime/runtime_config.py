@@ -538,8 +538,12 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
 
 def validate_reconstruction_size(params, spatial_shape):
     """Reject resolution levels that collapse a known image axis to zero."""
+    # downsample_data keeps a genuinely 3D volume at depth >= 2 even when
+    # its requested coarse depth rounds to zero or one. Only the other axes
+    # can therefore collapse; retain the existing checks for 2D inputs.
+    checked_shape = spatial_shape[:2] if len(spatial_shape) == 3 and spatial_shape[2] > 1 else spatial_shape
     for level in params.ResolutionLevels:
-        if any(int(size * level) < 1 for size in spatial_shape):
+        if any(int(size * level) < 1 for size in checked_shape):
             raise ValueError("ResolutionLevels would produce an empty spatial dimension.")
 
 
