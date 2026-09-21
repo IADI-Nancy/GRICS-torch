@@ -142,7 +142,14 @@ class GenericPhysioTest(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 PreprocessedPhysioReader('physio_text').read_channels(self.text(text))
         p = self.preparer(self.arrays(np.array([[[11.], [11.5], [12.]]])))
-        with patch.object(p.reader, 'read_data', return_value=self.raw()), self.assertRaisesRegex(ValueError, 'extrapolation'):
+        # The clock-correction synchronizer permits up to one second of
+        # autoregressive extension, including at the default zero shift.
+        with patch.object(p.reader, 'read_data', return_value=self.raw()):
+            p.read_data()
+        np.testing.assert_allclose(p.synchronization['acquisition_values'],
+                                   [[-4., -10.], [-2., 0.], [0., 10.], [4., 30.]], atol=1e-8)
+        p = self.preparer(self.arrays(np.array([[[11.2], [11.6], [12.]]])))
+        with patch.object(p.reader, 'read_data', return_value=self.raw()), self.assertRaisesRegex(ValueError, 'maximum is 1 second'):
             p.read_data()
 
     def test_cache_uses_both_array_files_and_restores_metadata(self):

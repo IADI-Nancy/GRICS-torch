@@ -23,3 +23,5 @@ article/
 !tests/test_output_management.py
 !tests/test_generic_physio_data_types.py
 !tests/compare_polaris_physio_reconstructions.py
+
+!tests/test_physio_clock_correction.py
