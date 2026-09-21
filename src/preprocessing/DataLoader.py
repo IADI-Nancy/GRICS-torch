@@ -893,9 +893,9 @@ class DataLoader:
             solver = ConjugateGradientSolver(
                 encoding_true, reg_lambda=0.0, regularizer="Tikhonov", regularization_shape=None,
                 regularization_spatial_dims=None, verbose=False,
-                early_stopping=self.params.cg_early_stopping, true_residual_interval=self.params.cg_true_residual_interval,
-                max_stag_steps=self.params.cg_max_stag_steps,
-                max_more_steps=self.params.cg_max_more_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
+                stop_on_stagnation=self.params.cg_stop_on_stagnation, true_residual_interval=self.params.cg_true_residual_interval,
+                stagnation_consecutive_steps=self.params.cg_stagnation_consecutive_steps,
+                stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
                 reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                       if self.params.cg_use_reg_scale_proxy else None),
             )
