@@ -69,7 +69,7 @@ def parse_args(argv=None):
     parser.add_argument('--flip-for-display', action=argparse.BooleanOptionalAction, default=True,
                         help='Flip PNG previews vertically (default: enabled, as in the breast pipeline).')
     parser.add_argument('--initial-correction', type=float, default=None,
-                        help='Seconds; defaults to physio_clock_drift_seconds in reader config.')
+                        help='Seconds; defaults to physio_clock_drift_seconds in Polaris config.')
     parser.add_argument('--clock-bounds', type=float, nargs=2, default=(-1.0, 1.0),
                         metavar=('LOWER', 'UPPER'), help='Seconds; intersected with recording coverage limits.')
     parser.add_argument('--difference-step', type=float, default=0.05, help='Finite-difference spacing in seconds.')
