@@ -218,7 +218,8 @@ def reconstruct_slice(slice_idx):
     torch.manual_seed(data.params.seed + slice_idx)
     np.random.seed((data.params.seed + slice_idx) % 2**32)
     # Retain images and previews for visual comparison of every tested correction.
-    data.params.save_reconstruction_outputs = True
+    data.params.save_reconstruction_logs = True
+    data.params.save_reconstruction_tensors = True
     folder = EVALUATION_FOLDER / f'slice_{slice_idx + 1:03d}'
     bind_output_paths(data.params, folder)
     started = time.perf_counter()
