@@ -25,3 +25,9 @@ article/
 !tests/compare_polaris_physio_reconstructions.py
 
 !tests/test_physio_clock_correction.py
+
+!tests/test_reconstruction_output_flags.py
+
+!tests/test_siemens_breast_3d_lowres.py
+
+!tests/test_siemens_pipeline_api.py

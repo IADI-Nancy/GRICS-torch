@@ -238,6 +238,7 @@ class OutputManagementTests(unittest.TestCase):
             instance.physiological_format = 'SAEC'
             instance.sensor_type = 'BELT'
             instance.polaris_channel_mode = None
+            instance.physio_clock_drift_seconds = 0.0
             instance.physiological_reader = SimpleNamespace(metadata={})
             def prepare():
                 calls.append(1)
@@ -269,58 +270,50 @@ class OutputManagementTests(unittest.TestCase):
 
     def test_pipeline_exports_postprocessed_image_without_debug_dependency(self):
         from pipelines import siemens_breast_T2 as pipeline
+        from src.runtime.runtime_config import load_config
         original = torch.ones((1, 8, 8), dtype=torch.complex128) * 4
         motion = torch.zeros((2, 8, 8, 1))
-        for debug, save in [(False, True), (True, True), (True, False)]:
-            with self.subTest(debug=debug, save=save):
-                root = self.root / f'{debug}_{save}'
-                params = SimpleNamespace(save_debug_plots=debug, save_reconstruction_outputs=save,
-                    run_folder=str(root), flip_for_display=False, ResolutionLevels=[1.0], reconstruction_motion_type='non-rigid')
-                bind_output_paths(params, root / 'reconstructions' / 'slice_001')
-                raw = SimpleNamespace(params=params,
+        for save in (False, True):
+            with self.subTest(save=save):
+                params = load_config(data_type='preprocessed-real',
+                    reconstruction_config='config/reconstruction/nonrigid_2d_breast.toml',
+                    coil_sensitivity_config='config/coil_sensitivity/odille_spline.toml',
+                    overrides={'output_root': str(self.root), 'workflow_label': f'export_{save}',
+                               'runtime_device': 'cpu', 'save_debug_plots': False,
+                               'save_reconstruction_tensors': save})
+                raw = SimpleNamespace(params=params, Nz=1,
                     postprocessing=SimpleNamespace(normalize_image_by_grics_reference=True),
                     grics_reference_image=torch.ones((8, 8, 1)) * 2,
-                    kspace=None, smaps=None, sampling_idx=None, motion_signal=None,
-                    kspace_scale=1., motion_plot_context=None,
-                    zero_fill_shapes=((12, 12), (12, 12)), export_slice_count=1,
-                    export_series_number=1001, export_reference=None, export_uids={})
-                raw.run_slice_pipeline = lambda slice_idx: None
-                class Reconstructor:
-                    def __init__(self, *args, **kwargs):
-                        self.params = kwargs['params']
-                    def run(self):
-                        logger = JointReconstructionLogger.__new__(JointReconstructionLogger)
-                        logger.params = self.params
-                        logger.enabled = save
-                        logger.motion_plot_context = {}
-                        with patch('src.reconstruction.joint_reconstructor_utils.logging.save_final_nonrigid_alpha_maps'):
-                            logger.save_final_outputs(original, motion)
-                        return original.clone(), motion.clone()
+                    kspace=torch.zeros((1, 1, 8, 8, 1)),
+                    run_slice_pipeline=lambda slice_idx: None)
+                def load(*args, **kwargs):
+                    RunOutputs(params)
+                    return raw
                 captured = []
                 def export(image, path, **kwargs):
                     captured.append(image.clone())
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(b'dicom')
-                with patch.object(pipeline, 'LOADED_DATA', raw), patch.object(pipeline, 'OUTPUT_ROOT', root), \
-                     patch.object(pipeline, 'JointReconstructor', Reconstructor), \
-                     patch.object(pipeline, 'write_reconstruction_dicom', export), \
-                     patch.object(torch, 'set_num_interop_threads'), patch.object(torch, 'set_num_threads'):
-                    pipeline.reconstruct_slice(0)
-                folder = root / 'reconstructions' / 'slice_001'
-                saved_path = folder / 'results' / 'image_reconstructed.pt'
-                self.assertEqual(saved_path.exists(), save)
-                if save:
-                    torch.testing.assert_close(torch.load(saved_path, weights_only=True), original)
-                self.assertEqual(tuple(captured[0].shape), (1, 12, 12))
+                with patch.object(pipeline, 'load_all_slices', side_effect=load), \
+                     patch.object(pipeline, 'grics_zero_fill_shapes', return_value=((12, 12), (12, 12))), \
+                     patch.object(pipeline, 'timed_reconstruction',
+                                  side_effect=lambda data: (original.clone(), motion.clone(), 0.01)), \
+                     patch.object(pipeline, 'write_reconstruction_dicom', side_effect=export):
+                    result = pipeline.run_pipeline('input.mrd', 'motion.saec', max_workers=1,
+                        save_reconstruction_tensors=save, export_dicom=True)
+                item = result['reconstructions'][0]
                 normalized, _ = pipeline.normalize_reconstruction_by_grics_reference(
                     original, pipeline.grics_reference_image_for_normalization(raw, original))
                 expected = pipeline.zero_fill_loaded_reconstruction(normalized, (12, 12), (12, 12))
+                torch.testing.assert_close(item['image'], expected)
                 torch.testing.assert_close(captured[0], expected)
-                post = folder / 'diagnostics' / 'postprocessing' / 'image_postprocessed.pt'
-                self.assertEqual(post.exists(), debug and save)
-                if post.exists():
-                    torch.testing.assert_close(torch.load(post, weights_only=True), captured[0])
-                self.assertTrue((root / 'exports' / 'dicom' / 'slice_001.dcm').exists())
+                self.assertEqual(tuple(captured[0].shape), (1, 12, 12))
+                saved_path = item['output_dir'] / 'image_reconstructed.pt'
+                self.assertEqual(saved_path.exists(), save)
+                if save:
+                    torch.testing.assert_close(torch.load(saved_path, weights_only=True), expected)
+                self.assertFalse(list(result['run_folder'].rglob('image_postprocessed.pt')))
+                self.assertTrue(item['dicom_file'].is_file())
 
     def test_small_cpu_reconstruction_layout_and_debug_controls(self):
         from src.runtime.runtime_config import load_config
@@ -350,7 +343,7 @@ class OutputManagementTests(unittest.TestCase):
                 image, motion = recon.run()
                 folder = Path(params.results_folder)
                 torch.testing.assert_close(torch.load(folder / 'image_reconstructed.pt', weights_only=True), image.cpu())
-                self.assertTrue((folder / 'image_reconstructed_nex_002.png').exists())
+                self.assertEqual((folder / 'image_reconstructed_nex_002.png').exists(), debug)
                 self.assertEqual(Path(params.debug_folder).exists(), debug)
                 self.assertEqual(Path(params.initial_data_folder).exists(), debug)
                 if debug:
