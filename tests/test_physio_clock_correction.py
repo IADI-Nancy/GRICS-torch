@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -75,6 +76,52 @@ class ClockCorrectionTests(unittest.TestCase):
                             preparer.synchronization['acquisition_values'][:, 0], 2 * times + 3)
                         np.testing.assert_array_equal(
                             preparer.synchronization['physiological_time_seconds'][0], times)
+
+    def test_sensor_config_owns_clock_shift(self):
+        root = Path(__file__).resolve().parents[1] / 'config'
+        base = dict(reconstruction_config=root / 'reconstruction/nonrigid_2d.toml',
+                    coil_sensitivity_config=root / 'coil_sensitivity/espirit.toml',
+                    ismrmrd_reader_config=root / 'real_data/ismrmrd_reader.toml')
+        with tempfile.TemporaryDirectory() as folder:
+            polaris = Path(folder) / 'polaris.toml'
+            polaris.write_text('[polaris]\npolaris_channel_mode="all"\nphysio_clock_drift_seconds=0.25\n')
+            physio = Path(folder) / 'physio.toml'
+            physio.write_text('[physio]\nphysio_clock_drift_seconds=-0.25\n')
+            for source in ('ismrmrd', 'siemens'):
+                for kind in ('polaris', 'physio_text', 'physio_array'):
+                    with self.subTest(source=source, kind=kind):
+                        kwargs = dict(base, data_type=f'{source}-{kind}')
+                        if kind == 'polaris':
+                            kwargs['polaris_config'] = polaris
+                        else:
+                            kwargs['physio_config'] = physio
+                        expected = 0.25 if kind == 'polaris' else -0.25
+                        self.assertEqual(load_config(**kwargs).physio_clock_drift_seconds, expected)
+                        self.assertEqual(load_config(**kwargs, overrides={
+                            'physio_clock_drift_seconds': 0.5}).physio_clock_drift_seconds, 0.5)
+            reader = Path(folder) / 'reader.toml'
+            reader.write_text('[ismrmrd_reader]\nprint_raw_calibration_lines=false\nphysio_clock_drift_seconds=0.5\n')
+            with self.assertRaisesRegex(ValueError, 'physio_clock_drift_seconds'):
+                load_config(**{**base, 'ismrmrd_reader_config': reader},
+                            data_type='ismrmrd-polaris', polaris_config=polaris)
+            with self.assertRaisesRegex(ValueError, 'physio_config'):
+                load_config(**base, data_type='ismrmrd-polaris',
+                            polaris_config=polaris, physio_config=physio)
+
+    def test_saec_default_and_unsupported_modes(self):
+        root = Path(__file__).resolve().parents[1] / 'config'
+        base = dict(reconstruction_config=root / 'reconstruction/nonrigid_2d.toml',
+                    coil_sensitivity_config=root / 'coil_sensitivity/espirit.toml')
+        for source in ('ismrmrd', 'siemens'):
+            kwargs = dict(base, data_type=f'{source}-saec',
+                          real_data_config=root / 'real_data/saec.toml',
+                          ismrmrd_reader_config=root / 'real_data/ismrmrd_reader.toml')
+            self.assertEqual(load_config(**kwargs).physio_clock_drift_seconds, 0.0)
+            with self.assertRaises(ValueError):
+                load_config(**kwargs, overrides={'physio_clock_drift_seconds': 0.25})
+        with self.assertRaisesRegex(ValueError, 'clock settings incompatible'):
+            load_config(**base, data_type='preprocessed-real',
+                        overrides={'physio_clock_drift_seconds': 0.25})
 
     def test_config_defaults_overrides_and_validation(self):
         root = Path(__file__).resolve().parents[1] / 'config'
