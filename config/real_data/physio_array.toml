@@ -1,0 +1,4 @@
+[physio]
+# Synchronization settings for physiological array inputs.
+# Timestamp shift after sequence-end alignment, in seconds; positive moves later.
+physio_clock_drift_seconds = 0.0

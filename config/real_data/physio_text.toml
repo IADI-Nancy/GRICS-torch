@@ -1,4 +1,4 @@
 [physio]
-# Shared synchronization settings for physiological text and array inputs.
+# Synchronization settings for physiological text inputs.
 # Timestamp shift after sequence-end alignment, in seconds; positive moves later.
 physio_clock_drift_seconds = 0.0
