@@ -31,3 +31,4 @@ article/
 !tests/test_siemens_breast_3d_lowres.py
 
 !tests/test_siemens_pipeline_api.py
+!tests/run_real_3d_subject.py
