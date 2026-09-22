@@ -7,7 +7,11 @@ workflow_label = "reconstruction"
 cache_root = "auto"
 
 [runtime]
-# Save diagnostic motion curves/fields, acquisition-order plots, and per-level reconstruction images.
+# Write GRICS text logs independently of tensors and plots.
+save_reconstruction_logs = true
+# Save final reconstruction image and motion tensors.
+save_reconstruction_tensors = true
+# Save diagnostic plots and final image/motion previews independently of logs and tensors.
 save_debug_plots = true
 # Request deterministic PyTorch/cuDNN algorithms; warn when unavailable. Seeding is controlled below.
 use_deterministic_algorithms = true
