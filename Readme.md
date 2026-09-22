@@ -36,6 +36,113 @@ A Dockerfile is provided in the `build/` folder. The built image is available at
 
 Four demo notebooks cover simulated and real-data reconstruction. Simulations and some reconstruction steps use random initialization; `seed_enabled` and `seed` in `config/general.toml` control reproducibility. Results can vary with the seed and compute backend.
 
+## Siemens breast 3D low-resolution reconstruction
+
+`pipelines/siemens_breast_3d_lowres.py` reconstructs one complete 3D volume:
+
+```bash
+python pipelines/siemens_breast_3d_lowres.py /path/to/subject.dat /path/to/subject.saec
+# Already converted ISMRMRD input also accepts a SAEC file:
+python pipelines/siemens_breast_3d_lowres.py /path/to/subject.mrd /path/to/subject.saec
+# Preprocessed HDF5 includes its physiological data:
+python pipelines/siemens_breast_3d_lowres.py /path/to/subject.h5
+```
+
+Preprocessed input contains `kspace` shaped `[coils, repetitions, Nx, Ny, Nz]`
+and `motion_data`, `idx_ky`, `idx_kz`, and `idx_nex`. Supply one file per execution.
+Coil sensitivities are calculated from the acquisition with `odille-spline`,
+configured in `config/coil_sensitivity/odille_spline.toml`.
+
+Reconstruction settings, including 16 motion states, live in
+`config/reconstruction/nonrigid_3d_breast.toml`. The volume is reconstructed on
+its input grid. CLI options include `--device cpu`, `--output-root PATH`, and
+`--no-save-reconstruction-tensors`. The default device is GPU for 3D and CPU for T2.
+
+### Calling Siemens pipelines from Python
+
+Both modules expose `run_pipeline(...)`; `main(argv=None)` only adapts CLI
+arguments. Calls accept strings or paths and do not require changing module globals:
+
+```python
+from pipelines.siemens_breast_T2 import run_pipeline as reconstruct_2d
+from pipelines.siemens_breast_3d_lowres import run_pipeline as reconstruct_3d
+
+volume = reconstruct_3d(
+    "subject.h5", device="gpu", output_root="runs/evaluation_3d",
+    save_reconstruction_tensors=False,
+)
+image = volume["reconstructions"][0]["image"]
+motion = volume["reconstructions"][0]["motion"]
+solver_seconds = volume["timings"]["reconstruction_seconds"]
+
+slices = reconstruct_2d(
+    "subject.dat", "subject.saec", device="cpu", max_workers=4,
+    slice_start=0, slice_stop=8, output_root="runs/evaluation_2d",
+    save_reconstruction_tensors=False, export_dicom=False,
+)
+per_slice_seconds = [item["reconstruction_seconds"] for item in slices["reconstructions"]]
+```
+
+Both return a dictionary with `run_folder`, `timings`, and `reconstructions`.
+Each reconstruction includes CPU `image` and `motion` tensors, its solver time, a `log_file` path,
+and `output_dir`, `image_file`, and `motion_file` paths (file paths are `None`
+when saving is disabled). T2 results are ordered by `slice_idx`; `slice_stop`
+is exclusive. T2 images include configured reference normalization and
+zero-filling; motion maps retain their reconstruction grid. Set
+`return_tensors=False` to omit tensors from the returned dictionary.
+
+Both accept `reconstruction_config` and an `overrides` dictionary for validated
+configuration settings. T2 also accepts `postprocessing_config`,
+`dicom_header_dir`, and `dicom_series_number`. Numerical defaults remain in the
+TOML files. Pipelines disable plotting and intermediate tensor exports, and save
+each final image/motion tensor once after computation when `save_reconstruction_tensors=True`
+(the default). GRICS text logs are written during reconstruction, including
+configuration, CG status, GN residuals, motion-update diagnostics, and timings.
+They are controlled by `save_reconstruction_logs`, independently of
+`save_reconstruction_tensors`. Both flags default to `true` in `config/general.toml`.
+The pipeline keyword arguments accept `None` to inherit configuration/overrides
+or a boolean to override them. CLI options are
+`--[no-]save-reconstruction-logs` and `--[no-]save-reconstruction-tensors`. Run metadata and resolved
+configuration are always saved. T2's Python API exports DICOM only with `export_dicom=True`;
+the T2 CLI retains DICOM export by default (`--no-dicom` disables it).
+
+Both Siemens pipelines apply these runtime overrides to `general.toml`:
+
+- `save_debug_plots=false`, `verbose=false`, `print_to_console=false`,
+  `jupyter_notebook_flag=false`, and `flip_for_display=true` are enforced,
+  including when different values are supplied in `overrides`.
+- `use_deterministic_algorithms` defaults to `false` in pipelines. An explicit
+  value in `overrides` is honored; the value in `general.toml` is superseded.
+- The `device` and `output_root` pipeline arguments determine the runtime device
+  and output location, taking precedence over matching TOML or `overrides`
+  entries. Their defaults are defined at the top of each pipeline script.
+
+These pipeline conventions do not change notebook or direct-solver defaults.
+The common log and tensor flags retain the configurable behavior described above.
+
+`reconstruction_seconds` measures solver construction, optimization, and text
+logging using `perf_counter`, with CUDA synchronized before and after. This
+includes log formatting, diagnostic reductions, scalar synchronization, and
+file writes/close (normal filesystem caching, without forcing disk persistence). It excludes input
+loading, sensitivity estimation, motion binning, postprocessing, CPU transfers,
+and tensor/DICOM exports. Log-only motion norms are transferred together to
+avoid two separate GPU scalar synchronizations. Per-step times in the text log
+are host-clock diagnostics; the synchronized outer timer is the authoritative
+GPU reconstruction measurement. The 3D result reports preprocessing, transfer, and export times
+separately. T2 reports each slice's preprocessing/solver/postprocessing times,
+`reconstruction_seconds_sum` (the sum of solver times, not parallel wall time),
+and `compute_wall_seconds` (slice preparation, reconstruction, postprocessing,
+worker startup and transfers, excluding exports). `pipeline_seconds` includes
+loading and exports through the end of export; manifest `elapsed_s` also
+includes final metadata bookkeeping.
+
+T2 loads the source once and uses forked CPU workers with one PyTorch
+intra-op thread per worker. `max_workers=1` runs directly in the caller; GPU slice
+reconstruction uses that sequential path. All reconstructed slices remain in
+memory until computation finishes so tensor/DICOM exports cannot overlap another
+slice's timed reconstruction. Keep worker counts fixed when comparing timings.
+Repeated calls create distinct run directories.
+
 ## Configuration
 
 - `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
@@ -246,7 +353,7 @@ For real data with generated sampling, configured shot counts are preserved and 
 Every notebook and the Siemens pipeline creates a timestamped directory under `output_root/workflow_label/`, configured in `config/general.toml` (`output_root="runs"` by default).
 
 ```text
-runs/<workflow_label>/YYYYMMDDTHHMMSS/
+runs/<workflow_label>/<unique-run-id>/
 ├── manifest.json
 ├── config_resolved.json
 ├── reconstructions/
@@ -273,13 +380,50 @@ runs/<workflow_label>/YYYYMMDDTHHMMSS/
         └── slice_001.dcm
 ```
 
-`image_reconstructed.pt` is the complex reconstruction before reference-image normalization and zero-filling, preserving the repetition dimension. Its PNG shows the magnitude of the repetition mean; individual repetition previews are also saved when multiple repetitions exist. In the Siemens pipeline, `image_postprocessed.pt` contains the complex image after configured reference-image normalization and zero-filling, still preserving repetitions. It is saved only when both saving flags below are enabled. DICOM export uses the magnitude of the repetition mean with DICOM intensity scaling. Motion overlays use the reconstruction grid.
+In notebooks and direct solver runs, `image_reconstructed.pt` is the complex
+reconstruction before reference-image normalization and zero-filling, preserving
+the repetition dimension. Its PNG shows the magnitude of the repetition mean;
+individual repetition previews are also saved when multiple repetitions exist.
+The callable Siemens pipelines instead save only the final image and motion
+tensors and GRICS text logs, with no preview or intermediate tensors. T2's final image
+includes configured reference-image normalization and zero-filling. DICOM export
+uses the magnitude of the repetition mean with DICOM intensity scaling. Motion
+maps retain the reconstruction grid.
 
-Saving flags:
+Common output flags are defined under `[runtime]` in `config/general.toml` and
+validated by `load_config` for all entry points:
 
-- `save_debug_plots=true`: save preprocessing figures. Per-level reconstruction diagnostics, residual plots, and pipeline postprocessing tensors additionally require `save_reconstruction_outputs=true`.
-- `save_reconstruction_outputs=true`: save reconstruction tensors, final plots, and `reconstruction.log`. Turning it off does not disable explicitly requested DICOM export or preprocessing diagnostics.
-- `check_simulated_motion_consistency`: controls the simulated-motion numerical check; its figure additionally requires `save_debug_plots=true`.
+```toml
+save_reconstruction_logs = true
+save_reconstruction_tensors = true
+save_debug_plots = true
+```
+
+- `save_reconstruction_logs`: write `reconstruction.log`, independently of tensors and plots.
+- `save_reconstruction_tensors`: save the final image and motion `.pt` files, independently of logs and plots.
+- `save_debug_plots`: save preprocessing, per-level, residual, and final preview/motion figures, independently of logs and tensors.
+
+All three flags can be set through `load_config(overrides={...})` in notebooks
+and scripts. `JointReconstructor.run()` reads these settings directly. The old
+combined `save_reconstruction_outputs` setting has been removed; migrate custom
+configuration files to the common flags above. The pipeline-only `save_outputs`
+argument has likewise been replaced with `save_reconstruction_tensors`.
+
+The Siemens pipelines disable plots and defer tensor exports until computation
+finishes by calling `JointReconstructor.run(defer_tensor_export=True)`. This
+execution option leaves the common saving flags unchanged, so the text log,
+resolved configuration, and metadata agree. The log explicitly identifies
+deferred exports; metadata records `tensor_export` as `deferred` until the
+pipeline takes responsibility for export (`pipeline`), or `disabled` when tensor
+saving is off. Direct solver exports use `solver`. Enabled text logs are still written inside the measured reconstruction
+call. Their `return_tensors` option controls returning tensors in memory, separately
+from saving them to disk. Run/configuration metadata and explicitly requested
+DICOM exports have their own lifecycle. Preprocessing and reconstruction metadata
+are recorded regardless of the log/tensor/plot flags, including when all three
+are disabled. Metadata writes inside reconstruction are included in its timing.
+
+`check_simulated_motion_consistency` controls the simulated-motion numerical check;
+its figure additionally requires `save_debug_plots=true`.
 
 To remove inactive run outputs under the configured `output_root`:
 

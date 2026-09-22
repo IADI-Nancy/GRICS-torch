@@ -107,18 +107,20 @@ class JointReconstructionLogger:
         self.motion_plot_context = motion_plot_context or {}
         self.iterations_per_level = iterations_per_level
         self._progress = None
-        self.enabled = bool(params.save_reconstruction_outputs)
+        self.tensor_enabled = params.save_reconstruction_tensors
+        self.log_enabled = params.save_reconstruction_logs
+        self.plot_enabled = params.save_debug_plots
         n_levels = len(iterations_per_level)
         self.run_log = (
             _init_run_logging(params, n_levels, iterations_per_level)
-            if self.enabled else {
+            if self.log_enabled else {
                 "recon_residuals_by_level": [[] for _ in range(n_levels)],
                 "motion_residuals_by_level": [[] for _ in range(n_levels)],
             }
         )
 
     def append(self, message=""):
-        if self.enabled:
+        if self.log_enabled:
             _append_run_log(self.run_log, message)
 
     def progress(self, level_index, level_iterations, level_count):
@@ -219,15 +221,24 @@ class JointReconstructionLogger:
             yield index
 
     def record_residual(self, relative_residual):
+        if not (self.plot_enabled or self.log_enabled):
+            return
         self.run_log["recon_residuals_by_level"][self._level_index].append(relative_residual)
         self.show_residual(self._progress, relative_residual)
 
     def iteration_finished(self, result, relative_residual, image_cg_info, motion_cg_info):
+        if not (self.plot_enabled or self.log_enabled):
+            self.update_progress(self._progress)
+            return
         relative_motion_update = None
         motion_update_norm = None
         if result.motion_update is not None:
-            motion_update_norm = torch.linalg.norm(result.motion_update.flatten()).item()
-            motion_norm = torch.linalg.norm(result.motion.flatten()).item()
+            # Transfer both diagnostic scalars together instead of synchronizing
+            # the GPU separately for each .item() call.
+            motion_update_norm, motion_norm = torch.stack((
+                torch.linalg.norm(result.motion_update.flatten()),
+                torch.linalg.norm(result.motion.flatten()),
+            )).tolist()
             relative_motion_update = motion_update_norm / (motion_norm + 1e-12)
             self.run_log["motion_residuals_by_level"][self._level_index].append(relative_motion_update)
         self._write_iteration(
@@ -238,7 +249,7 @@ class JointReconstructionLogger:
         self.update_progress(self._progress)
 
     def level_finished(self, data):
-        if self.enabled and self.params.save_debug_plots:
+        if self.plot_enabled:
             level_folder = str(Path(self.params.debug_folder) / f'level_{self._level_index + 1:02d}')
             show_and_save_image(
                 data["ReconstructedImage"][0], "image_reconstructed",
@@ -252,11 +263,11 @@ class JointReconstructionLogger:
 
     def run_finished(self):
         self.append(f"Total time of reconstruction run: {time.perf_counter() - self._run_started:.6f} s")
-        if self.enabled and self.params.save_debug_plots:
+        if self.plot_enabled:
             _save_run_residual_plots(str(Path(self.params.debug_folder) / "residuals"), self.run_log)
 
-    def save_final_outputs(self, image, motion):
-        """Save final reconstructed images and motion diagnostics."""
+    def save_final_outputs(self, image, motion, *, defer_tensor_export=False):
+        """Record metadata unconditionally; save configured tensors/plots separately."""
         if hasattr(self.params, 'reconstruction_folder'):
             image_axes = ['nex', 'x', 'y'] + (['z'] if image.ndim == 4 else [])
             motion_axes = (['component', 'motion_state'] if self.params.reconstruction_motion_type == 'rigid'
@@ -268,13 +279,19 @@ class JointReconstructionLogger:
                                   motion_grid='reconstruction',
                                   motion_type=self.params.reconstruction_motion_type,
                                   image_stage='before_postprocessing', status='reconstructed',
+                                  tensor_export=('deferred' if defer_tensor_export else 'solver')
+                                  if self.tensor_enabled else 'disabled',
                                   preview_repetition_reduction='mean' if image.shape[0] > 1 else 'none')
-        if not self.enabled:
+        write_tensors = self.tensor_enabled and not defer_tensor_export
+        if not (write_tensors or self.plot_enabled):
             return
         folder = Path(self.params.results_folder)
         folder.mkdir(parents=True, exist_ok=True)
-        torch.save(image.detach().cpu(), folder / 'image_reconstructed.pt')
-        torch.save(motion.detach().cpu(), folder / 'motion_parameters.pt')
+        if write_tensors:
+            torch.save(image.detach().cpu(), folder / 'image_reconstructed.pt')
+            torch.save(motion.detach().cpu(), folder / 'motion_parameters.pt')
+        if not self.plot_enabled:
+            return
         if image.shape[0] == 1:
             show_and_save_image(image[0], "image_reconstructed", self.params.results_folder,
                 flip_for_display=self.params.flip_for_display)

@@ -14,8 +14,6 @@ GN_iterations_per_level = [10, 4, 4]
 update_motion_on_final_iteration = false
 # true stops a resolution level when its image residual increases.
 gn_early_stopping = true
-# Save reconstruction tensors, final figures, and logs; diagnostics also require save_debug_plots.
-save_reconstruction_outputs = true
 
 # Enable stopping after consecutive updates too small to change the CG iterate.
 cg_stop_on_stagnation = true
