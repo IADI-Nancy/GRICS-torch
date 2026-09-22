@@ -30,31 +30,6 @@ RUNTIME_DEVICE = "cpu"
 MAX_WORKERS = None
 RECONSTRUCT_SLICE_START = 0
 RECONSTRUCT_SLICE_STOP = None
-JUPYTER_NOTEBOOK_FLAG = False
-# Save diagnostic motion, acquisition-order, and reconstruction figures.
-SAVE_DEBUG_PLOTS = False
-# Request deterministic PyTorch/cuDNN algorithms independently of the random seed.
-USE_DETERMINISTIC_ALGORITHMS = False
-
-
-# Each process reconstructs one slice, so numerical libraries must not create
-# additional thread pools inside every worker.
-_THREAD_ENV = {
-    "OMP_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": "1",
-    "OPENBLAS_NUM_THREADS": "1",
-    "NUMEXPR_NUM_THREADS": "1",
-    "VECLIB_MAXIMUM_THREADS": "1",
-    "BLIS_NUM_THREADS": "1",
-    "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": "1",
-    "SimpleITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": "1",
-    "KMP_BLOCKTIME": "0",
-    "OMP_DYNAMIC": "FALSE",
-    "MKL_DYNAMIC": "FALSE",
-}
-for _key, _value in _THREAD_ENV.items():
-    os.environ.setdefault(_key, _value)
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -64,13 +39,15 @@ from src.utils.ismrmrd_io import acquisition_header
 import torch
 
 from src.preprocessing.DataLoader import DataLoader
-from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.runtime_config import load_config, load_postprocessing_config
 from src.runtime.runtime_setup import initialize_runtime
-from src.runtime.output_layout import managed_execution, bind_output_paths, record_reconstruction
+from src.runtime.output_layout import managed_execution, bind_output_paths, public_config
 from src.utils.dicom_export import write_reconstruction_dicom
-from src.utils.plotting import show_and_save_image
 from src.utils.zero_fill import zero_fill_grics_image_to_shape
+from pipelines._execution import (
+    reconstruction_overrides, timed_reconstruction, synchronize,
+    export_reconstruction, finish_run,
+)
 
 
 # With the fork start method, workers inherit this read-only source dataset
@@ -78,7 +55,7 @@ from src.utils.zero_fill import zero_fill_grics_image_to_shape
 LOADED_DATA = None
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Load breast T2 raw data once, then reconstruct all slices in parallel."
     )
@@ -106,8 +83,15 @@ def parse_args() -> argparse.Namespace:
             "are provided, this must be different from the Siemens source series number."
         ),
     )
-    return parser.parse_args()
-
+    parser.add_argument('--output-root', type=Path, default=OUTPUT_ROOT)
+    parser.add_argument('--device', choices=('cpu', 'gpu'), default=RUNTIME_DEVICE)
+    parser.add_argument('--max-workers', type=int, default=MAX_WORKERS)
+    parser.add_argument('--slice-start', type=int, default=RECONSTRUCT_SLICE_START)
+    parser.add_argument('--slice-stop', type=int, default=RECONSTRUCT_SLICE_STOP)
+    parser.add_argument('--save-reconstruction-tensors', action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument('--no-dicom', action='store_true', help='Skip DICOM export.')
+    parser.add_argument('--save-reconstruction-logs', action=argparse.BooleanOptionalAction, default=None)
+    return parser.parse_args(argv)
 
 
 
@@ -128,34 +112,25 @@ def require_existing_file(path: Path, name: str) -> None:
         raise FileNotFoundError(f"{name} does not exist: {path}")
 
 
-def output_overrides() -> dict:
-    return {
-        "jupyter_notebook_flag": JUPYTER_NOTEBOOK_FLAG,
-        "flip_for_display": True,
-        "output_root": str(OUTPUT_ROOT.parent),
-        "workflow_label": OUTPUT_ROOT.name,
-        "runtime_device": RUNTIME_DEVICE,
-        "save_debug_plots": SAVE_DEBUG_PLOTS,
-        "use_deterministic_algorithms": USE_DETERMINISTIC_ALGORITHMS,
-        "verbose": False,
-        "print_to_console": False,
-    }
-
-
-def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
+def load_all_slices(raw_data_file: Path, saec_file: Path, *, output_root=OUTPUT_ROOT,
+                    device=RUNTIME_DEVICE, reconstruction_config=RECONSTRUCTION_CONFIG,
+                    postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
+                    save_reconstruction_logs=None, save_reconstruction_tensors=None) -> DataLoader:
     """Load the acquisition once, without running the per-slice preprocessing."""
     require_existing_file(raw_data_file, "raw_data_file")
     require_existing_file(saec_file, "saec_file")
     data_type = data_type_from_raw_data_file(raw_data_file)
     params = load_config(
         data_type=data_type,
-        reconstruction_config=RECONSTRUCTION_CONFIG,
-        coil_sensitivity_config="config/coil_sensitivity/odille_spline.toml",
-        real_data_config=("config/real_data/saec.toml" if data_type.endswith("-saec") else None),
-        ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml",
-        overrides=output_overrides(),
+        reconstruction_config=REPO_ROOT / reconstruction_config,
+        coil_sensitivity_config=REPO_ROOT / "config/coil_sensitivity/odille_spline.toml",
+        real_data_config=REPO_ROOT / "config/real_data/saec.toml",
+        ismrmrd_reader_config=REPO_ROOT / "config/real_data/ismrmrd_reader.toml",
+        overrides=reconstruction_overrides(
+            output_root, device, overrides, save_reconstruction_logs=save_reconstruction_logs,
+            save_reconstruction_tensors=save_reconstruction_tensors),
     )
-    postprocessing = load_postprocessing_config(POSTPROCESSING_CONFIG)
+    postprocessing = load_postprocessing_config(REPO_ROOT / postprocessing_config)
     if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
         raise ValueError("Reference-image normalization requires coil_sensitivity_method='odille-spline'.")
     sp_device, t_device = initialize_runtime(params)
@@ -171,17 +146,12 @@ def load_all_slices(raw_data_file: Path, saec_file: Path) -> DataLoader:
     return data
 
 
-def selected_slices(nslices: int) -> list[int]:
+def selected_slices(nslices: int, start=0, stop=None) -> list[int]:
     """Resolve and validate the configured half-open slice range."""
-    start = RECONSTRUCT_SLICE_START
-    stop = RECONSTRUCT_SLICE_STOP if RECONSTRUCT_SLICE_STOP is not None else nslices
+    stop = nslices if stop is None else stop
     if start < 0 or stop < start or stop > nslices:
         raise ValueError(f"Invalid slice range [{start}, {stop}) for {nslices} slices.")
     return list(range(start, stop))
-
-
-def set_worker_output_folders(data: DataLoader, slice_output_dir: Path) -> None:
-    bind_output_paths(data.params, slice_output_dir)
 
 
 def grics_reference_image_for_normalization(data: DataLoader, image: torch.Tensor) -> torch.Tensor:
@@ -212,7 +182,7 @@ def grics_reference_image_for_normalization(data: DataLoader, image: torch.Tenso
 def normalize_reconstruction_by_grics_reference(
     image: torch.Tensor,
     reference_image: torch.Tensor,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
     if tuple(image.shape) != tuple(reference_image.shape):
         raise ValueError(
             "GRICS reference normalization requires matching image shapes: "
@@ -221,92 +191,41 @@ def normalize_reconstruction_by_grics_reference(
 
     reference_magnitude = torch.abs(reference_image).to(device=image.device, dtype=image.real.dtype)
     threshold = 1.0 * torch.mean(reference_magnitude)
-    below_threshold = reference_magnitude < threshold
-    print(
-        "[normalize] reference clamp: "
-        f"min={float(torch.min(reference_magnitude).item()):.6g}, "
-        f"mean={float(torch.mean(reference_magnitude).item()):.6g}, "
-        f"max={float(torch.max(reference_magnitude).item()):.6g}, "
-        f"threshold={float(threshold.item()):.6g}, "
-        f"clamped={100.0 * float(torch.mean(below_threshold.to(torch.float64)).item()):.3f}%",
-        flush=True,
-    )
     reference_magnitude = torch.clamp(reference_magnitude, min=threshold)
     return image / reference_magnitude, reference_magnitude
 
 
-def reconstruct_slice(slice_idx: int) -> dict:
-    """Preprocess and reconstruct one slice inside a worker process."""
-    if LOADED_DATA is None:
-        raise RuntimeError("LOADED_DATA is not initialized in the worker process.")
-
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-
-    output_root = Path(LOADED_DATA.params.run_folder)
-    slice_output_dir = output_root / "reconstructions" / f"slice_{slice_idx + 1:03d}"
-    slice_output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Isolate mutable slice state while retaining the large inherited source tensors.
-    data = copy.copy(LOADED_DATA)
-    data.params = copy.copy(LOADED_DATA.params)
-    set_worker_output_folders(data, slice_output_dir)
+def reconstruct_slice(slice_idx: int, source=None) -> dict:
+    """Compute one slice in memory. Exports happen after all workers finish."""
+    source = source if source is not None else LOADED_DATA
+    if source is None:
+        raise RuntimeError("Source data is not initialized.")
+    data = copy.copy(source)
+    data.params = copy.copy(source.params)
+    bind_output_paths(data.params, Path(data.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+    started = time.perf_counter()
     data.run_slice_pipeline(slice_idx=slice_idx)
-
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [run] slice {slice_idx + 1:03d} starting reconstruction", flush=True)
-
-    reconstructor = JointReconstructor(
-        data.kspace,
-        data.smaps,
-        data.sampling_idx,
-        motion_signal=data.motion_signal,
-        params=data.params,
-        kspace_scale=data.kspace_scale,
-        motion_plot_context=data.motion_plot_context,
-    )
-
-    t0 = time.time()
-    image, alpha = reconstructor.run()
-    debug = data.params.save_debug_plots and data.params.save_reconstruction_outputs
-    post_dir = Path(data.params.debug_folder) / 'postprocessing'
+    synchronize(data.kspace.device)
+    preprocessing_seconds = time.perf_counter() - started
+    image, motion, reconstruction_seconds = timed_reconstruction(data)
+    started = time.perf_counter()
     if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
-        image, reference_denominator = normalize_reconstruction_by_grics_reference(image, reference_image)
-        if debug:
-            post_dir.mkdir(parents=True, exist_ok=True)
-            for name, tensor in [('reference_smoothed', reference_image),
-                                 ('reference_denominator', reference_denominator),
-                                 ('image_normalized', image)]:
-                torch.save(tensor.detach().cpu(), post_dir / f'{name}.pt')
-                show_and_save_image(tensor[0] if tensor.ndim == 3 else tensor,
-                                    name, str(post_dir), flip_for_display=data.params.flip_for_display)
-
-    target_shape, encoded_shape = LOADED_DATA.zero_fill_shapes
+        image, _ = normalize_reconstruction_by_grics_reference(image, reference_image)
+    target_shape, encoded_shape = source.zero_fill_shapes
     image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
-    if debug:
-        post_dir.mkdir(parents=True, exist_ok=True)
-        torch.save(image.detach().cpu(), post_dir / 'image_postprocessed.pt')
-        show_and_save_image(image.mean(dim=0), 'image_postprocessed', str(post_dir),
-                            flip_for_display=data.params.flip_for_display)
-    dicom_path = output_root / 'exports' / 'dicom' / f'slice_{slice_idx + 1:03d}.dcm'
-    write_reconstruction_dicom(
-        image, dicom_path, raw_data=LOADED_DATA, slice_index=slice_idx,
-        series_description='GRICS reconstruction RESEARCH ONLY',
-        images_in_acquisition=LOADED_DATA.export_slice_count,
-        series_number=LOADED_DATA.export_series_number,
-        reference_dicom_path=LOADED_DATA.export_reference,
-        **LOADED_DATA.export_uids)
-    elapsed_s = time.time() - t0
-    record_reconstruction(data.params, status='complete', elapsed_s=elapsed_s,
-                          postprocessed_shape=list(image.shape),
-                          postprocessing=vars(data.postprocessing),
-                          dicom_file=str(dicom_path.relative_to(output_root)),
-                          dicom_representation='magnitude of repetition mean, scaled to uint12')
+    synchronize(image.device)
+    postprocessing_seconds = time.perf_counter() - started
+    # NumPy transport avoids PyTorch multiprocessing shared-memory lifetime issues.
+    # Transfers and IPC are excluded from the per-slice solver timer.
     return {
-        'slice_idx': slice_idx, 'slice_number': slice_idx + 1, 'elapsed_s': elapsed_s,
-        'output_dir': str(slice_output_dir.relative_to(output_root)),
-        'dicom_file': str(dicom_path.relative_to(output_root)),
+        'slice_idx': slice_idx, 'slice_number': slice_idx + 1,
+        'image': image.detach().cpu().numpy(), 'motion': motion.detach().cpu().numpy(),
+        'preprocessing_seconds': preprocessing_seconds,
+        'reconstruction_seconds': reconstruction_seconds,
+        'postprocessing_seconds': postprocessing_seconds,
+        'image_stage': 'after_postprocessing',
+        '_configuration': public_config(data.params),
     }
 
 
@@ -345,127 +264,129 @@ def zero_fill_loaded_reconstruction(
     )
 
 
-def initialize_source_data(args: argparse.Namespace) -> DataLoader:
-    """Load source data and expose it to forked reconstruction workers."""
+def _initialize_worker(source):
     global LOADED_DATA
-    print(f"[load pid={os.getpid()}] Loading all slices with DataLoader...")
-    LOADED_DATA = load_all_slices(args.raw_data_file, args.saec_file)
-    LOADED_DATA.params._run_outputs.manifest['inputs'] = {
-        'raw_data_file': str(args.raw_data_file.resolve()), 'saec_file': str(args.saec_file.resolve())}
-    LOADED_DATA.params._run_outputs.manifest['postprocessing'] = vars(LOADED_DATA.postprocessing)
-    LOADED_DATA.params._run_outputs.snapshot(LOADED_DATA.params)
-    LOADED_DATA.params._run_outputs.flush()
-    print(
-        f"[load pid={os.getpid()}] Source data loaded once: "
-        f"kspace_shape={tuple(LOADED_DATA._source_kspace.shape)}, "
-        f"nslices={int(LOADED_DATA.Nz)}"
-    )
-    return LOADED_DATA
+    LOADED_DATA = source
+    torch.set_num_threads(1)
+    # Inter-op thread count can only be set once in a process; callers may have
+    # already used PyTorch before forking. Intra-op limiting is still effective.
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
 
 
-def reconstruct_slices_in_parallel(slice_indices: list[int]) -> tuple[list[dict], int]:
-    """Reconstruct the selected slices in separate forked processes."""
+def reconstruct_slices_in_parallel(source, slice_indices, max_workers=None):
     if not slice_indices:
         raise ValueError("At least one slice must be selected for reconstruction.")
-
-    max_workers = MAX_WORKERS or min(len(slice_indices), os.cpu_count() or 1)
-    max_workers = min(max_workers, len(slice_indices))
-    print(
-        f"[run pid={os.getpid()}] Reconstructing {len(slice_indices)} slices "
-        f"with {max_workers} forked workers."
-    )
-
-    results = []
-    context = mp.get_context("fork")
-    with ProcessPoolExecutor(max_workers=max_workers, mp_context=context) as executor:
-        futures = [executor.submit(reconstruct_slice, slice_idx) for slice_idx in slice_indices]
-        for future in as_completed(futures):
-            result = future.result()
-            results.append(result)
-            print(f"[run] slice {result['slice_number']:03d} finished in {result['elapsed_s']:.2f} s")
-
-    results.sort(key=lambda item: item["slice_idx"])
-    return results, max_workers
-
-
-def build_manifest(
-    args: argparse.Namespace,
-    raw_data: DataLoader,
-    slice_indices: list[int],
-    results: list[dict],
-    max_workers: int,
-    zero_filled_shape: tuple[int, int],
-    dicom_dir: Path,
-    dicom_uids: dict[str, str],
-    elapsed_s: float,
-) -> dict:
-    """Collect run provenance in a JSON-serializable dictionary."""
-    return {
-        "raw_data_file": str(args.raw_data_file),
-        "saec_file": str(args.saec_file),
-        "reconstruction_config": RECONSTRUCTION_CONFIG,
-        "postprocessing_config": POSTPROCESSING_CONFIG,
-        "output_root": ".",
-        "dicom_dir": str(dicom_dir.relative_to(Path(raw_data.params.run_folder))),
-        "dicom_uids": dicom_uids,
-        "dicom_header_dir": (
-            str(args.dicom_header_dir) if args.dicom_header_dir is not None else None
-        ),
-        "dicom_series_number": args.dicom_series_number,
-        "zero_filled_shape": zero_filled_shape,
-        "nslices": int(raw_data.Nz),
-        "selected_slices": slice_indices,
-        "max_workers": max_workers,
-        "runtime_device": raw_data.params.runtime_device,
-        "normalize_image_by_grics_reference": raw_data.postprocessing.normalize_image_by_grics_reference,
-        "elapsed_s": elapsed_s,
-        "slice_results": results,
-    }
+    if max_workers is not None and (isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers < 1):
+        raise ValueError("max_workers must be a positive integer or None.")
+    if source.params.runtime_device == 'gpu':
+        if max_workers not in (None, 1):
+            raise ValueError("GPU slice reconstruction requires max_workers=1.")
+        max_workers = 1
+    workers = min(max_workers or (os.cpu_count() or 1), len(slice_indices))
+    if workers == 1:
+        results = [reconstruct_slice(index, source) for index in slice_indices]
+    else:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('fork'),
+                                 initializer=_initialize_worker, initargs=(source,)) as executor:
+            futures = [executor.submit(reconstruct_slice, index) for index in slice_indices]
+            results = [future.result() for future in as_completed(futures)]
+    results.sort(key=lambda item: item['slice_idx'])
+    for result in results:
+        result['image'] = torch.from_numpy(result['image'])
+        result['motion'] = torch.from_numpy(result['motion'])
+    return results, workers
 
 
 @managed_execution
-def main() -> None:
-    """Run the Siemens breast T2 reconstruction and export pipeline."""
-    args = parse_args()
-    run_started_at = time.time()
+def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT,
+                 device=RUNTIME_DEVICE, max_workers=MAX_WORKERS,
+                 slice_start=RECONSTRUCT_SLICE_START, slice_stop=RECONSTRUCT_SLICE_STOP,
+                 reconstruction_config=RECONSTRUCTION_CONFIG,
+                 postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
+                 save_reconstruction_logs=None, save_reconstruction_tensors=None,
+                 return_tensors=True, export_dicom=False,
+                 dicom_header_dir=None, dicom_series_number=1001) -> dict:
+    """Reconstruct one acquisition using explicit settings and return its results.
 
-    # 1. Load the complete acquisition once for all forked slice workers.
-    raw_data = initialize_source_data(args)
-    slice_indices = selected_slices(int(raw_data.Nz))
+    reconstructions contains ordered per-slice CPU image/motion tensors, paths,
+    and solver times. Images include configured normalization and zero-filling;
+    motion tensors stay on the reconstruction grid. Slice range is half-open.
+    All final tensor/DICOM writes are deferred until every slice has finished.
+    Common save_reconstruction_logs/tensors flags control output independently;
+    None uses the TOML/overrides value. export_dicom is independent.
+    Text logs are written inside the solver timer; run/configuration metadata
+    is always saved.
+    """
+    started = time.perf_counter()
+    raw_data_file, saec_file = Path(raw_data_file), Path(saec_file)
+    data = load_all_slices(raw_data_file, saec_file, output_root=output_root, device=device,
+                           reconstruction_config=reconstruction_config,
+                           postprocessing_config=postprocessing_config, overrides=overrides,
+                           save_reconstruction_logs=save_reconstruction_logs,
+                           save_reconstruction_tensors=save_reconstruction_tensors)
+    data.params._run_outputs.manifest['inputs'] = {
+        'raw_data_file': str(raw_data_file.resolve()), 'saec_file': str(saec_file.resolve())}
+    indices = selected_slices(int(data.Nz), slice_start, slice_stop)
+    data.zero_fill_shapes = grics_zero_fill_shapes(data)
+    synchronize(data.kspace.device)
+    load_seconds = time.perf_counter() - started
+    compute_started = time.perf_counter()
+    results, workers = reconstruct_slices_in_parallel(data, indices, max_workers)
+    compute_wall_seconds = time.perf_counter() - compute_started
 
-    from pydicom.uid import generate_uid
-    raw_data.zero_fill_shapes = grics_zero_fill_shapes(raw_data)
-    raw_data.export_uids = {key: generate_uid() for key in
-                           ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
-    raw_data.export_reference = args.dicom_header_dir
-    raw_data.export_series_number = args.dicom_series_number
-    raw_data.export_slice_count = len(slice_indices)
-
-    # Workers save reconstruction results, then postprocess and export in memory.
-    results, max_workers = reconstruct_slices_in_parallel(slice_indices)
-
-    zero_filled_shape = raw_data.zero_fill_shapes[0]
-    output_root = Path(raw_data.params.run_folder)
-    dicom_dir = output_root / 'exports' / 'dicom'
-    dicom_uids = raw_data.export_uids
-
-    # 4. Save complete run provenance after all outputs have been produced.
-    elapsed_s = time.time() - run_started_at
-    manifest = build_manifest(
-        args,
-        raw_data,
-        slice_indices,
-        results,
-        max_workers,
-        zero_filled_shape,
-        dicom_dir,
-        dicom_uids,
-        elapsed_s,
+    export_started = time.perf_counter()
+    uids = {}
+    if export_dicom:
+        from pydicom.uid import generate_uid
+        uids = {key: generate_uid() for key in
+                ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
+    for result in results:
+        params = copy.copy(data.params)
+        vars(params).update(result.pop('_configuration'))
+        result['dicom_file'] = None
+        if export_dicom:
+            dicom_path = Path(data.params.run_folder) / 'exports/dicom' / f"slice_{result['slice_number']:03d}.dcm"
+            write_reconstruction_dicom(
+                result['image'], dicom_path, raw_data=data, slice_index=result['slice_idx'],
+                series_description='GRICS reconstruction RESEARCH ONLY',
+                images_in_acquisition=len(indices), series_number=dicom_series_number,
+                reference_dicom_path=Path(dicom_header_dir) if dicom_header_dir is not None else None,
+                **uids)
+            result['dicom_file'] = dicom_path
+        export_reconstruction(params, result)
+    timings = {
+        'load_seconds': load_seconds,
+        'compute_wall_seconds': compute_wall_seconds,
+        'reconstruction_seconds_sum': sum(item['reconstruction_seconds'] for item in results),
+        'export_seconds': time.perf_counter() - export_started,
+        'pipeline_seconds': time.perf_counter() - started,
+    }
+    return finish_run(
+        data, results, timings, return_tensors=return_tensors,
+        selected_slices=indices, max_workers=workers, postprocessing=vars(data.postprocessing),
+        export_dicom=export_dicom, dicom_uids=uids,
+        dicom_series_number=dicom_series_number if export_dicom else None,
+        dicom_header_dir=str(dicom_header_dir) if dicom_header_dir is not None else None,
+        compute_wall_timing='slice preprocessing, solver, postprocessing, worker startup and result transfer; excludes exports',
     )
-    raw_data.params._run_outputs.manifest.update(manifest)
-    raw_data.params._run_outputs.flush()
-    print(f"[run] Done in {elapsed_s:.2f} s. Manifest: {output_root / 'manifest.json'}")
 
 
-if __name__ == "__main__":
+def main(argv=None) -> dict:
+    args = parse_args(argv)
+    result = run_pipeline(
+        args.raw_data_file, args.saec_file, output_root=args.output_root, device=args.device,
+        max_workers=args.max_workers, slice_start=args.slice_start, slice_stop=args.slice_stop,
+        save_reconstruction_tensors=args.save_reconstruction_tensors,
+                          save_reconstruction_logs=args.save_reconstruction_logs, return_tensors=False, export_dicom=not args.no_dicom,
+        dicom_header_dir=args.dicom_header_dir, dicom_series_number=args.dicom_series_number,
+    )
+    print(f"[run] Compute wall time: {result['timings']['compute_wall_seconds']:.2f} s. "
+          f"Run: {result['run_folder']}")
+    return result
+
+
+if __name__ == '__main__':
     main()

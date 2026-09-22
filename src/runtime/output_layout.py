@@ -41,7 +41,7 @@ class RunOutputs:
         workflow_label = params.workflow_label
         if not workflow_label or Path(workflow_label).name != workflow_label or workflow_label in {'.', '..'}:
             raise ValueError('workflow_label must be a single directory name.')
-        run_id = datetime.now().strftime('%Y%m%dT%H%M%S')
+        run_id = datetime.now().strftime('%Y%m%dT%H%M%S%f') + '-' + uuid.uuid4().hex[:8]
         self.root = Path(params.output_root).expanduser().resolve() / workflow_label / run_id
         self.root.mkdir(parents=True, exist_ok=False)
         self._lock = (self.root / ".run.lock").open("a+b")

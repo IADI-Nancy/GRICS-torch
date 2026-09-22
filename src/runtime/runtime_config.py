@@ -50,7 +50,7 @@ _NONRIGID_MOTION_KEYS = {
 
 _PATH_KEYS = {'output_root', 'workflow_label', 'cache_root'}
 _RUNTIME_KEYS = {
-    'save_debug_plots', 'use_deterministic_algorithms', 'runtime_device', 'verbose', 'print_to_console',
+    'save_debug_plots', 'save_reconstruction_logs', 'save_reconstruction_tensors', 'use_deterministic_algorithms', 'runtime_device', 'verbose', 'print_to_console',
     'remove_temporary_data_after_run', 'cache_preprocessed_data', 'jupyter_notebook_flag', 'flip_for_display',
     'seed', 'seed_enabled',
 }
@@ -66,7 +66,7 @@ _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
-    'update_motion_on_final_iteration', 'gn_early_stopping', 'save_reconstruction_outputs',
+    'update_motion_on_final_iteration', 'gn_early_stopping',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
@@ -100,7 +100,7 @@ _BOOL_KEYS = {
     'print_raw_calibration_lines', 'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
-    'save_reconstruction_outputs', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
+    'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
 }
 
 
