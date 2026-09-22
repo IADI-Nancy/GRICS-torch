@@ -488,7 +488,7 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
         raise ValueError('physio_config is only valid for physiological text or array inputs.')
     if generic_physio_data:
         cfg.update(_load_toml_flat(
-            physio_config if physio_config is not None else root / 'real_data/physio.toml', 'physio'))
+            physio_config if physio_config is not None else root / 'real_data' / f"{data_type.split('-', 1)[1]}.toml", 'physio'))
     if data_type in SYNTHETIC_DATA_TYPES:
         path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
         if path is None:
