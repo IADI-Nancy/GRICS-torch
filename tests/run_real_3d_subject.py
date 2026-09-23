@@ -57,7 +57,7 @@ def run_test(subject_file: Path, *, device: str, output_root: Path,
         ismrmrd_file, saec_file, preprocessed_file=subject_file,
         output_root=output_root, device=device,
         save_reconstruction_logs=True, save_reconstruction_tensors=True,
-        return_tensors=True,
+        return_tensors=True, export_dicom=True,
     )
     require(len(result['reconstructions']) == 1, 'Expected exactly one reconstructed volume.')
     volume = result['reconstructions'][0]
@@ -78,6 +78,8 @@ def run_test(subject_file: Path, *, device: str, output_root: Path,
         path = volume[key]
         require(path is not None and path.is_file() and path.stat().st_size > 0,
                 f'Missing or empty {key}: {path}')
+    require(len(volume['dicom_files']) == image.shape[-1], 'Expected one DICOM per partition.')
+    require(all(path.is_file() for path in volume['dicom_files']), 'Missing DICOM export files.')
     run_folder = result['run_folder']
     manifest = json.loads((run_folder / 'manifest.json').read_text())
     config = json.loads((run_folder / 'config_resolved.json').read_text())
