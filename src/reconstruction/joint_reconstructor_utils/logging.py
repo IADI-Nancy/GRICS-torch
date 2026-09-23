@@ -191,6 +191,7 @@ class JointReconstructionLogger:
 
     def start_run(self):
         self._run_started = time.perf_counter()
+        print("[JointReconstructor] Started.", flush=True)
 
     def start_level(self, level_index, resolution):
         self._level_started = time.perf_counter()
@@ -262,9 +263,11 @@ class JointReconstructionLogger:
             f"{time.perf_counter() - self._level_started:.6f} s\n")
 
     def run_finished(self):
-        self.append(f"Total time of reconstruction run: {time.perf_counter() - self._run_started:.6f} s")
+        elapsed = time.perf_counter() - self._run_started
+        self.append(f"Total time of reconstruction run: {elapsed:.6f} s")
         if self.plot_enabled:
             _save_run_residual_plots(str(Path(self.params.debug_folder) / "residuals"), self.run_log)
+        print(f"[JointReconstructor] Finished in {elapsed:.2f} s.", flush=True)
 
     def save_final_outputs(self, image, motion, *, defer_tensor_export=False):
         """Record metadata unconditionally; save configured tensors/plots separately."""

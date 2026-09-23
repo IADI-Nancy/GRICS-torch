@@ -30,7 +30,8 @@ jupyter_notebook_flag = false
 flip_for_display = false
 # Print inner conjugate-gradient solver diagnostics.
 verbose = true
-# Print JointReconstructor progress to console.
+# Print detailed JointReconstructor progress to console.
+# Start/finish messages are always printed, including in notebook mode.
 print_to_console = true
 # Release generated cache files at execution end; false retains them for reuse.
 remove_temporary_data_after_run = true

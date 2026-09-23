@@ -435,7 +435,6 @@ class JointReconstructor:
             final_best_image = best_image
             final_best_motion = best_motion
 
-        logger.run_finished()
         if previous is None:
             raise RuntimeError("Reconstruction did not produce a valid image/motion solution.")
 
@@ -449,6 +448,7 @@ class JointReconstructor:
 
         image_unscaled = final_image * self.kspace_scale
         logger.save_final_outputs(image_unscaled, final_motion, defer_tensor_export=defer_tensor_export)
+        logger.run_finished()
         return image_unscaled, final_motion
 
     # ----------------------------------------------------------------------
