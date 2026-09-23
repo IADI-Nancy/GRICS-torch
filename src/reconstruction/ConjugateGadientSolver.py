@@ -24,7 +24,7 @@ class ConjugateGradientSolver:
         self.regularizer = regularizer
         self.regularization_shape = regularization_shape
         self.regularization_spatial_dims = regularization_spatial_dims
-        if self.regularizer in ("Tikhonov_gradient", "Tikhonov_laplacian"):
+        if self.regularizer == "Tikhonov_gradient":
             if self.regularization_shape is None:
                 raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
             if self.regularization_spatial_dims is None:
@@ -89,8 +89,6 @@ class ConjugateGradientSolver:
             return x
         elif self.regularizer == "Tikhonov_gradient":
             return self._gradient_op(x)
-        elif self.regularizer == "Tikhonov_laplacian":
-            return self._laplacian_op(x)
         else:
             raise ValueError("Unknown regularizer")
     
@@ -131,33 +129,6 @@ class ConjugateGradientSolver:
 
         return result.reshape(-1)
     
-    def _laplacian_op(self, x):
-        if self.regularization_shape is None:
-            raise ValueError("regularization_shape must be set for Tikhonov_laplacian regularization.")
-        field = x.view(*self.regularization_shape)
-        spatial_dims = self.regularization_spatial_dims
-        if spatial_dims is None:
-            raise ValueError("regularization_spatial_dims must be set for Tikhonov_laplacian regularization.")
-
-        # Guard: need at least 2 pixels in every spatial dimension.
-        for d in spatial_dims:
-            if field.shape[d] < 2:
-                return torch.zeros_like(field).reshape(-1)
-
-        result = torch.zeros_like(field)
-        for d in spatial_dims:
-            prev_idx = [slice(None)] * field.ndim
-            curr_idx = [slice(None)] * field.ndim
-            next_idx = [slice(None)] * field.ndim
-            inner_idx = [slice(None)] * field.ndim
-            prev_idx[d] = slice(None, -2)
-            curr_idx[d] = slice(1, -1)
-            next_idx[d] = slice(2, None)
-            inner_idx[d] = slice(1, -1)
-            result[tuple(inner_idx)] += (-field[tuple(prev_idx)] + 2 * field[tuple(curr_idx)] - field[tuple(next_idx)])
-        return result.reshape(-1)
-
-
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
