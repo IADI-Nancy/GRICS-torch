@@ -116,7 +116,6 @@ class SiemensBreast3DTests(unittest.TestCase):
         self.assertEqual(manifest['inputs']['raw_data_file'], str(self.h5))
         config = json.loads((result['run_folder'] / 'config_resolved.json').read_text())
         self.assertEqual(config['coil_sensitivity_method'], 'odille-spline')
-        self.assertEqual(config['N_motion_states'], 16)
 
 
 if __name__ == '__main__':

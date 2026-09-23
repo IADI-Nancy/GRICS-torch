@@ -56,13 +56,29 @@ class VolumeDicomTests(unittest.TestCase):
             self.assertEqual(ds.SliceThickness, 3)
             self.assertEqual(ds.SpacingBetweenSlices, 3)
             np.testing.assert_allclose(ds.PixelSpacing, [10, 10])
-            center = np.array([10, 20-(z-3.5)*3, 30])
+            center = np.array([10, 20+(z-3.5)*3, 30])
             expected_ipp = center - np.array([35, 0, 35])
             np.testing.assert_allclose(ds.ImagePositionPatient, expected_ipp)
             np.testing.assert_allclose(ds.ImageOrientationPatient, [0, 0, 1, 1, 0, 0])
             self.assertEqual(ds.pixel_array.shape, (8, 8))
             self.assertEqual(ds.pixel_array.max(), 4095)
         self.assertEqual(self.raw._source_slice_geometry[0]['position'], [10, 20, 30])
+
+    def test_axial_partition_pixels_follow_head_to_feet_positions(self):
+        slab = {'position': [0., 0., 0.], 'read_dir': [0., 1., 0.],
+                'phase_dir': [1., 0., 0.], 'slice_dir': [0., 0., 1.]}
+        self.raw._source_slice_geometry = {0: slab}
+        image = torch.zeros((1, 8, 8, 8), dtype=torch.complex128)
+        # Distinct asymmetric landmarks identify the native first and last planes.
+        image[0, 1, 2, 0] = 1
+        image[0, 3, 4, -1] = 1
+        paths, _ = write_volume_dicoms(image, self.root/'axial', self.raw)
+        first, last = (pydicom.dcmread(paths[i]) for i in (0, -1))
+        self.assertGreater(float(first.ImagePositionPatient[2]), float(last.ImagePositionPatient[2]))
+        self.assertAlmostEqual(float(first.ImagePositionPatient[2]), 10.5)
+        self.assertAlmostEqual(float(last.ImagePositionPatient[2]), -10.5)
+        self.assertEqual(np.unravel_index(first.pixel_array.argmax(), (8, 8)), (6, 5))
+        self.assertEqual(np.unravel_index(last.pixel_array.argmax(), (8, 8)), (4, 3))
 
     def test_donor_metadata_does_not_replace_partition_geometry(self):
         paths, _ = write_volume_dicoms(self.image, self.root/'donors', self.raw, series_number=12)

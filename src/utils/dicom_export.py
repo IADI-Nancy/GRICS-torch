@@ -81,7 +81,7 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     """Export [Nex, Nx, Ny, Nz] as a single-frame MR series on its native grid.
 
     Siemens 3D acquisition positions describe the slab center, not kz partitions.
-    Expand that center along slice_dir using encoded z FOV (no z crop is applied
+    Expand that center opposite slice_dir using encoded z FOV (no z crop is applied
     by the reconstruction pipeline). Donors provide public metadata, while the
     reconstructed grid supplies geometry, including when donor resolution differs.
     """
@@ -111,8 +111,11 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     if not np.isfinite(fov_z) or fov_z <= 0:
         raise ValueError('3D DICOM export requires a positive encoded z field of view.')
     spacing = fov_z / nz
+    # Match the Siemens spatial reversal already applied to x/y in the frame
+    # exporter. Associate native z planes with decreasing scanner coordinates;
+    # changing filenames or InstanceNumber alone would not fix patient geometry.
     geometries = {
-        z: {**slab, 'position': (center + (z - (nz - 1) / 2) * spacing * direction).tolist(),
+        z: {**slab, 'position': (center - (z - (nz - 1) / 2) * spacing * direction).tolist(),
             'slice_thickness': spacing}
         for z in range(nz)
     }

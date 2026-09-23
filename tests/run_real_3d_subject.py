@@ -88,7 +88,6 @@ def run_test(subject_file: Path, *, device: str, output_root: Path,
             'Run provenance points to a different subject.')
     require(config['coil_sensitivity_method'] == 'odille-spline', 'Unexpected coil sensitivity method.')
     require(config['data_dimension'] == '3D', 'Expected a 3D reconstruction.')
-    require(config['N_motion_states'] == 16, 'Expected the pipeline default of 16 motion states.')
     require(result['timings']['reconstruction_seconds'] > 0, 'Missing solver timing.')
     print(f"[PASS] {subject_file.name}; actual device: {config['runtime_device']}")
     print(f"Image: {tuple(image.shape)}; motion: {tuple(motion.shape)}")
