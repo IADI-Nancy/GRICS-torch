@@ -401,7 +401,6 @@ class DataLoader:
         self.kspace = self.kspace / self.kspace_scale
         if self.reference_kspace is not None:
             self.reference_kspace = self.reference_kspace / self.kspace_scale
-        print(f"[DataLoader] k-space normalized ({self.params.kspace_norm_mode}), "f"scale={self.kspace_scale:.6e}")
 
     def _save_initial_data(self):
         folder = self.params.initial_data_folder
