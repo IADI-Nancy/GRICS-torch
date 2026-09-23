@@ -1,5 +1,8 @@
 [coil_sensitivity]
 # Estimate sensitivity maps with ESPIRiT.
+# "espirit" requires espirit_calibration_width, espirit_kernel_width and espirit_max_iter.
+# Omit spline_magnitude_smoothing, spline_phase_smoothing and coil_sensitivity_eps.
+# Switch the whole coil-sensitivity config when changing methods.
 coil_sensitivity_method = "espirit"
 # Square/cubic calibration region width; must fit every encoded spatial axis.
 espirit_calibration_width = 48
