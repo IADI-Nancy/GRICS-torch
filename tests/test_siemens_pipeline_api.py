@@ -6,10 +6,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import h5py
 import numpy as np
 import torch
 
 from pipelines import _execution, siemens_breast_T2 as pipeline
+from pipelines import siemens_breast_T2, siemens_breast_3d_lowres
+from pipelines._inputs import resolve_input_files
 from src.preprocessing.DataLoader import DataLoader
 
 
@@ -20,7 +23,8 @@ class SiemensT2APITests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.raw, self.saec = self.root / 'subject.mrd', self.root / 'subject.saec'
-        self.raw.touch()
+        with h5py.File(self.raw, "w") as f:
+            f.create_group("dataset")
         self.saec.touch()
         n = 8
         rng = np.random.default_rng(2)
@@ -31,6 +35,7 @@ class SiemensT2APITests(unittest.TestCase):
             'idx_kz': np.zeros((2, n), dtype=np.int64),
             'idx_nex': np.zeros((2, n), dtype=np.int64),
         }
+        self.arrays = arrays
         # Replace only raw-file decoding; preprocessing and both solvers are real.
         def read_fixture(loader, *args, **kwargs):
             loader._ingest_realworld_arrays(arrays)
@@ -80,6 +85,19 @@ class SiemensT2APITests(unittest.TestCase):
         self.assertEqual(len(selected['reconstructions']), 1)
         self.assertNotIn('image', selected['reconstructions'][0])
         self.assertFalse(list(selected['run_folder'].rglob('*.pt')))
+
+    def test_preprocessed_input_reconstructs_slices(self):
+        prepared = self.root / 'prepared.h5'
+        with h5py.File(prepared, 'w') as f:
+            for key, value in self.arrays.items():
+                f[key] = value
+        result = pipeline.run_pipeline(preprocessed_file=prepared, max_workers=1, **self.options)
+        self.assertEqual([item['slice_idx'] for item in result['reconstructions']], [0, 1])
+        for item in result['reconstructions']:
+            self.assertTrue(torch.isfinite(item['image']).all())
+        manifest = json.loads((result['run_folder'] / 'manifest.json').read_text())
+        self.assertEqual(manifest['inputs']['raw_data_file'], str(prepared))
+        self.assertIsNone(manifest['inputs']['saec_file'])
 
     def test_exports_follow_all_reconstructions(self):
         original = pipeline.timed_reconstruction
@@ -139,6 +157,54 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(events, ['sync', 'clock', 'construct', 'run', 'sync', 'clock'])
         self.assertEqual((image, motion), (1, 2))
         self.assertGreater(elapsed, 0)
+
+
+class PipelineInputTests(unittest.TestCase):
+    def test_selection_and_classification(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            preferred, raw, saec = root / 'prepared.h5', root / 'raw.dat', root / 'raw.saec'
+            raw.touch()
+            saec.touch()
+            self.assertEqual(resolve_input_files(raw, saec, preferred), (raw, saec))
+            with h5py.File(preferred, 'w') as f:
+                f['kspace'] = np.zeros((1, 1, 2, 2, 2))
+                for key in ('motion_data', 'idx_ky', 'idx_kz', 'idx_nex'):
+                    f[key] = np.zeros((4, 1))
+            self.assertEqual(resolve_input_files(root / 'missing.dat', root / 'missing.saec', preferred),
+                             (preferred, None))
+            for pipeline in (siemens_breast_T2, siemens_breast_3d_lowres):
+                with self.subTest(pipeline=pipeline.__name__):
+                    self.assertEqual(pipeline.data_type_from_raw_data_file(preferred), 'preprocessed-real')
+                    self.assertEqual(pipeline.data_type_from_raw_data_file(raw, saec), 'siemens-saec')
+                    mrd = root / 'raw.mrd'
+                    with h5py.File(mrd, 'w') as f:
+                        f.create_group('dataset')
+                    self.assertEqual(pipeline.data_type_from_raw_data_file(mrd, saec), 'ismrmrd-saec')
+                    args = pipeline.parse_args([str(raw), str(saec), '--preprocessed-file', str(preferred)])
+                    self.assertEqual(args.preprocessed_file, preferred)
+                    self.assertIsNone(pipeline.parse_args([str(preferred)]).saec_file)
+                    loader = 'load_all_slices' if pipeline is siemens_breast_T2 else 'load_volume'
+                    with patch.object(pipeline, loader, side_effect=RuntimeError('selected')) as load:
+                        with self.assertRaisesRegex(RuntimeError, 'selected'):
+                            pipeline.run_pipeline(raw, saec, preprocessed_file=preferred)
+                        self.assertEqual(load.call_args.args, (preferred, None))
+                        preferred.unlink()
+                        with self.assertRaisesRegex(RuntimeError, 'selected'):
+                            pipeline.run_pipeline(raw, saec, preprocessed_file=preferred)
+                        self.assertEqual(load.call_args.args, (raw, saec))
+                    with h5py.File(preferred, 'w') as f:
+                        f['kspace'] = np.zeros((1, 1, 2, 2, 2))
+                        for key in ('motion_data', 'idx_ky', 'idx_kz', 'idx_nex'):
+                            f[key] = np.zeros((4, 1))
+            with h5py.File(preferred, 'w') as f:
+                f['kspace'] = np.zeros((1, 1, 2, 2, 2))
+            with self.assertRaisesRegex(ValueError, 'missing datasets'):
+                resolve_input_files(raw, saec, preferred)
+            preferred.unlink()
+            with self.assertRaisesRegex(ValueError, 'Provide raw_data_file'):
+                resolve_input_files(None, preprocessed_file=preferred)
+
 
 
 if __name__ == '__main__':

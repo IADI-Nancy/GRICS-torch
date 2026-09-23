@@ -4,6 +4,12 @@
 Examples:
     python pipelines/siemens_breast_3d_lowres.py subject.dat subject.saec
     python pipelines/siemens_breast_3d_lowres.py subject.h5
+
+Preprocessed input with raw fallback:
+    python pipelines/siemens_breast_3d_lowres.py subject.dat subject.saec --preprocessed-file prepared.h5
+    python pipelines/siemens_breast_3d_lowres.py subject.mrd subject.saec --preprocessed-file prepared.h5
+Preprocessed input only:
+    python pipelines/siemens_breast_3d_lowres.py prepared.h5
 """
 from __future__ import annotations
 
@@ -22,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import h5py
+from pipelines._inputs import data_type_from_raw_data_file as classify_input, resolve_input_files
 
 from src.preprocessing.DataLoader import DataLoader
 from src.runtime.runtime_config import load_config
@@ -37,13 +43,14 @@ from pipelines._execution import (
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "raw_data_file", type=Path,
+        "raw_data_file", type=Path, nargs="?",
         help="One Siemens .dat, ISMRMRD .h5/.mrd, or preprocessed .h5 volume.",
     )
     parser.add_argument(
         "saec_file", type=Path, nargs="?",
         help="SAEC physiological file; required for Siemens/ISMRMRD input, omitted for preprocessed HDF5.",
     )
+    parser.add_argument('--preprocessed-file', type=Path, help='Preferred preprocessed HDF5; use raw_data_file and SAEC if missing.')
     parser.add_argument('--output-root', type=Path, default=OUTPUT_ROOT)
     parser.add_argument('--device', choices=('cpu', 'gpu'), default=RUNTIME_DEVICE)
     parser.add_argument('--save-reconstruction-tensors', action=argparse.BooleanOptionalAction, default=None)
@@ -51,33 +58,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def require_existing_file(path: Path, name: str) -> None:
-    if not path.is_file():
-        raise FileNotFoundError(f"{name} does not exist or is not a file: {path}")
-
-
-def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None) -> str:
-    require_existing_file(raw_data_file, "raw_data_file")
-    suffix = raw_data_file.suffix.lower()
-    if suffix not in {".dat", ".h5", ".mrd"}:
-        raise ValueError("raw_data_file must be a Siemens .dat or HDF5/ISMRMRD .h5/.mrd file.")
-    if suffix in {".h5", ".mrd"}:
-        with h5py.File(raw_data_file, "r") as source:
-            if "kspace" in source:
-                if saec_file is not None:
-                    raise ValueError("Preprocessed HDF5 already contains physiology; omit saec_file.")
-                required = {"kspace", "motion_data", "idx_ky", "idx_kz", "idx_nex"}
-                missing = required - set(source)
-                if missing:
-                    raise ValueError(f"Preprocessed HDF5 is missing datasets: {sorted(missing)}")
-                shape = source["kspace"].shape
-                if len(shape) != 5 or any(size < 1 for size in shape) or shape[-1] <= 1:
-                    raise ValueError(f"Expected 3D kspace [coils, repetitions, Nx, Ny, Nz], got {shape}.")
-                return "preprocessed-real"
-    if saec_file is None:
-        raise ValueError("saec_file is required for Siemens/ISMRMRD raw input.")
-    require_existing_file(saec_file, "saec_file")
-    return "siemens-saec" if suffix == ".dat" else "ismrmrd-saec"
+def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = None) -> str:
+    return classify_input(raw_data_file, saec_file, dimension="3D")
 
 
 def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
@@ -116,11 +98,12 @@ def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
 
 
 @managed_execution
-def run_pipeline(raw_data_file, saec_file=None, *, output_root=OUTPUT_ROOT,
+def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, output_root=OUTPUT_ROOT,
                  device=RUNTIME_DEVICE, reconstruction_config=RECONSTRUCTION_CONFIG,
                  overrides=None, save_reconstruction_logs=None, save_reconstruction_tensors=None, return_tensors=True) -> dict:
     """Reconstruct one volume without changing module globals or reading sys.argv.
 
+    preprocessed_file is preferred when present; otherwise raw_data_file and SAEC are used.
     Returns run_folder, timings, and a one-element reconstructions list containing
     CPU image/motion tensors, output paths and reconstruction_seconds.
     Common save_reconstruction_logs/tensors flags control output independently.
@@ -129,8 +112,7 @@ def run_pipeline(raw_data_file, saec_file=None, *, output_root=OUTPUT_ROOT,
     exports are disabled. Other validated reconstruction overrides are accepted.
     """
     started = time.perf_counter()
-    raw_data_file = Path(raw_data_file)
-    saec_file = Path(saec_file) if saec_file is not None else None
+    raw_data_file, saec_file = resolve_input_files(raw_data_file, saec_file, preprocessed_file)
     data = load_volume(raw_data_file, saec_file, output_root=output_root, device=device,
                        reconstruction_config=reconstruction_config, overrides=overrides,
                        save_reconstruction_logs=save_reconstruction_logs,
@@ -160,7 +142,7 @@ def run_pipeline(raw_data_file, saec_file=None, *, output_root=OUTPUT_ROOT,
 
 def main(argv=None) -> dict:
     args = parse_args(argv)
-    result = run_pipeline(args.raw_data_file, args.saec_file, output_root=args.output_root,
+    result = run_pipeline(args.raw_data_file, args.saec_file, preprocessed_file=args.preprocessed_file, output_root=args.output_root,
                           device=args.device, save_reconstruction_tensors=args.save_reconstruction_tensors,
                           save_reconstruction_logs=args.save_reconstruction_logs,
                           return_tensors=False)

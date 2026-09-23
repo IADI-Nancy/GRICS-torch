@@ -7,6 +7,12 @@ python pipelines/siemens_breast_T2.py \
   ../data/GRICS-torch/test_XA61_volunteer/0274_T2_s.saec \
     --dicom-header-dir runs/siemens_breast_T2/2017-110_01-0275-V1MR_2026-06-09/DCM_MR/S2/ \
     --dicom-series-number 100
+
+Preprocessed input with raw fallback:
+    python pipelines/siemens_breast_T2.py subject.dat subject.saec --preprocessed-file prepared.h5
+    python pipelines/siemens_breast_T2.py subject.mrd subject.saec --preprocessed-file prepared.h5
+Preprocessed input only:
+    python pipelines/siemens_breast_T2.py prepared.h5
 """
 
 
@@ -35,6 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from pipelines._inputs import data_type_from_raw_data_file as classify_input, resolve_input_files
 from src.utils.ismrmrd_io import acquisition_header
 import torch
 
@@ -61,10 +68,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument(
         "raw_data_file",
-        type=Path,
-        help="Input Siemens .dat file or already converted ISMRMRD .h5/.mrd file.",
+        type=Path, nargs="?",
+        help="Siemens .dat, ISMRMRD .h5/.mrd, or preprocessed .h5 file.",
     )
-    parser.add_argument("saec_file", type=Path, help="Input SAEC physiological .h5 file.")
+    parser.add_argument("saec_file", type=Path, nargs="?", help="SAEC file required for raw input.")
+    parser.add_argument("--preprocessed-file", type=Path, help="Preferred preprocessed HDF5; use raw_data_file and SAEC if missing.")
     parser.add_argument(
         "--dicom-header-dir",
         type=Path,
@@ -95,37 +103,23 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 
-def data_type_from_raw_data_file(raw_data_file: Path) -> str:
-    suffix = raw_data_file.suffix.lower()
-    if suffix == ".dat":
-        return "siemens-saec"
-    if suffix in {".h5", ".mrd"}:
-        return "ismrmrd-saec"
-    raise ValueError(
-        "raw_data_file must be a Siemens .dat file or an ISMRMRD .h5/.mrd file. "
-        f"Got: {raw_data_file}"
-    )
+def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = None) -> str:
+    return classify_input(raw_data_file, saec_file, dimension="2D")
 
 
-def require_existing_file(path: Path, name: str) -> None:
-    if not path.is_file():
-        raise FileNotFoundError(f"{name} does not exist: {path}")
-
-
-def load_all_slices(raw_data_file: Path, saec_file: Path, *, output_root=OUTPUT_ROOT,
+def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, output_root=OUTPUT_ROOT,
                     device=RUNTIME_DEVICE, reconstruction_config=RECONSTRUCTION_CONFIG,
                     postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
                     save_reconstruction_logs=None, save_reconstruction_tensors=None) -> DataLoader:
     """Load the acquisition once, without running the per-slice preprocessing."""
-    require_existing_file(raw_data_file, "raw_data_file")
-    require_existing_file(saec_file, "saec_file")
-    data_type = data_type_from_raw_data_file(raw_data_file)
+    data_type = data_type_from_raw_data_file(raw_data_file, saec_file)
+    raw_input = data_type != "preprocessed-real"
     params = load_config(
         data_type=data_type,
         reconstruction_config=REPO_ROOT / reconstruction_config,
         coil_sensitivity_config=REPO_ROOT / "config/coil_sensitivity/odille_spline.toml",
-        real_data_config=REPO_ROOT / "config/real_data/saec.toml",
-        ismrmrd_reader_config=REPO_ROOT / "config/real_data/ismrmrd_reader.toml",
+        real_data_config=REPO_ROOT / "config/real_data/saec.toml" if raw_input else None,
+        ismrmrd_reader_config=REPO_ROOT / "config/real_data/ismrmrd_reader.toml" if raw_input else None,
         overrides=reconstruction_overrides(
             output_root, device, overrides, save_reconstruction_logs=save_reconstruction_logs,
             save_reconstruction_tensors=save_reconstruction_tensors),
@@ -138,7 +132,7 @@ def load_all_slices(raw_data_file: Path, saec_file: Path, *, output_root=OUTPUT_
         params=params,
         t_device=t_device,
         sp_device=sp_device,
-        filename=(str(raw_data_file), str(saec_file)),
+        filename=(str(raw_data_file), str(saec_file)) if raw_input else str(raw_data_file),
         run_pipeline=False,
     )
     data.postprocessing = postprocessing
@@ -301,7 +295,7 @@ def reconstruct_slices_in_parallel(source, slice_indices, max_workers=None):
 
 
 @managed_execution
-def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT,
+def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, output_root=OUTPUT_ROOT,
                  device=RUNTIME_DEVICE, max_workers=MAX_WORKERS,
                  slice_start=RECONSTRUCT_SLICE_START, slice_stop=RECONSTRUCT_SLICE_STOP,
                  reconstruction_config=RECONSTRUCTION_CONFIG,
@@ -311,6 +305,7 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT,
                  dicom_header_dir=None, dicom_series_number=1001) -> dict:
     """Reconstruct one acquisition using explicit settings and return its results.
 
+    preprocessed_file is preferred when present; otherwise raw_data_file and SAEC are used.
     reconstructions contains ordered per-slice CPU image/motion tensors, paths,
     and solver times. Images include configured normalization and zero-filling;
     motion tensors stay on the reconstruction grid. Slice range is half-open.
@@ -321,14 +316,14 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT,
     is always saved.
     """
     started = time.perf_counter()
-    raw_data_file, saec_file = Path(raw_data_file), Path(saec_file)
+    raw_data_file, saec_file = resolve_input_files(raw_data_file, saec_file, preprocessed_file)
     data = load_all_slices(raw_data_file, saec_file, output_root=output_root, device=device,
                            reconstruction_config=reconstruction_config,
                            postprocessing_config=postprocessing_config, overrides=overrides,
                            save_reconstruction_logs=save_reconstruction_logs,
                            save_reconstruction_tensors=save_reconstruction_tensors)
     data.params._run_outputs.manifest['inputs'] = {
-        'raw_data_file': str(raw_data_file.resolve()), 'saec_file': str(saec_file.resolve())}
+        'raw_data_file': str(raw_data_file.resolve()), 'saec_file': str(saec_file.resolve()) if saec_file is not None else None}
     indices = selected_slices(int(data.Nz), slice_start, slice_stop)
     data.zero_fill_shapes = grics_zero_fill_shapes(data)
     synchronize(data.kspace.device)
@@ -377,7 +372,7 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT,
 def main(argv=None) -> dict:
     args = parse_args(argv)
     result = run_pipeline(
-        args.raw_data_file, args.saec_file, output_root=args.output_root, device=args.device,
+        args.raw_data_file, args.saec_file, preprocessed_file=args.preprocessed_file, output_root=args.output_root, device=args.device,
         max_workers=args.max_workers, slice_start=args.slice_start, slice_stop=args.slice_stop,
         save_reconstruction_tensors=args.save_reconstruction_tensors,
                           save_reconstruction_logs=args.save_reconstruction_logs, return_tensors=False, export_dicom=not args.no_dicom,
