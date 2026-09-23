@@ -1,13 +1,30 @@
 [reconstruction]
+
+# Data and motion model
 # Reconstruction data dimensionality tag for compatibility checks.
 reconstruction_dimension = "3D"
 # Motion model used by reconstruction ("rigid" or "non-rigid").
 reconstruction_motion_type = "non-rigid"
+
+# Motion-state binning
 # Number of reconstruction motion states.
 # Per-shot simulation automatically replaces this value with the shot count.
 N_motion_states = 16
+# Motion-state grouping method: "kmeans" or "kspace_energy".
+# "kspace_energy" requires motion_quantization_bins (integer >= 2; e.g. 256).
+# For "kmeans", omit motion_quantization_bins; the config loader rejects it.
+motion_binning_mode = "kspace_energy"
+# Number of uniform quantization levels per physiological channel when
+# motion_binning_mode = "kspace_energy". Must be an integer greater than or equal to 2.
+# Required only when motion_binning_mode = "kspace_energy"; omit otherwise.
+motion_quantization_bins = 256
+
+# Multi-resolution reconstruction
 # Multi-resolution scale factors: strictly increasing in (0, 1], ending at 1.0.
 ResolutionLevels = [0.25, 0.5, 1.0]
+# "full" uses all configured motion states at every resolution level.
+# Alternatively, give one positive count per level (reduction requires non-rigid motion).
+N_motion_states_per_level = "full"
 # Must contain exactly one positive GN iteration count per ResolutionLevels entry.
 GN_iterations_per_level = [8, 8, 2]
 # false keeps the conventional final GN iteration image-only.
@@ -15,6 +32,7 @@ update_motion_on_final_iteration = false
 # true stops a resolution level when its image residual increases.
 gn_early_stopping = true
 
+# Conjugate-gradient stopping
 # Enable stopping after consecutive updates too small to change the CG iterate.
 cg_stop_on_stagnation = true
 # Iteration interval for recomputing the true residual in CG.
@@ -23,9 +41,14 @@ cg_true_residual_interval = 10
 cg_stagnation_consecutive_steps = 12
 # Countdown length including the triggering iteration; 0 or 1 stops immediately.
 cg_stagnation_countdown_steps = 6
+
+# Regularization scaling
 # Estimate regularization scaling internally from probes.
+# When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
+# When false, omit cg_reg_scale_num_probes; the config loader rejects it.
 cg_use_reg_scale_proxy = false
 
+# Image update
 # Image reconstruction regularization weight.
 lambda_r = 5.0e-2
 # Maximum CG/GN inner iterations for image update.
@@ -33,15 +56,10 @@ max_iter_recon = 10
 # Convergence tolerance for image update.
 tol_recon = 1.0e-3
 
+# Motion update
 # Motion reconstruction regularization weight.
 lambda_m = 10.0 #0.5 #10.0
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 15
 # Convergence tolerance for motion update.
 tol_motion = 1.0e-2
-
-# Motion-state grouping method: "kmeans" or "kspace_energy".
-motion_binning_mode = "kmeans"
-# "full" uses all configured motion states at every resolution level.
-# Alternatively, give one positive count per level (reduction requires non-rigid motion).
-N_motion_states_per_level = "full"

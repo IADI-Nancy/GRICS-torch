@@ -3,4 +3,7 @@ include = "common/rigid_2d_common.toml"
 # Dimensionality required by this motion simulation file.
 motion_simulation_config_dimension = "2D"
 # One independently sampled rigid state per acquisition shot.
+# Requires motion_simulation_config_dimension matching the input data and the
+# shared parameters supplied by include above; change the included file when changing models.
+# Omit num_motion_events and motion_tau; both are required only for "rigid-realistic".
 simulated_motion_type = "rigid-per-shot"
