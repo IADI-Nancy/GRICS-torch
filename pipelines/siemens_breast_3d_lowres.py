@@ -34,6 +34,7 @@ from src.preprocessing.DataLoader import DataLoader
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
 from src.runtime.output_layout import managed_execution
+from src.utils.dicom_export import write_volume_dicoms
 from pipelines._execution import (
     reconstruction_overrides, timed_reconstruction, synchronize,
     export_reconstruction, finish_run,
@@ -55,6 +56,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument('--device', choices=('cpu', 'gpu'), default=RUNTIME_DEVICE)
     parser.add_argument('--save-reconstruction-tensors', action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument('--save-reconstruction-logs', action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument('--dicom-header-dir', type=Path, default=None,
+                        help='Optional Siemens DICOM metadata donors; acquisition geometry defines the output grid.')
+    parser.add_argument('--dicom-series-number', type=int, default=1001)
+    parser.add_argument('--no-dicom', action='store_true', help='Skip DICOM export.')
     return parser.parse_args(argv)
 
 
@@ -100,7 +105,8 @@ def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
 @managed_execution
 def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, output_root=OUTPUT_ROOT,
                  device=RUNTIME_DEVICE, reconstruction_config=RECONSTRUCTION_CONFIG,
-                 overrides=None, save_reconstruction_logs=None, save_reconstruction_tensors=None, return_tensors=True) -> dict:
+                 overrides=None, save_reconstruction_logs=None, save_reconstruction_tensors=None, return_tensors=True,
+                 export_dicom=False, dicom_header_dir=None, dicom_series_number=1001) -> dict:
     """Reconstruct one volume without changing module globals or reading sys.argv.
 
     preprocessed_file is preferred when present; otherwise raw_data_file and SAEC are used.
@@ -110,6 +116,9 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
     None uses the TOML/overrides value; metadata is always saved.
     Text logging is included in solver timing. Plotting and intermediate tensor
     exports are disabled. Other validated reconstruction overrides are accepted.
+    export_dicom writes one plane per partition after timed reconstruction; it
+    requires the acquisition header and slab geometry. Donors supply public
+    metadata, while the reconstructed volume defines output geometry.
     """
     started = time.perf_counter()
     raw_data_file, saec_file = resolve_input_files(raw_data_file, saec_file, preprocessed_file)
@@ -128,6 +137,12 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
     }
     transfer_seconds = time.perf_counter() - transfer_started
     export_started = time.perf_counter()
+    result['dicom_files'] = []
+    dicom_uids = {}
+    if export_dicom:
+        result['dicom_files'], dicom_uids = write_volume_dicoms(
+            result['image'], Path(data.params.run_folder) / 'exports/dicom', data,
+            series_number=dicom_series_number, reference_dicom_path=dicom_header_dir)
     export_reconstruction(data.params, result)
     timings = {
         'preprocessing_seconds': preprocessing_seconds,
@@ -137,7 +152,10 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
         'pipeline_seconds': time.perf_counter() - started,
     }
     return finish_run(data, [result], timings,
-                      return_tensors=return_tensors)
+                      return_tensors=return_tensors, export_dicom=export_dicom,
+                      dicom_uids=dicom_uids,
+                      dicom_series_number=dicom_series_number if export_dicom else None,
+                      dicom_header_dir=str(dicom_header_dir) if dicom_header_dir is not None else None)
 
 
 def main(argv=None) -> dict:
@@ -145,7 +163,9 @@ def main(argv=None) -> dict:
     result = run_pipeline(args.raw_data_file, args.saec_file, preprocessed_file=args.preprocessed_file, output_root=args.output_root,
                           device=args.device, save_reconstruction_tensors=args.save_reconstruction_tensors,
                           save_reconstruction_logs=args.save_reconstruction_logs,
-                          return_tensors=False)
+                          return_tensors=False, export_dicom=not args.no_dicom,
+                          dicom_header_dir=args.dicom_header_dir,
+                          dicom_series_number=args.dicom_series_number)
     print(f"[run] Solver: {result['timings']['reconstruction_seconds']:.2f} s. "
           f"Run: {result['run_folder']}")
     return result

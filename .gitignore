@@ -32,3 +32,5 @@ article/
 
 !tests/test_siemens_pipeline_api.py
 !tests/run_real_3d_subject.py
+
+!tests/test_dicom_volume.py

@@ -92,8 +92,8 @@ zero-filling; motion maps retain their reconstruction grid. Set
 `return_tensors=False` to omit tensors from the returned dictionary.
 
 Both accept `reconstruction_config` and an `overrides` dictionary for validated
-configuration settings. T2 also accepts `postprocessing_config`,
-`dicom_header_dir`, and `dicom_series_number`. Numerical defaults remain in the
+configuration settings. Both accept `dicom_header_dir` and `dicom_series_number`;
+T2 additionally accepts `postprocessing_config`. Numerical defaults remain in the
 TOML files. Pipelines disable plotting and intermediate tensor exports, and save
 each final image/motion tensor once after computation when `save_reconstruction_tensors=True`
 (the default). GRICS text logs are written during reconstruction, including
@@ -103,8 +103,28 @@ They are controlled by `save_reconstruction_logs`, independently of
 The pipeline keyword arguments accept `None` to inherit configuration/overrides
 or a boolean to override them. CLI options are
 `--[no-]save-reconstruction-logs` and `--[no-]save-reconstruction-tensors`. Run metadata and resolved
-configuration are always saved. T2's Python API exports DICOM only with `export_dicom=True`;
-the T2 CLI retains DICOM export by default (`--no-dicom` disables it).
+configuration are always saved. Both Python APIs export DICOM with `export_dicom=True`;
+both CLIs export DICOM by default (`--no-dicom` disables it).
+
+The 3D pipeline writes one single-frame MR DICOM per partition to
+`exports/dicom/slice_001.dcm`, etc., with shared series identifiers. Returned
+volume results include `dicom_files`; export settings and identifiers are stored
+in the run manifest. DICOM export is independent of tensor saving and occurs
+after the reconstruction timer stops.
+
+```python
+result = reconstruct_3d("subject.mrd", "subject.saec", export_dicom=True,
+                        dicom_series_number=1001, dicom_header_dir="source_dicoms")
+```
+
+3D export requires an ISMRMRD header and slab geometry, supplied by raw inputs
+or by preprocessed HDF5 containing `ismrmrd_header` and `slice_geometry`. Legacy
+preprocessed files lacking these fields can still reconstruct with DICOM export
+disabled; use raw input to export DICOMs. Partition centers are derived from the
+raw slab center, slice direction, and encoded z FOV on the unchanged input grid.
+Donor DICOMs supply public metadata; output positions and spacing remain those
+of the reconstructed volume even if donor resolution differs. The exported
+series number must differ from the donor series number.
 
 Both Siemens pipelines apply these runtime overrides to `general.toml`:
 
