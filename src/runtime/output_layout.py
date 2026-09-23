@@ -20,11 +20,13 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f'.{path.name}.{uuid.uuid4().hex}.tmp')
     temporary.write_text(json.dumps(value, indent=2, default=str) + '\n')
+    # Replace the file atomically to avoid partially written JSON.
     temporary.replace(path)
 
 
 def bind_output_paths(params, folder):
     folder = Path(folder)
+    # Keep all outputs for one reconstruction under a common folder.
     params.reconstruction_folder = str(folder)
     params.initial_data_folder = str(folder / 'preprocessing')
     params.results_folder = str(folder / 'results')
@@ -41,6 +43,7 @@ class RunOutputs:
         workflow_label = params.workflow_label
         if not workflow_label or Path(workflow_label).name != workflow_label or workflow_label in {'.', '..'}:
             raise ValueError('workflow_label must be a single directory name.')
+        # Give each execution its own directory, including simultaneous runs.
         run_id = datetime.now().strftime('%Y%m%dT%H%M%S%f') + '-' + uuid.uuid4().hex[:8]
         self.root = Path(params.output_root).expanduser().resolve() / workflow_label / run_id
         self.root.mkdir(parents=True, exist_ok=False)
@@ -53,6 +56,7 @@ class RunOutputs:
         self.manifest = {'run_id': run_id, 'workflow_label': workflow_label, 'status': 'running',
                          'started_at': datetime.now(timezone.utc).isoformat(), 'reconstructions': {}}
         try:
+            # Record the code version and local changes for traceability.
             self.manifest['code_revision'] = subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'], cwd=Path(__file__).resolve().parents[2],
                 stderr=subprocess.DEVNULL, text=True).strip()
@@ -70,6 +74,7 @@ class RunOutputs:
         active = _ACTIVE_RUNS.get()
         if active is not None:
             active.append(self)
+        # Mark runs incomplete if normal scope finalization never happens.
         atexit.register(self.close, 'incomplete')
 
     def snapshot(self, params):

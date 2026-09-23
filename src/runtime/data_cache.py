@@ -26,6 +26,7 @@ def source_identity(path):
 
 
 def cache_key(sources, settings):
+    # Source metadata and settings determine whether a cached result can be reused.
     identity = {'sources': [source_identity(path) for path in sources], 'settings': settings}
     return hashlib.sha256(json.dumps(identity, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -39,6 +40,7 @@ class CacheLease:
     def close(self):
         if self.closed or self.pid != os.getpid():
             return
+        # Defer requested deletion until no process holds a usage lock.
         marker = self.path.with_suffix(self.path.suffix + '.remove')
         if self.remove:
             marker.touch()
@@ -76,6 +78,7 @@ def acquire_cached(root, category, key, suffix, builder, remove=True):
                         builder(temporary)
                         if not temporary.is_file() or temporary.stat().st_size == 0:
                             raise RuntimeError('Cache builder produced no data.')
+                        # Publish the finished file atomically so readers never see partial data.
                         temporary.replace(path)
                     finally:
                         temporary.unlink(missing_ok=True)
@@ -99,6 +102,7 @@ def release_leases(leases=None):
 @contextmanager
 def lease_scope():
     leases = []
+    # Track leases acquired in this scope for cleanup on exit.
     token = _LEASE_SCOPE.set(leases)
     try:
         yield

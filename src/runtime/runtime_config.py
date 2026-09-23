@@ -204,12 +204,48 @@ def _validate_general(cfg):
 
 
 def _validate_real_data(cfg):
-    _require(cfg, _REAL_DATA_KEYS, 'real-data')
-    if not isinstance(cfg['rawdata_sensor_type'], str) or not cfg['rawdata_sensor_type']:
-        raise ValueError('rawdata_sensor_type must be a nonempty string.')
-    for key in ('saec_belt_lowpass_cutoff_hz', 'saec_marmot_lowpass_cutoff_hz',
-                'saec_marmot_highpass_cutoff_hz'):
-        _number(cfg[key], key, positive=True)
+    """Validate reader, sensor, and clock settings, including misplaced overrides."""
+    data_type = cfg['data_type']
+    saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
+    ismrmrd_reader_data = data_type in ISMRMRD_READER_DATA_TYPES
+    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
+    generic_physio_data = data_type in {
+        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
+        for kind in ('physio_text', 'physio_array')
+    }
+    if saec_data:
+        _require(cfg, _REAL_DATA_KEYS, 'real-data')
+        if not isinstance(cfg['rawdata_sensor_type'], str) or not cfg['rawdata_sensor_type']:
+            raise ValueError('rawdata_sensor_type must be a nonempty string.')
+        for key in ('saec_belt_lowpass_cutoff_hz', 'saec_marmot_lowpass_cutoff_hz',
+                    'saec_marmot_highpass_cutoff_hz'):
+            _number(cfg[key], key, positive=True)
+    elif cfg.keys() & _REAL_DATA_KEYS:
+        raise ValueError(f'Real-data settings incompatible with {data_type}: {sorted(cfg.keys() & _REAL_DATA_KEYS)}.')
+    if ismrmrd_reader_data:
+        _require(cfg, _ISMRMRD_READER_KEYS, 'ISMRMRD-reader')
+        if type(cfg['print_raw_calibration_lines']) is not bool:
+            raise ValueError('print_raw_calibration_lines must be a boolean.')
+    elif cfg.keys() & _ISMRMRD_READER_KEYS:
+        raise ValueError(f'ISMRMRD-reader settings incompatible with {data_type}: {sorted(cfg.keys() & _ISMRMRD_READER_KEYS)}.')
+    if polaris_data:
+        _require(cfg, _POLARIS_KEYS, 'Polaris')
+        _choice(cfg['polaris_channel_mode'], 'polaris_channel_mode', {'all', 'largest-amplitude'})
+        _number(cfg['polaris_lowpass_cutoff_hz'], 'polaris_lowpass_cutoff_hz', positive=True)
+    elif cfg.keys() & _POLARIS_KEYS:
+        raise ValueError(f'Polaris settings incompatible with {data_type}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
+    if polaris_data or generic_physio_data:
+        _require(cfg, _PHYSIO_CLOCK_KEYS, 'physiological sensor')
+        cfg['physio_clock_drift_seconds'] = float(_number(
+            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
+    elif saec_data:
+        # SAEC uses its Siemens stop trigger; retain zero for the shared preparer.
+        shift = _number(cfg.get('physio_clock_drift_seconds', 0.0), 'physio_clock_drift_seconds')
+        if shift != 0:
+            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
+        cfg['physio_clock_drift_seconds'] = 0.0
+    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
+        raise ValueError(f'Physiological clock settings incompatible with {data_type}.')
 
 
 def _validate_csm(cfg):
@@ -441,64 +477,6 @@ def _apply_notebook_logging(cfg, overrides):
             print(f"[config] Notebook mode: {key} changed from True to False. Use overrides to keep it enabled.", flush=True)
 
 
-def _load_physiological_config(cfg, *, data_type, root, real_data_config, polaris_config, physio_config):
-    """Load the format-owned physiological settings and return their data-type flags."""
-    saec_data = data_type in {"ismrmrd-saec", "siemens-saec"}
-    polaris_data = data_type in {"ismrmrd-polaris", "siemens-polaris"}
-    generic_physio_data = data_type in {
-        f"{source}-{kind}" for source in ("ismrmrd", "siemens")
-        for kind in ("physio_text", "physio_array")
-    }
-
-    if real_data_config is not None and not saec_data:
-        raise ValueError("real_data_config is only valid for ISMRMRD or Siemens SAEC data.")
-    if saec_data:
-        if real_data_config is None:
-            raise ValueError(f"{data_type} requires a real_data_config.")
-        cfg.update(_load_toml_flat(real_data_config, "real_data"))
-
-    if polaris_config is not None and not polaris_data:
-        raise ValueError("polaris_config is only valid for ISMRMRD or Siemens Polaris data.")
-    if polaris_data:
-        if polaris_config is None:
-            raise ValueError(f"{data_type} requires a polaris_config.")
-        cfg.update(_load_toml_flat(polaris_config, "polaris"))
-
-    if physio_config is not None and not generic_physio_data:
-        raise ValueError("physio_config is only valid for physiological text or array inputs.")
-    if generic_physio_data:
-        path = physio_config if physio_config is not None else root / "real_data" / f"{data_type.split("-", 1)[1]}.toml"
-        cfg.update(_load_toml_flat(path, "physio"))
-    return saec_data, polaris_data, generic_physio_data
-
-
-def _validate_physiological_config(cfg, *, saec_data, polaris_data, generic_physio_data):
-    """Validate settings loaded by _load_physiological_config after overrides."""
-    if saec_data:
-        _validate_real_data(cfg)
-    elif cfg.keys() & _REAL_DATA_KEYS:
-        raise ValueError(f'Real-data settings incompatible with {cfg["data_type"]}: {sorted(cfg.keys() & _REAL_DATA_KEYS)}.')
-
-    if polaris_data:
-        _require(cfg, _POLARIS_KEYS, "Polaris")
-        _choice(cfg["polaris_channel_mode"], "polaris_channel_mode", {"all", "largest-amplitude"})
-        _number(cfg["polaris_lowpass_cutoff_hz"], "polaris_lowpass_cutoff_hz", positive=True)
-    elif cfg.keys() & _POLARIS_KEYS:
-        raise ValueError(f'Polaris settings incompatible with {cfg["data_type"]}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
-
-    if polaris_data or generic_physio_data:
-        _require(cfg, _PHYSIO_CLOCK_KEYS, "physiological sensor")
-        cfg["physio_clock_drift_seconds"] = float(_number(
-            cfg["physio_clock_drift_seconds"], "physio_clock_drift_seconds"))
-    elif saec_data:
-        shift = _number(cfg.get("physio_clock_drift_seconds", 0.0), "physio_clock_drift_seconds")
-        if shift != 0:
-            raise ValueError("physio_clock_drift_seconds is supported only for Polaris, text and array physiology.")
-        cfg["physio_clock_drift_seconds"] = 0.0
-    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
-        raise ValueError(f'Physiological clock settings incompatible with {cfg["data_type"]}.')
-
-
 def load_postprocessing_config(path, *, overrides=None):
     cfg = _load_toml_flat(path, 'postprocessing')
     allowed = _FILE_SCHEMAS['postprocessing']['postprocessing']
@@ -509,76 +487,143 @@ def load_postprocessing_config(path, *, overrides=None):
     return SimpleNamespace(**cfg)
 
 
+def _load_real_data_config(root, data_type, *, real_data_config,
+                           ismrmrd_reader_config, polaris_config, physio_config):
+    """Load the reader and sensor files selected from config/real_data."""
+    cfg = {}
+    saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
+    ismrmrd_reader_data = data_type in ISMRMRD_READER_DATA_TYPES
+    if real_data_config is not None and not saec_data:
+        raise ValueError('real_data_config is only valid for ISMRMRD or Siemens SAEC data.')
+    if saec_data:
+        if real_data_config is None:
+            raise ValueError(f'{data_type} requires a real_data_config.')
+        cfg.update(_load_toml_flat(real_data_config, 'real_data'))
+    if ismrmrd_reader_config is not None and not ismrmrd_reader_data:
+        raise ValueError('ismrmrd_reader_config is only valid for ISMRMRD or Siemens raw data.')
+    if ismrmrd_reader_data:
+        if ismrmrd_reader_config is None:
+            raise ValueError(f'{data_type} requires an ismrmrd_reader_config.')
+        cfg.update(_load_toml_flat(ismrmrd_reader_config, 'ismrmrd_reader'))
+    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
+    if polaris_config is not None and not polaris_data:
+        raise ValueError('polaris_config is only valid for ISMRMRD or Siemens Polaris data.')
+    if polaris_data:
+        if polaris_config is None:
+            raise ValueError(f'{data_type} requires a polaris_config.')
+        cfg.update(_load_toml_flat(polaris_config, 'polaris'))
+    generic_physio_data = data_type in {
+        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
+        for kind in ('physio_text', 'physio_array')
+    }
+    if physio_config is not None and not generic_physio_data:
+        raise ValueError('physio_config is only valid for physiological text or array inputs.')
+    if generic_physio_data:
+        cfg.update(_load_toml_flat(
+            physio_config if physio_config is not None else root / 'real_data' / f"{data_type.split('-', 1)[1]}.toml", 'physio'))
+    return cfg
+
+
+def _load_synthetic_data_config(data_type, *, shepp_logan_config, from_image_config):
+    """Load the selected source from config/synthetic_data."""
+    cfg = {}
+    if data_type in SYNTHETIC_DATA_TYPES:
+        path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
+        if path is None:
+            raise ValueError(f'{data_type} requires its source configuration file.')
+        cfg.update(_load_toml_flat(path, data_type))
+    return cfg
+
+
+def _load_source_config(root, data_type, *, shepp_logan_config, from_image_config,
+                        real_data_config, ismrmrd_reader_config, polaris_config, physio_config):
+    """Select source files and reject configuration paths for other data types."""
+    if shepp_logan_config is not None and data_type != 'shepp-logan':
+        raise ValueError('shepp_logan_config is only valid for shepp-logan data.')
+    if from_image_config is not None and data_type != 'from_image':
+        raise ValueError('from_image_config is only valid for from_image data.')
+    cfg = _load_real_data_config(
+        root, data_type, real_data_config=real_data_config,
+        ismrmrd_reader_config=ismrmrd_reader_config,
+        polaris_config=polaris_config, physio_config=physio_config)
+    cfg.update(_load_synthetic_data_config(
+        data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config))
+    return cfg
+
+
+def _load_sampling_simulation_config(root, data_type, sampling_config, overrides):
+    """Use recorded sampling by default for real data."""
+    cfg = {}
+    if sampling_config is not None:
+        cfg.update(_load_toml_flat(sampling_config, 'sampling'))
+    elif data_type in REAL_DATA_TYPES and (overrides or {}).get('kspace_sampling_type', 'from-data') == 'from-data':
+        cfg.update(_load_toml_flat(root / 'sampling_simulation/from_data.toml', 'sampling'))
+    return cfg
+
+
+def _load_motion_simulation_config(root, data_type, motion_simulation_config):
+    """Keep recorded motion by default for real data."""
+    cfg = {}
+    if motion_simulation_config is not None:
+        cfg.update(_load_toml_flat(motion_simulation_config, 'motion'))
+    elif data_type in REAL_DATA_TYPES:
+        cfg.update(_load_toml_flat(root / 'motion_simulation/as_is.toml', 'motion'))
+    return cfg
+
+
+def _validate_synthetic_data_settings(cfg):
+    """Reject synthetic source settings belonging to a different data type."""
+    data_type = cfg['data_type']
+    source_only = (_SHEPP_KEYS | _IMAGE_KEYS) - {'data_dimension'}
+    permitted_source = _SHEPP_KEYS if data_type == 'shepp-logan' else _IMAGE_KEYS if data_type == 'from_image' else set()
+    misplaced = (cfg.keys() & source_only) - permitted_source
+    if misplaced:
+        raise ValueError(f'Source settings incompatible with {data_type}: {sorted(misplaced)}.')
+
+
+def _validate_known_source_size(cfg):
+    """Check dependent limits when source dimensions are known before loading data."""
+    if cfg['data_type'] != 'shepp-logan':
+        return
+    spatial = [cfg['N_SheppLogan'], cfg['N_SheppLogan']]
+    if cfg['data_dimension'] == '3D':
+        spatial.append(cfg['Nz_SheppLogan'])
+    params = SimpleNamespace(**cfg)
+    validate_reconstruction_size(params, spatial)
+    validate_calibration_size(params, spatial, has_reference=False)
+    readouts = validate_sampling_size(params, cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
+    validate_motion_readout_count(params, readouts)
+
+
 def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
                 shepp_logan_config=None, from_image_config=None, real_data_config=None,
                 ismrmrd_reader_config=None, polaris_config=None, physio_config=None, sampling_config=None,
                 motion_simulation_config=None, overrides=None):
+    """Load file-owned settings, apply overrides, then validate dependent sections."""
     _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
     root = Path(__file__).resolve().parents[2] / 'config'
     cfg = _load_toml_flat(root / 'general.toml', 'general')
     cfg['data_type'] = data_type
     cfg.update(_load_toml_flat(reconstruction_config, 'reconstruction'))
     cfg.update(_load_toml_flat(coil_sensitivity_config, 'coil_sensitivity'))
-    if shepp_logan_config is not None and data_type != 'shepp-logan':
-        raise ValueError('shepp_logan_config is only valid for shepp-logan data.')
-    if from_image_config is not None and data_type != 'from_image':
-        raise ValueError('from_image_config is only valid for from_image data.')
-    saec_data, polaris_data, generic_physio_data = _load_physiological_config(
-        cfg, data_type=data_type, root=root, real_data_config=real_data_config,
-        polaris_config=polaris_config, physio_config=physio_config)
-    ismrmrd_reader_data = data_type in ISMRMRD_READER_DATA_TYPES
-    if ismrmrd_reader_config is not None and not ismrmrd_reader_data:
-        raise ValueError("ismrmrd_reader_config is only valid for ISMRMRD or Siemens raw data.")
-    if ismrmrd_reader_data:
-        if ismrmrd_reader_config is None:
-            raise ValueError(f"{data_type} requires an ismrmrd_reader_config.")
-        cfg.update(_load_toml_flat(ismrmrd_reader_config, "ismrmrd_reader"))
-    if data_type in SYNTHETIC_DATA_TYPES:
-        path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
-        if path is None:
-            raise ValueError(f'{data_type} requires its source configuration file.')
-        cfg.update(_load_toml_flat(path, data_type))
-    if sampling_config is not None:
-        cfg.update(_load_toml_flat(sampling_config, 'sampling'))
-    elif data_type in REAL_DATA_TYPES and (overrides or {}).get('kspace_sampling_type', 'from-data') == 'from-data':
-        cfg.update(_load_toml_flat(root / 'sampling_simulation/from_data.toml', 'sampling'))
-    if motion_simulation_config is not None:
-        cfg.update(_load_toml_flat(motion_simulation_config, 'motion'))
-    elif data_type in REAL_DATA_TYPES:
-        cfg.update(_load_toml_flat(root / 'motion_simulation/as_is.toml', 'motion'))
+    cfg.update(_load_source_config(
+        root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
+        real_data_config=real_data_config, ismrmrd_reader_config=ismrmrd_reader_config,
+        polaris_config=polaris_config, physio_config=physio_config))
+    cfg.update(_load_sampling_simulation_config(root, data_type, sampling_config, overrides))
+    cfg.update(_load_motion_simulation_config(root, data_type, motion_simulation_config))
+
     _apply_overrides(cfg, overrides, _OVERRIDE_KEYS)
     _require(cfg, {'kspace_sampling_type'}, 'sampling')
-    source_only = (_SHEPP_KEYS | _IMAGE_KEYS) - {'data_dimension'}
-    permitted_source = _SHEPP_KEYS if data_type == 'shepp-logan' else _IMAGE_KEYS if data_type == 'from_image' else set()
-    misplaced = (cfg.keys() & source_only) - permitted_source
-    if misplaced:
-        raise ValueError(f'Source settings incompatible with {data_type}: {sorted(misplaced)}.')
+    _validate_synthetic_data_settings(cfg)
     _validate_general(cfg)
-    _validate_physiological_config(
-        cfg, saec_data=saec_data, polaris_data=polaris_data,
-        generic_physio_data=generic_physio_data)
-    if ismrmrd_reader_data:
-        _require(cfg, _ISMRMRD_READER_KEYS, "ISMRMRD-reader")
-        if type(cfg["print_raw_calibration_lines"]) is not bool:
-            raise ValueError("print_raw_calibration_lines must be a boolean.")
-    elif cfg.keys() & _ISMRMRD_READER_KEYS:
-        raise ValueError(
-            f"ISMRMRD-reader settings incompatible with {data_type}: "
-            f"{sorted(cfg.keys() & _ISMRMRD_READER_KEYS)}.")
+    _validate_real_data(cfg)
     _validate_csm(cfg)
     _validate_source(cfg)
     _validate_sampling(cfg)
     _validate_motion(cfg)
     _validate_reconstruction(cfg)
-    if data_type == 'shepp-logan':
-        spatial = [cfg['N_SheppLogan'], cfg['N_SheppLogan']]
-        if cfg['data_dimension'] == '3D':
-            spatial.append(cfg['Nz_SheppLogan'])
-        params = SimpleNamespace(**cfg)
-        validate_reconstruction_size(params, spatial)
-        validate_calibration_size(params, spatial, has_reference=False)
-        readouts = validate_sampling_size(params, cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
-        validate_motion_readout_count(params, readouts)
+    _validate_known_source_size(cfg)
     _apply_notebook_logging(cfg, overrides)
     return SimpleNamespace(**cfg)
 
