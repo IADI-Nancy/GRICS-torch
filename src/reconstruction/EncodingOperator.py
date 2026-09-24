@@ -1,14 +1,18 @@
 import torch
-from  src.utils.fftnc import fftnc, ifftnc
+from src.utils.fftnc import fftnc, ifftnc
 
 class EncodingOperator:
     """
     MRI encoding operator.
 
+    SamplingIndices describes complete readout lines, assigned to disjoint
+    motion states within each repetition, as produced by Sampling.
+
     Methods:
     - __init__(smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None)
     - forward(x)   : forward operator (image -> k-space)
     - adjoint(y)  : adjoint operator (k-space -> image)
+    - normal(x)   : normal operator (image -> image)
     """
 
     def __init__(self, smaps, Nsamples, SamplingIndices, Nex, motionOperator):
@@ -18,6 +22,8 @@ class EncodingOperator:
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.motionOperator = motionOperator
+        # Sampling is fixed throughout a CG solve; build the phase masks once for optimized normal operator.
+        self._phase_encoding_masks = self._build_phase_encoding_masks()
 
     def forward(self, image):
         # ---- Sizes ----
@@ -102,6 +108,68 @@ class EncodingOperator:
 
         return Image.flatten()
     
+    def _build_phase_encoding_masks(self):
+        """Extract each state's phase mask from its complete readout lines."""
+        Ncoils, Nx, Ny, Nz = self.smaps.shape
+        phase_shape = (Ny, Nz) if Nz > 1 else (Ny,)
+        masks = []
+        for nex in range(self.Nex):
+            nex_masks = []
+            for motion_state in range(len(self.SamplingIndices[nex])):
+                SamplingIndices = self.SamplingIndices[nex][motion_state]
+                if SamplingIndices.numel() == 0:
+                    nex_masks.append(None)
+                    continue
+                # Flattened indices are x * (Ny * Nz) + y * Nz + z.
+                # The x=0 samples identify every acquired phase line, regardless
+                # of index ordering. No full spatial mask is needed.
+                phase_indices = SamplingIndices[SamplingIndices < Ny * Nz]
+                phase_mask = torch.zeros(Ny * Nz, dtype=torch.bool, device=self.device)
+                phase_mask[phase_indices] = True
+                nex_masks.append(phase_mask.reshape(phase_shape))
+            masks.append(nex_masks)
+        return masks
+
     def normal(self, image):
-        return self.adjoint(self.forward(image))
-        
+        """Apply E^H E using only the phase-encoding FFTs (y, or y and z).
+
+        For one coil/state, E = P F_x F_phase S W. Complete readout
+        lines make P^H P independent of x, so it commutes with F_x:
+
+            F_x^H (P^H P) F_x = P^H P.
+
+        Thus E^H E = W^H S^H F_phase^H (P^H P) F_phase S W.
+        Coil weighting and image warping stay on their original sides of
+        the FFTs; neither needs to commute with the sampling mask.
+        """
+        Ncoils, Nx, Ny, Nz = self.smaps.shape
+        kspace_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
+        fft_dims = (1, 2) if Nz > 1 else (1,)
+        image = image.reshape(self.Nex, *kspace_shape)
+        Image = torch.zeros(image.shape, dtype=torch.complex128, device=self.device)
+
+        for nex, nex_masks in enumerate(self._phase_encoding_masks):
+            for motion_state, phase_mask in enumerate(nex_masks):
+                if phase_mask is None:
+                    continue
+                MotionOp = self.motionOperator._get_sparse_operator(motion_state)
+                image_nex = image[nex]
+                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(kspace_shape)
+                ImageSum = torch.zeros(kspace_shape, dtype=torch.complex128, device=self.device)
+
+                for coil in range(Ncoils):
+                    smap = self.smaps[coil] if Nz > 1 else self.smaps[coil].squeeze(-1)
+                    WarpedImageSeenByCoil = WarpedImage * smap
+                    WarpedImageFT = fftnc(WarpedImageSeenByCoil, dims=fft_dims)
+                    # Broadcast the phase mask across all readout positions.
+                    KspaceDataCoilNex = WarpedImageFT * phase_mask
+                    image_coil = ifftnc(KspaceDataCoilNex, dims=fft_dims)
+                    ImageSum += image_coil * torch.conj(smap)
+
+                # Interpolation weights are real, so transpose is the adjoint,
+                # matching the existing general encoding operator.
+                MotionOp = MotionOp.coalesce().transpose(0, 1)
+                Unwarped = (MotionOp @ ImageSum.flatten()).reshape(kspace_shape)
+                Image[nex] += Unwarped
+
+        return Image.flatten()

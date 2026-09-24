@@ -47,4 +47,3 @@ def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = N
         raise ValueError("saec_file is required for Siemens/ISMRMRD raw input.")
     require_existing_file(saec_file, "saec_file")
     return "siemens-saec" if suffix == ".dat" else "ismrmrd-saec"
-

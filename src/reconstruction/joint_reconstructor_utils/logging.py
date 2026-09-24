@@ -189,8 +189,15 @@ class JointReconstructionLogger:
             f"motion_norm = {motion_update_norm:.6e} : {elapsed:.6f} s\n"
         )
 
+    def _announce_run(self, message):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        # Output folders identify the slice or volume, including parallel workers.
+        unit = Path(self.params.reconstruction_folder).name.replace("_", " ", 1)
+        print(f"[{timestamp}] [reconstruction] {unit} {message}", flush=True)
+
     def start_run(self):
         self._run_started = time.perf_counter()
+        self._announce_run("started")
 
     def start_level(self, level_index, resolution):
         self._level_started = time.perf_counter()
@@ -262,9 +269,11 @@ class JointReconstructionLogger:
             f"{time.perf_counter() - self._level_started:.6f} s\n")
 
     def run_finished(self):
-        self.append(f"Total time of reconstruction run: {time.perf_counter() - self._run_started:.6f} s")
+        elapsed = time.perf_counter() - self._run_started
+        self.append(f"Total time of reconstruction run: {elapsed:.6f} s")
         if self.plot_enabled:
             _save_run_residual_plots(str(Path(self.params.debug_folder) / "residuals"), self.run_log)
+        self._announce_run(f"finished in {elapsed:.2f} seconds")
 
     def save_final_outputs(self, image, motion, *, defer_tensor_export=False):
         """Record metadata unconditionally; save configured tensors/plots separately."""

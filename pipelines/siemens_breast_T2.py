@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import math
 import multiprocessing as mp
 import os
 import sys
@@ -232,11 +233,34 @@ def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple
     encoded = enc.encodedSpace.matrixSize
     target_y = int(recon.y)
     encoded_y = int(encoded.y)
-    if target_y > encoded_y:
+    if encoded_y <= 0:
+        raise ValueError(f"ISMRMRD encoded matrix y must be positive, got {encoded_y}.")
+    if target_y == 0:
+        # Some converted headers omit the reconstruction matrix. Preserve the
+        # encoded pixel spacing when deriving the crop from the declared FOVs.
+        recon_fov_y = float(enc.reconSpace.fieldOfView_mm.y)
+        encoded_fov_y = float(enc.encodedSpace.fieldOfView_mm.y)
+        if not all(math.isfinite(value) and value > 0 for value in (recon_fov_y, encoded_fov_y)):
+            raise ValueError("A missing reconstruction matrix y requires positive, finite reconstruction and encoded FOV y.")
+        target_y = round(encoded_y * recon_fov_y / encoded_fov_y)
+        print(
+            f"[input] ISMRMRD reconstruction matrix y is zero; "
+            f"using {target_y} from the encoded matrix and field-of-view ratio.",
+            flush=True,
+        )
+    elif target_y > encoded_y:
         target_y //= 2
 
     target_shape = (int(raw_data.Nx), target_y)
     encoded_shape = (int(raw_data.Nx), encoded_y)
+    if any(size <= 0 for size in (*target_shape, *encoded_shape)):
+        raise ValueError(
+            f"GRICS zero-fill sizes must be positive: target_shape={target_shape}, encoded_shape={encoded_shape}."
+        )
+    if int(raw_data.Ny) > encoded_y:
+        raise ValueError(
+            f"Loaded phase-encode size {raw_data.Ny} exceeds ISMRMRD encoded matrix y {encoded_y}."
+        )
     if any(target > encoded for target, encoded in zip(target_shape, encoded_shape)):
         raise ValueError(
             "GRICS zero-fill sizes are inconsistent: "
