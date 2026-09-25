@@ -5,6 +5,7 @@ import time
 import torch
 
 from src.reconstruction.JointReconstructor import JointReconstructor
+from src.utils.ismrmrd_io import acquisition_header
 from src.runtime.output_layout import record_reconstruction
 
 
@@ -37,10 +38,20 @@ def timed_reconstruction(data):
     # Defer the execution step explicitly; preserve the configured output policy.
     synchronize(data.kspace.device)
     started = time.perf_counter()
+    voxel_spacing_mm = None
+    if getattr(data.params, 'regularization_scaling', 'direct') == 'grics_cpp':
+        encoding = acquisition_header(data).encoding[0].encodedSpace
+        matrix = encoding.matrixSize
+        fov = encoding.fieldOfView_mm
+        axes = ('x', 'y', 'z') if data.params.data_dimension == '3D' else ('x', 'y')
+        voxel_spacing_mm = tuple(float(getattr(fov, axis)) / int(getattr(matrix, axis))
+                                 for axis in axes)
     reconstructor = JointReconstructor(
         data.kspace, data.smaps, data.sampling_idx,
         motion_signal=data.motion_signal, params=data.params,
         kspace_scale=data.kspace_scale, motion_plot_context=data.motion_plot_context,
+        calibration_image_prior=getattr(data, 'grics_reference_image', None),
+        voxel_spacing_mm=voxel_spacing_mm,
     )
     image, motion = reconstructor.run(defer_tensor_export=True)
     synchronize(data.kspace.device)

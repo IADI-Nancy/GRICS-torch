@@ -31,6 +31,10 @@ def _parse_gn_iterations_per_level(params, res_levels):
         raise ValueError("GN_iterations_per_level must have one positive integer per ResolutionLevels entry.")
     if any(type(value) is not int or value < 1 for value in gn_cfg):
         raise ValueError("GN_iterations_per_level entries must be positive integers.")
+    # A single virtual time is the GRICS++ one-state baseline. Its image is
+    # reconstructed once per resolution, with no motion model to alternate.
+    if int(params.N_motion_states) == 1:
+        return [1] * len(res_levels)
     return list(gn_cfg)
 
 

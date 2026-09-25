@@ -18,6 +18,8 @@ motion_binning_mode = "kspace_energy"
 # motion_binning_mode = "kspace_energy". Must be an integer greater than or equal to 2.
 # Required only when motion_binning_mode = "kspace_energy"; omit otherwise.
 motion_quantization_bins = 256
+# GRICS++ breast inputs are centered and scaled to unit variance over all acquired slices/readouts.
+motion_signal_normalization = "acquisition_zscore"
 
 # Multi-resolution reconstruction
 # Spatial scale at each reconstruction level, relative to full resolution.
@@ -31,6 +33,8 @@ N_motion_states_per_level = [4, 8, 16, 16]
 GN_iterations_per_level = [4, 4, 4, 1]
 # false keeps the conventional final GN iteration image-only.
 update_motion_on_final_iteration = false
+# Match GRICS++: finish each resolution with an image-only iteration.
+image_only_last_iteration_per_level = true
 # true stops a resolution level when its image residual increases.
 gn_early_stopping = true
 
@@ -50,10 +54,15 @@ cg_stagnation_countdown_steps = 0
 # When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.
 cg_use_reg_scale_proxy = false
+# GRICS++ scaling uses the raw k-space adjoint norm for the image weight.
+# Motion scaling uses physical voxel spacing from the ISMRMRD header.
+regularization_scaling = "grics_cpp"
+# Use the calibration magnitude as a multiplicative image constraint.
+use_calibration_image_prior = true
 
 # Image update
 # Image reconstruction regularization weight. Must be non-negative.
-lambda_r = 5.0e-2
+lambda_r = 1
 # Maximum CG iterations for each image update. Must be a positive integer.
 max_iter_recon = 50
 # Relative convergence tolerance for image updates. Must be positive.
@@ -61,8 +70,10 @@ tol_recon = 1.0e-3
 
 # Motion update
 # Motion reconstruction regularization weight. Must be non-negative.
-lambda_m = 10.0
+lambda_m = 0.5
 # Maximum CG iterations for each motion update. Must be a positive integer.
 max_iter_motion = 10
+# Use a local gradient-based Jacobi preconditioner for motion PCG.
+use_motion_preconditioner = true
 # Relative convergence tolerance for motion updates. Must be positive.
 tol_motion = 1.0e-2

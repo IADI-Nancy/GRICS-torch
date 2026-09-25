@@ -1,10 +1,11 @@
+import math
 import torch
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable
 
 from src.reconstruction.joint_reconstructor_utils.resampling import (
-    downsample_data, upsample_data,
+    downsample_data, upsample_data, resize_img_xy,
 )
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.joint_reconstructor_utils.configuration import (
@@ -21,6 +22,7 @@ from src.reconstruction.joint_reconstructor_utils.state import (
     remove_temporary_operators, extract_image_and_motion_for_next_level,
 )
 from src.reconstruction.joint_reconstructor_utils.regularization import _assign_cached_reg_scale
+from src.reconstruction.joint_reconstructor_utils.calibration_prior import CalibrationPriorEncodingOperator
 from src.reconstruction.joint_reconstructor_utils.logging import JointReconstructionLogger
 from src.reconstruction.joint_reconstructor_utils.timing import Timer
 
@@ -50,7 +52,9 @@ class JointReconstructor:
         motion_plot_context: dict[str, Any] | None = None,
         initial_image: torch.Tensor | None = None,
         initial_motion: torch.Tensor | None = None,
-        external_image_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None):
+        external_image_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        calibration_image_prior: torch.Tensor | None = None,
+        voxel_spacing_mm: tuple[float, ...] | None = None):
         """Initialize joint reconstruction.
 
         Args:
@@ -69,6 +73,10 @@ class JointReconstructor:
                 ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
             external_image_regularizer: Optional callable mapping an image to
                 a same-shape, same-device image prior.
+            calibration_image_prior: Optional nonnegative calibration magnitude
+                used as the multiplicative GRICS++ image constraint.
+            voxel_spacing_mm: Physical spacing of the full-resolution encoded
+                image grid; required by GRICS++ motion scaling.
         """
         Ncoils, Nx_full, Ny_full, Nz_full = smaps.shape
 
@@ -81,7 +89,33 @@ class JointReconstructor:
             self.Nalpha = 6 if self.Nz_full > 1 else 3
         else:
             self.Nalpha = 3 if self.Nz_full > 1 else 2
+        self.regularization_scaling = getattr(params, 'regularization_scaling', 'direct')
+        self.use_calibration_image_prior = getattr(params, 'use_calibration_image_prior', False)
+        if self.regularization_scaling not in ('direct', 'grics_cpp'):
+            raise ValueError('regularization_scaling must be direct or grics_cpp.')
+        if self.use_calibration_image_prior and external_image_regularizer is not None:
+            raise ValueError('Calibration image prior cannot be combined with an external image regularizer.')
+        spatial_shape = (Nx_full, Ny_full, self.Nz_full) if self.Nz_full > 1 else (Nx_full, Ny_full)
+        if self.use_calibration_image_prior:
+            if calibration_image_prior is None:
+                raise ValueError('Calibration image prior is enabled, but no calibration image was supplied.')
+            calibration = torch.as_tensor(calibration_image_prior, device=self.device)
+            if self.Nz_full == 1 and tuple(calibration.shape) == (Nx_full, Ny_full, 1):
+                calibration = calibration[..., 0]
+            if (tuple(calibration.shape) != spatial_shape or calibration.is_complex()
+                    or not torch.isfinite(calibration).all() or torch.any(calibration < 0)):
+                raise ValueError(f'Calibration image prior must be a finite nonnegative real image of shape {spatial_shape}.')
+            self.calibration_image_prior = calibration.to(torch.float64)
+        else:
+            self.calibration_image_prior = None
+        if self.regularization_scaling == 'grics_cpp':
+            if (voxel_spacing_mm is None or len(voxel_spacing_mm) != len(spatial_shape)
+                    or any(not math.isfinite(float(v)) or float(v) <= 0 for v in voxel_spacing_mm)):
+                raise ValueError('GRICS++ scaling requires positive voxel_spacing_mm.')
+        self.voxel_spacing_mm = tuple(float(v) for v in voxel_spacing_mm) if voxel_spacing_mm is not None else None
         self.kspace_scale = float(kspace_scale)
+        if not math.isfinite(self.kspace_scale) or self.kspace_scale <= 0:
+            raise ValueError('kspace_scale must be positive and finite.')
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
         self.motion_signal = motion_signal.to(self.device)
@@ -111,6 +145,8 @@ class JointReconstructor:
             for ms in range(len(SamplingIndices[0]))
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
+        if self.calibration_image_prior is not None:
+            self.Data_full['CalibrationImagePrior'] = self.calibration_image_prior
         self.motion_states_per_level = configure_motion_states_per_resolution_level(
             self.params, self.motion_signal)
 
@@ -120,15 +156,22 @@ class JointReconstructor:
     ):
         """Solve the regularized image problem with motion held fixed.
 
-        CG solves (E^H E + lambda I)x = E^H y + lambda * prior, where
-        lambda includes any configured regularization scaling. Without a
-        supplied prior, the penalty is lambda * ||x||^2.
+        Without calibration, CG solves (E^H E + lambda I)x = E^H y,
+        optionally with a centered prior on the RHS. With calibration C,
+        solve for p using E*C, then return x=C*p as in GRICS++.
         """
         # Start CG from the current image estimate at this resolution.
         x0 = Data_res["ReconstructedImage"].to(
             self.device, dtype=torch.complex128
         )
         E = Data_res["E"]
+        calibration = Data_res.get("CalibrationImagePrior")
+        if calibration is not None:
+            if image_prior is not None:
+                raise ValueError("Calibration image prior cannot be combined with a centered image prior.")
+            calibration = calibration.unsqueeze(0).expand(self.params.Nex, *calibration.shape)
+            E = CalibrationPriorEncodingOperator(E, calibration)
+            x0 = torch.where(calibration > 0, x0 / calibration.clamp_min(1e-12), torch.zeros_like(x0))
 
         # Back-project measured k-space to form the normal-equation RHS.
         b = E.adjoint(Data_res["KspaceData"])
@@ -146,6 +189,12 @@ class JointReconstructor:
         )
         # Reuse the level's scale so regularization stays consistent across solves.
         _assign_cached_reg_scale(self.params, Data_res, "image", solver, b.flatten())
+        if self.regularization_scaling == "grics_cpp":
+            n_pixels = Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
+            full_pixels = self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"]
+            # C++ uses the raw-data adjoint norm; y here was divided by kspace_scale.
+            solver.reg_scale = ((n_pixels / full_pixels) ** 0.5 * self.kspace_scale
+                                * torch.linalg.norm(b.flatten()).item())
 
         # A supplied prior implements lambda * ||x - prior||_2^2.
         if image_prior is not None:
@@ -162,6 +211,8 @@ class JointReconstructor:
             tol=self.params.tol_recon, differentiable=differentiable,
         )
         self._last_image_cg_info = solver.last_info
+        if calibration is not None:
+            img_vec = calibration.flatten() * img_vec
 
         # Convert the flattened CG solution back to the image's spatial layout.
         if int(Data_res.get("Nz", 1)) > 1:
@@ -169,6 +220,13 @@ class JointReconstructor:
         else:
             img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
+
+    def _grics_cpp_level_spacing_and_ratio(self, data):
+        level_shape = (data["Nx"], data["Ny"]) if self.Nz_full == 1 else (data["Nx"], data["Ny"], data["Nz"])
+        full_shape = (self.Data_full["Nx"], self.Data_full["Ny"]) if self.Nz_full == 1 else (self.Data_full["Nx"], self.Data_full["Ny"], self.Data_full["Nz"])
+        spacing = tuple(self.voxel_spacing_mm[i] * full_shape[i] / level_shape[i]
+                        for i in range(len(level_shape)))
+        return spacing, (math.prod(level_shape) / math.prod(full_shape)) ** 0.5
 
     def _n_motion_params(self, Data_res):
         if self.params.reconstruction_motion_type == "rigid":
@@ -211,6 +269,20 @@ class JointReconstructor:
             # _A(dm) = J^H J dm + mu * GhG(dm)
             # b     = J^H r    - mu * GhG(alpha_current)
             _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
+            if self.regularization_scaling == "grics_cpp":
+                spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
+                solver.regularization_spacing = spacing
+                # J and residual scale together, so k-space normalization cancels.
+                solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
+            if getattr(self.params, "use_motion_preconditioner", False):
+                diagonal = J.approximate_normal_diagonal()
+                diagonal = diagonal + solver._effective_lambda() * solver._gradient_diagonal(
+                    dtype=diagonal.dtype, device=diagonal.device)
+                if not torch.isfinite(diagonal).all():
+                    raise ValueError("Motion preconditioner has non-finite diagonal entries.")
+                floor = torch.clamp(diagonal.max() * 1e-8, min=1e-12)
+                inverse_diagonal = diagonal.clamp_min(floor).reciprocal()
+                solver.preconditioner = lambda residual: inverse_diagonal * residual
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         else:
@@ -225,6 +297,9 @@ class JointReconstructor:
                                   if self.params.cg_use_reg_scale_proxy else None),
             )
             _assign_cached_reg_scale(self.params, Data_res, "motion_rigid", solver, b_data.flatten())
+            if self.regularization_scaling == "grics_cpp":
+                spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
+                solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
             mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         self._last_motion_cg_info = solver.last_info
 
@@ -322,6 +397,13 @@ class JointReconstructor:
             target_states=self.motion_states_per_level[self._current_level_idx],
             motion_signal=self.motion_signal, params=self.params, device=self.device,
         )
+        if self.calibration_image_prior is not None:
+            shape = ((Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]) if self.Nz_full > 1
+                     else (Data_res["Nx"], Data_res["Ny"]))
+            Data_res["CalibrationImagePrior"] = (
+                self.calibration_image_prior if tuple(self.calibration_image_prior.shape) == shape
+                else resize_img_xy(self.calibration_image_prior, shape)
+            )
 
         # Initialize image and motion model
         if idx_res == 0:
@@ -351,9 +433,12 @@ class JointReconstructor:
 
         with logger.iterations(level_index) as gauss_newton_iteration_indices:
             for gauss_newton_iteration_index in gauss_newton_iteration_indices:
-                # Only the last iteration of the entire run may skip motion.
-                is_final_iteration = (level_index == level_count - 1 and gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1)
-                update_motion = not is_final_iteration or update_final_motion
+                is_last_at_level = gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1
+                if getattr(self.params, "image_only_last_iteration_per_level", False):
+                    # GRICS++ does not carry an unevaluated motion update into the next level.
+                    update_motion = not is_last_at_level or (level_index == level_count - 1 and update_final_motion)
+                else:
+                    update_motion = not (level_index == level_count - 1 and is_last_at_level) or update_final_motion
 
                 result = self.gauss_newton_iteration(
                     data, image_regularizer=self.external_image_regularizer,
@@ -473,6 +558,7 @@ class JointReconstructor:
             "Nsamples": self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"],
             "SamplingIndices": self.Data_full["SamplingIndices"] if sampling_indices is None else sampling_indices,
             "MotionSignal": self.motion_signal, "ReconstructedImage": image,
+            "CalibrationImagePrior": self.calibration_image_prior,
             "MotionModel": torch.as_tensor(motion, device=self.device), "_squeeze_nex": squeeze_nex,
         }
 

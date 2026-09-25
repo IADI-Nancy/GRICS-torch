@@ -66,9 +66,11 @@ _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
-    'update_motion_on_final_iteration', 'gn_early_stopping',
+    'update_motion_on_final_iteration', 'gn_early_stopping', 'image_only_last_iteration_per_level',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
+    'regularization_scaling', 'use_calibration_image_prior', 'use_motion_preconditioner',
+    'motion_signal_normalization',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -101,6 +103,7 @@ _BOOL_KEYS = {
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
+    'use_calibration_image_prior', 'use_motion_preconditioner', 'image_only_last_iteration_per_level',
 }
 
 
@@ -361,12 +364,25 @@ def _validate_motion(cfg):
 
 
 def _validate_reconstruction(cfg):
+    cfg.setdefault('regularization_scaling', 'direct')
+    cfg.setdefault('use_calibration_image_prior', False)
+    cfg.setdefault('use_motion_preconditioner', False)
+    cfg.setdefault('image_only_last_iteration_per_level', False)
+    cfg.setdefault('motion_signal_normalization', 'none')
     required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
     _require(cfg, required, 'reconstruction')
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _require(cfg, {'motion_quantization_bins'}, 'kspace-energy motion binning')
     elif 'motion_quantization_bins' in cfg:
         raise ValueError('motion_quantization_bins is only valid when motion_binning_mode="kspace_energy".')
+    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
+    _choice(cfg['motion_signal_normalization'], 'motion_signal_normalization', {'none', 'acquisition_zscore'})
+    if type(cfg['use_calibration_image_prior']) is not bool:
+        raise ValueError('use_calibration_image_prior must be a boolean.')
+    if cfg['regularization_scaling'] == 'grics_cpp' and cfg['cg_use_reg_scale_proxy']:
+        raise ValueError('GRICS++ regularization scaling cannot be combined with the CG scale proxy.')
+    if cfg['use_calibration_image_prior'] and cfg['coil_sensitivity_method'] != 'odille-spline':
+        raise ValueError('Calibration image prior requires odille-spline coil sensitivities.')
     if cfg['cg_use_reg_scale_proxy']:
         _require(cfg, {'cg_reg_scale_num_probes'}, 'CG regularization-scale proxy')
     elif 'cg_reg_scale_num_probes' in cfg:

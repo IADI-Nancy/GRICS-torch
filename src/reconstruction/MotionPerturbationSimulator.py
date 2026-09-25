@@ -81,6 +81,37 @@ class MotionPerturbationSimulator:
 
         return gx, gy, gz
 
+    def approximate_normal_diagonal(self):
+        """Local diagonal approximation to J^H J for non-rigid motion PCG.
+
+        Like the GRICS++ preconditioner, this uses gradients of the warped
+        image and the motion signal. Sampling is represented by its per-state
+        density; off-diagonal Fourier and spatial couplings are omitted.
+        """
+        if self.motionOperator.motion_type != "non-rigid":
+            raise ValueError("Motion preconditioning is supported only for non-rigid motion.")
+        _, nx, ny, nz = self.SensitivityMaps.shape
+        spatial_shape = (nx, ny, nz) if nz > 1 else (nx, ny)
+        nvoxels = nx * ny * nz
+        diagonal = torch.zeros((self.Nalpha, *spatial_shape, self.Nphysio),
+                               dtype=self.image.real.dtype, device=self.device)
+        coil_power = self.SensitivityMaps.abs().square().sum(dim=0)
+        if nz == 1:
+            coil_power = coil_power.squeeze(-1)
+        signal = torch.as_tensor(self.motionOperator.motion_signal, device=self.device)
+        for state in range(len(self.SamplingIndices[0])):
+            warp = self.motionOperator._get_sparse_operator(state)
+            weights = signal[state].abs().square()
+            for nex in range(self.Nex):
+                fraction = self.SamplingIndices[nex][state].numel() / nvoxels
+                if fraction == 0:
+                    continue
+                warped = (warp @ self.image[nex].flatten()).reshape(spatial_shape)
+                gradients = self._gradient_3d(warped) if nz > 1 else self._gradient_2d(warped)
+                for dim, gradient in enumerate(gradients):
+                    diagonal[dim] += (fraction * coil_power * gradient.abs().square()).unsqueeze(-1) * weights
+        return diagonal.flatten()
+
     def forward(self, MotionModelPerturbation):
         Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
         is_3d = int(Nz) > 1

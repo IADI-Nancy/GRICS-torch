@@ -12,6 +12,10 @@ bart-*
 latex/
 .conda-latex/
 tests/*
+!tests/test_grics_cpp_regularization.py
+!tests/test_motion_preconditioner_schedule.py
+!tests/test_motion_input_normalization.py
+!tests/compare_one_subject_motion_correction.py
 !tests/test_configuration_validation.py
 !tests/test_data_loading.py
 data/*
@@ -22,6 +26,8 @@ runs/
 article/*
 !article/*.py
 !article/README.md
+# Generated article figures stay local, including figures in nested result folders.
+article/**/*.png
 !tests/test_output_management.py
 !tests/test_generic_physio_data_types.py
 !tests/compare_polaris_physio_reconstructions.py

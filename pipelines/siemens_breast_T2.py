@@ -203,6 +203,10 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     synchronize(data.kspace.device)
     preprocessing_seconds = time.perf_counter() - started
     image, motion, reconstruction_seconds = timed_reconstruction(data)
+    # Keep the solver output separate from the display/DICOM output below.
+    # Quantitative native-grid metrics must not include reference normalization
+    # or ISMRMRD zero filling.
+    native_image = image.detach().cpu().numpy()
     started = time.perf_counter()
     if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
@@ -216,10 +220,12 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     return {
         'slice_idx': slice_idx, 'slice_number': slice_idx + 1,
         'image': image.detach().cpu().numpy(), 'motion': motion.detach().cpu().numpy(),
+        'native_image': native_image,
         'preprocessing_seconds': preprocessing_seconds,
         'reconstruction_seconds': reconstruction_seconds,
         'postprocessing_seconds': postprocessing_seconds,
         'image_stage': 'after_postprocessing',
+        'native_image_stage': 'native_solver_image',
         '_configuration': public_config(data.params),
     }
 
@@ -315,6 +321,7 @@ def reconstruct_slices_in_parallel(source, slice_indices, max_workers=None):
     for result in results:
         result['image'] = torch.from_numpy(result['image'])
         result['motion'] = torch.from_numpy(result['motion'])
+        result['native_image'] = torch.from_numpy(result['native_image'])
     return results, workers
 
 

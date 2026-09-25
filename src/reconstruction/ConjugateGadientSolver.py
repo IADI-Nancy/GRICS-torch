@@ -13,7 +13,8 @@ class ConjugateGradientSolver:
     """
     def __init__(self, encoding_operator, *, reg_lambda, regularizer, regularization_shape,
         regularization_spatial_dims, verbose, stop_on_stagnation, true_residual_interval,
-        stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes):
+        stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes,
+        regularization_spacing=None, preconditioner=None):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -24,6 +25,8 @@ class ConjugateGradientSolver:
         self.regularizer = regularizer
         self.regularization_shape = regularization_shape
         self.regularization_spatial_dims = regularization_spatial_dims
+        self.preconditioner = preconditioner
+        self.regularization_spacing = regularization_spacing
         if self.regularizer in ("Tikhonov_gradient", "Tikhonov_laplacian"):
             if self.regularization_shape is None:
                 raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
@@ -104,7 +107,8 @@ class ConjugateGradientSolver:
         result = torch.zeros_like(field)
 
         # Compute -div(grad(field)) along selected spatial dimensions.
-        for d in spatial_dims:
+        for index, d in enumerate(spatial_dims):
+            spacing_squared = (self.regularization_spacing[index] ** 2 if self.regularization_spacing is not None else 1.0)
             # Forward difference along dimension d (zero-gradient boundary).
             df = torch.zeros_like(field)
             slc_src = [slice(None)] * field.ndim
@@ -127,10 +131,28 @@ class ConjugateGradientSolver:
             sn_prev = [slice(None)] * field.ndim; sn_prev[d] = -2
             div[tuple(sn)] = df[tuple(sn_prev)]
 
-            result += div
+            result += div / spacing_squared
 
         return result.reshape(-1)
     
+    def _gradient_diagonal(self, *, dtype, device):
+        """Diagonal of the zero-gradient-boundary G^H G used by _gradient_op."""
+        diagonal = torch.zeros(self.regularization_shape, dtype=dtype, device=device)
+        for index, dim in enumerate(self.regularization_spatial_dims):
+            length = self.regularization_shape[dim]
+            if length < 2:
+                continue
+            spacing = self.regularization_spacing[index] if self.regularization_spacing is not None else 1.0
+            contribution = 1.0 / (spacing * spacing)
+            diagonal += 2.0 * contribution
+            first = [slice(None)] * diagonal.ndim
+            last = [slice(None)] * diagonal.ndim
+            first[dim] = 0
+            last[dim] = -1
+            diagonal[tuple(first)] -= contribution
+            diagonal[tuple(last)] -= contribution
+        return diagonal.flatten()
+
     def _laplacian_op(self, x):
         if self.regularization_shape is None:
             raise ValueError("regularization_shape must be set for Tikhonov_laplacian regularization.")
@@ -199,7 +221,7 @@ class ConjugateGradientSolver:
             # bound on image or motion error.
             tolb = tol * b_norm
 
-            z = r.clone()
+            z = self.preconditioner(r) if self.preconditioner is not None else r.clone()
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
             eps = torch.finfo(r.real.dtype).eps
@@ -301,7 +323,7 @@ class ConjugateGradientSolver:
                         stop_reason = "early_stopping"
                         break
 
-                z = r.clone()
+                z = self.preconditioner(r) if self.preconditioner is not None else r.clone()
 
                 rz_new = torch.dot(torch.conj(r), z).real
                 if rz_old.abs() < 1e-15:

@@ -25,6 +25,7 @@ from src.utils.fftnc import fftnc, ifftnc # normalised fft and ifft for n dimens
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.Sampling import Sampling
 from src.preprocessing.MotionBinner import MotionBinner
+from src.preprocessing.motion_input_normalization import acquisition_zscore_motion_input
 from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.reconstruction.EncodingOperator import EncodingOperator
@@ -716,6 +717,10 @@ class DataLoader:
 
         if self.params.kspace_sampling_type == "from-data":
             self._source_motion_data = torch.from_numpy(data['motion_data']).to(self.t_device)
+            if getattr(self.params, 'motion_signal_normalization', 'none') == 'acquisition_zscore':
+                self._source_motion_data, mean, std = acquisition_zscore_motion_input(
+                    self._source_motion_data, data_dimension=self.params.data_dimension)
+                print(f'[motion] acquisition z-score: mean={mean.tolist()}, std={std.tolist()}', flush=True)
             self._source_idx_ky = torch.from_numpy(data['idx_ky']).to(self.t_device, dtype=torch.int64)
             self._source_idx_kz = torch.from_numpy(data['idx_kz']).to(self.t_device, dtype=torch.int64)
             self._source_idx_nex = torch.from_numpy(data['idx_nex']).to(self.t_device, dtype=torch.int64)

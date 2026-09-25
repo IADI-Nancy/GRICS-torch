@@ -52,7 +52,8 @@ class SiemensT2APITests(unittest.TestCase):
             output_root=self.root / 'runs/t2', device='cpu',
             overrides=dict(ResolutionLevels=[0.5, 1.0], GN_iterations_per_level=[2, 2],
                            N_motion_states=4, N_motion_states_per_level='full',
-                           max_iter_recon=2, max_iter_motion=2),
+                           max_iter_recon=2, max_iter_motion=2,
+                           regularization_scaling='direct', use_calibration_image_prior=False),
         )
 
     def test_sequential_parallel_and_repeated_calls(self):
@@ -98,6 +99,21 @@ class SiemensT2APITests(unittest.TestCase):
         manifest = json.loads((result['run_folder'] / 'manifest.json').read_text())
         self.assertEqual(manifest['inputs']['raw_data_file'], str(prepared))
         self.assertIsNone(manifest['inputs']['saec_file'])
+
+    def test_grics_cpp_scaling_and_calibration_prior_run_on_2d_slice(self):
+        matrix = SimpleNamespace(x=8, y=8, z=1)
+        fov = SimpleNamespace(x=16.0, y=24.0, z=1.0)
+        header = SimpleNamespace(encoding=[SimpleNamespace(
+            encodedSpace=SimpleNamespace(matrixSize=matrix, fieldOfView_mm=fov))])
+        options = dict(self.options)
+        options['overrides'] = {
+            **self.options['overrides'],
+            'regularization_scaling': 'grics_cpp',
+            'use_calibration_image_prior': True,
+        }
+        with patch.object(_execution, 'acquisition_header', return_value=header):
+            result = pipeline.run_pipeline(self.raw, self.saec, max_workers=1,
+                                           slice_stop=1, **options)
 
     def test_exports_follow_all_reconstructions(self):
         original = pipeline.timed_reconstruction
