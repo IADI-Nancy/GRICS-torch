@@ -364,11 +364,6 @@ def _validate_motion(cfg):
 
 
 def _validate_reconstruction(cfg):
-    cfg.setdefault('regularization_scaling', 'direct')
-    cfg.setdefault('use_calibration_image_prior', False)
-    cfg.setdefault('use_motion_preconditioner', False)
-    cfg.setdefault('image_only_last_iteration_per_level', False)
-    cfg.setdefault('motion_signal_normalization', 'none')
     required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
     _require(cfg, required, 'reconstruction')
     if cfg['motion_binning_mode'] == 'kspace_energy':

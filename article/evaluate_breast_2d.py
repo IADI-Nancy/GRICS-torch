@@ -76,6 +76,24 @@ def score_image(image: torch.Tensor) -> float:
     return score
 
 
+def max_slice_reconstruction_seconds(row: dict) -> float:
+    """Use saved per-slice solver times, including legacy run manifests."""
+    saved = row.get('slice_reconstruction_seconds')
+    if saved is None:
+        manifest = json.loads((Path(row['run_folder']) / 'manifest.json').read_text())
+        records = manifest['reconstructions'].values()
+        by_slice = {int(item['slice_number']): float(item['reconstruction_seconds'])
+                    for item in records}
+        if sorted(by_slice) != list(range(1, int(row['slice_count']) + 1)):
+            raise ValueError(f"Missing per-slice timing for {row['subject']}")
+        saved = list(by_slice.values())
+    if len(saved) != int(row['slice_count']) or any(
+        not np.isfinite(value) or value <= 0 for value in saved
+    ):
+        raise ValueError(f"Invalid per-slice timing for {row['subject']}")
+    return max(float(value) for value in saved)
+
+
 def save_results(rows, folder: Path) -> None:
     """Checkpoint measurements and regenerate paired acquisition-level plots."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -83,7 +101,7 @@ def save_results(rows, folder: Path) -> None:
     temporary.write_text(json.dumps(rows, indent=2, allow_nan=False))
     temporary.replace(folder / 'measurements.json')
     fields = ['subject', 'mode', 'motion_states', 'slice_count', 'mean_sharpness',
-              'reconstruction_seconds_sum', 'compute_wall_seconds', 'run_folder']
+              'reconstruction_seconds_sum', 'reconstruction_seconds_max', 'compute_wall_seconds', 'run_folder']
     with (folder / 'measurements.csv').open('w', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction='ignore')
         writer.writeheader()
@@ -92,12 +110,20 @@ def save_results(rows, folder: Path) -> None:
               if {row['mode'] for row in rows if row['subject'] == name} == {'corrected', 'nomoco'}]
     if not paired:
         return
+    by_key = {(row['subject'], row['mode']): row for row in rows}
     for metric, ylabel, filename in (
         ('mean_sharpness', 'Mean slice sharpness index', 'sharpness_boxplot.png'),
-        ('reconstruction_seconds_sum', 'Sum of per-slice reconstruction times (s)', 'time_boxplot.png'),
+        ('reconstruction_seconds_max', 'Longest slice solver time per subject (s)', 'time_boxplot.png'),
     ):
-        values = [[next(row[metric] for row in rows if row['subject'] == subject and row['mode'] == mode)
-                   for subject in paired] for mode in ('corrected', 'nomoco')]
+        values = []
+        for mode in ('corrected', 'nomoco'):
+            mode_values = []
+            for subject in paired:
+                row = by_key[subject, mode]
+                value = (max_slice_reconstruction_seconds(row)
+                         if metric == 'reconstruction_seconds_max' else row[metric])
+                mode_values.append(value)
+            values.append(mode_values)
         fig, ax = plt.subplots(figsize=(6, 5))
         ax.boxplot(values)
         ax.set_xticks([1, 2], ['Motion corrected', 'No motion correction'])
@@ -227,6 +253,10 @@ def evaluate(ismrmrd_dir=DATABASE/'ISMRMRD', saec_dir=DATABASE/'SAEC', dataset_d
                 slice_sharpness=slice_scores,
                 sharpness_image_stage='native_solver_image',
                 reconstruction_seconds_sum=result['timings']['reconstruction_seconds_sum'],
+                reconstruction_seconds_max=max(item['reconstruction_seconds']
+                                               for item in result['reconstructions']),
+                slice_reconstruction_seconds=[item['reconstruction_seconds']
+                                              for item in result['reconstructions']],
                 compute_wall_seconds=result['timings']['compute_wall_seconds'],
                 run_folder=str(result['run_folder']), timings=result['timings']))
             save_results(rows, results)

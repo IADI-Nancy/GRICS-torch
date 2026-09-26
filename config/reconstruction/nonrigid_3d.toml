@@ -14,6 +14,8 @@ N_motion_states = 8
 # "kspace_energy" requires motion_quantization_bins (integer >= 2; e.g. 256).
 # For "kmeans", omit motion_quantization_bins; the config loader rejects it.
 motion_binning_mode = "kmeans"
+# Do not rescale the physiological signal before motion-state binning.
+motion_signal_normalization = "none"
 
 # Multi-resolution reconstruction
 # Multi-resolution scale factors: strictly increasing in (0, 1], ending at 1.0.
@@ -25,6 +27,8 @@ N_motion_states_per_level = "full"
 GN_iterations_per_level = [10, 4, 4]
 # false keeps the conventional final GN iteration image-only.
 update_motion_on_final_iteration = false
+# Do not add an image-only iteration after every resolution level.
+image_only_last_iteration_per_level = false
 # true stops a resolution level when its image residual increases.
 gn_early_stopping = true
 
@@ -46,6 +50,10 @@ cg_use_reg_scale_proxy = true
 # Number of probes for regularization scaling estimate.
 # Required only when cg_use_reg_scale_proxy = true; omit otherwise.
 cg_reg_scale_num_probes = 8
+# Apply lambda directly, without GRICS++ adjoint-norm/voxel-spacing scaling.
+regularization_scaling = "direct"
+# Do not use the calibration magnitude as a multiplicative image prior.
+use_calibration_image_prior = false
 
 # Image update
 # Image reconstruction regularization weight.
@@ -60,5 +68,7 @@ tol_recon = 1.0e-4
 lambda_m = 10.0
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 15
+# Do not use the local gradient-based Jacobi motion preconditioner.
+use_motion_preconditioner = false
 # Convergence tolerance for motion update.
 tol_motion = 1.0e-3

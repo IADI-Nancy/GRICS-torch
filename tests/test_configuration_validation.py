@@ -48,6 +48,44 @@ class StrictConfigurationChecks(unittest.TestCase):
                             'motion_simulation_config': f'config/motion_simulation/{motion}_{dim}.toml',
                             'sampling_config': f'config/sampling_simulation/{sampling}.toml'})
 
+    def test_breast_3d_matches_grics_cpp_solver_profile(self):
+        params = load_config(
+            data_type='preprocessed-real',
+            reconstruction_config='config/reconstruction/nonrigid_3d_breast.toml',
+            coil_sensitivity_config='config/coil_sensitivity/odille_spline.toml',
+        )
+        expected = {
+            'reconstruction_dimension': '3D',
+            'reconstruction_motion_type': 'non-rigid',
+            'N_motion_states': 16,
+            'motion_binning_mode': 'kspace_energy',
+            'motion_quantization_bins': 256,
+            'motion_signal_normalization': 'acquisition_zscore',
+            'ResolutionLevels': [0.25, 0.5, 1.0],
+            'N_motion_states_per_level': [8, 16, 16],
+            'GN_iterations_per_level': [8, 8, 2],
+            'update_motion_on_final_iteration': False,
+            'image_only_last_iteration_per_level': True,
+            'gn_early_stopping': True,
+            'cg_stop_on_stagnation': False,
+            'cg_use_reg_scale_proxy': False,
+            'regularization_scaling': 'grics_cpp',
+            'use_calibration_image_prior': True,
+            'lambda_r': 1,
+            'max_iter_recon': 10,
+            'tol_recon': 1.0e-3,
+            'lambda_m': 0.5,
+            'max_iter_motion': 15,
+            'use_motion_preconditioner': True,
+            'tol_motion': 1.0e-2,
+            'coil_sensitivity_method': 'odille-spline',
+            'spline_magnitude_smoothing': 1000.0,
+            'spline_phase_smoothing': 1000.0,
+        }
+        for key, value in expected.items():
+            with self.subTest(setting=key):
+                self.assertEqual(getattr(params, key), value)
+
     def test_mode_specific_settings_reject_inactive_values(self):
         with self.assertRaisesRegex(ValueError, 'FoVxy_mm'):
             load_config(**SYNTH, overrides={'FoVxy_mm': 220.0})
@@ -105,6 +143,17 @@ class StrictConfigurationChecks(unittest.TestCase):
             path.write_text('[reconstruction]\nreconstruction_dimension="2D"\nreconstruction_motion_type="non-rigid"\n')
             with self.assertRaisesRegex(ValueError,'Missing reconstruction'):
                 load_config(**{**BASE,'reconstruction_config':path})
+            reconstruction = Path('config/reconstruction/nonrigid_2d.toml').read_text()
+            for key in ('regularization_scaling', 'use_calibration_image_prior',
+                        'use_motion_preconditioner', 'image_only_last_iteration_per_level',
+                        'motion_signal_normalization'):
+                path.write_text('\n'.join(
+                    line for line in reconstruction.splitlines()
+                    if not line.startswith(f'{key} =')
+                ) + '\n')
+                with self.subTest(missing_reconstruction_setting=key), self.assertRaisesRegex(
+                        ValueError, key):
+                    load_config(**{**BASE, 'reconstruction_config': path})
             with self.assertRaises(ValueError):
                 load_config(**BASE,shepp_logan_config='config/synthetic_data/shepp_logan_2d.toml')
 

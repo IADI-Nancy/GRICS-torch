@@ -2,7 +2,7 @@
 
 import torch
 
-from .resize import resize_img_xy
+from .fourier_crop import fourier_crop_spatial
 
 
 def downsample_sampling_indices(Data_full, Sampling_full, Nx_res, Ny_res, Nz_res=1):
@@ -158,13 +158,20 @@ def reduce_motion_states(sampling_indices, target_states, motion_signal, params,
 
 
 def downsample_data(Data_full, res_factor, target_states, motion_signal, params, device):
-    Nx = int(round(Data_full["Nx"] * res_factor))
-    Ny = int(round(Data_full["Ny"] * res_factor))
+    # Coarse dimensions are truncated and rounded down to even values.
+    # The final resolution retains the original dimensions.
+    def level_size(full_size):
+        if res_factor == 1:
+            return full_size
+        return max(1, 2 * (int(full_size * res_factor) // 2))
+
+    Nx = level_size(Data_full["Nx"])
+    Ny = level_size(Data_full["Ny"])
     Nz_full = int(Data_full.get("Nz", 1))
     # Preserve 3D motion at every level: its spatial gradients require at
     # least two depth samples. A singleton depth would select 2D operators
     # and misinterpret the original volume axis during sensitivity resizing.
-    Nz = max(2, int(round(Nz_full * res_factor))) if Nz_full > 1 else 1
+    Nz = max(2, level_size(Nz_full)) if Nz_full > 1 else 1
 
     Data_res = {}
     Data_res["Nx"] = Nx
@@ -172,7 +179,12 @@ def downsample_data(Data_full, res_factor, target_states, motion_signal, params,
     Data_res["Nz"] = Nz
 
     resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
-    Data_res["SensitivityMaps"] = resize_img_xy(Data_full["SensitivityMaps"], resize_shape)
+    smaps = Data_full["SensitivityMaps"]
+    if Nz_full == 1:
+        # The 2D coil-map convention keeps a trailing singleton z axis.
+        Data_res["SensitivityMaps"] = fourier_crop_spatial(smaps[..., 0], resize_shape).unsqueeze(-1)
+    else:
+        Data_res["SensitivityMaps"] = fourier_crop_spatial(smaps, resize_shape)
     sampling_indices = downsample_sampling_indices(
         Data_full, Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
     )

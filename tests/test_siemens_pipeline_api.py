@@ -152,7 +152,9 @@ class TimingTests(unittest.TestCase):
         events = []
         data = SimpleNamespace(kspace=SimpleNamespace(device=torch.device('cuda:0')),
                                smaps=None, sampling_idx=None, motion_signal=None,
-                               params=SimpleNamespace(save_reconstruction_tensors=True), kspace_scale=1, motion_plot_context=None)
+                               params=SimpleNamespace(save_reconstruction_tensors=True,
+                                                      regularization_scaling='direct'),
+                               kspace_scale=1, motion_plot_context=None)
         def run(**kwargs):
             self.assertEqual(kwargs, {'defer_tensor_export': True})
             events.append('run')

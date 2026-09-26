@@ -717,7 +717,7 @@ class DataLoader:
 
         if self.params.kspace_sampling_type == "from-data":
             self._source_motion_data = torch.from_numpy(data['motion_data']).to(self.t_device)
-            if getattr(self.params, 'motion_signal_normalization', 'none') == 'acquisition_zscore':
+            if self.params.motion_signal_normalization == 'acquisition_zscore':
                 self._source_motion_data, mean, std = acquisition_zscore_motion_input(
                     self._source_motion_data, data_dimension=self.params.data_dimension)
                 print(f'[motion] acquisition z-score: mean={mean.tolist()}, std={std.tolist()}', flush=True)

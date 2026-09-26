@@ -13,6 +13,10 @@ latex/
 .conda-latex/
 tests/*
 !tests/test_grics_cpp_regularization.py
+!tests/test_fourier_coarse_resampling.py
+!tests/run_all_matched_breast_2d.py
+!tests/profile_isolated_breast_2d.py
+!tests/profile_breast_2d_worker_sweep.py
 !tests/test_motion_preconditioner_schedule.py
 !tests/test_motion_input_normalization.py
 !tests/compare_one_subject_motion_correction.py

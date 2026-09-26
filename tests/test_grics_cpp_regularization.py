@@ -61,6 +61,28 @@ class GricsCppRegularizationTests(unittest.TestCase):
         torch.testing.assert_close(solve(1.0), expected, rtol=1e-10, atol=1e-10)
         torch.testing.assert_close(solve(10.0), expected, rtol=1e-10, atol=1e-10)
 
+    def test_complex_cropped_calibration_prior_with_warm_start(self):
+        reconstructor = image_reconstructor(1.0)
+        calibration = torch.tensor(
+            [[1.0 + 0.5j, -0.4 + 0.2j], [0.0j, 2.0 - 0.3j]],
+            dtype=torch.complex128,
+        )
+        measured = torch.tensor(
+            [[2.0 + 1.0j, 3.0 - 2.0j], [1.0j, 4.0 + 0.5j]],
+            dtype=torch.complex128,
+        )
+        data = {
+            "Nx": 2, "Ny": 2, "Nz": 1, "E": IdentityEncoding(),
+            "KspaceData": measured.flatten(),
+            "ReconstructedImage": torch.ones((1, 2, 2), dtype=torch.complex128),
+            "CalibrationImagePrior": calibration,
+        }
+        image = reconstructor._solve_image(data, regularization_weight=0.5)
+        rhs = calibration.conj() * measured
+        effective_lambda = 0.5 * torch.linalg.norm(rhs).item()
+        expected = calibration * rhs / (calibration.abs().square() + effective_lambda)
+        torch.testing.assert_close(image[0], expected, rtol=1e-10, atol=1e-10)
+
     def test_direct_mode_retains_original_image_penalty(self):
         reconstructor = image_reconstructor(1.0)
         reconstructor.regularization_scaling = "direct"

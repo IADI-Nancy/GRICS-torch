@@ -80,6 +80,7 @@ def collect(root, mode):
             rows.append(dict(subject=subject.name, mode=mode, slice_count=len(slices),
                              mean_sharpness=float(np.mean([s['sharpness'] for s in slices])),
                              reconstruction_seconds_sum=sum(s['reconstruction_seconds'] for s in slices),
+                             reconstruction_seconds_max=max(s['reconstruction_seconds'] for s in slices),
                              total_elapsed_seconds_sum=sum(s['total_elapsed_seconds'] for s in slices),
                              slices=slices))
             print(f'[score] {subject.name}: {mode}, {len(slices)} slices', flush=True)
@@ -87,6 +88,25 @@ def collect(root, mode):
             excluded.append(dict(subject=subject.name, mode=mode, reason=str(error)))
             print(f'[skip] {subject.name}: {error}', flush=True)
     return rows, excluded
+
+
+def torch_slice_solver_times(row):
+    """Load per-slice solver times from a Torch measurement or its saved run."""
+    count = int(row['slice_count'])
+    saved = row.get('slice_reconstruction_seconds')
+    if saved is not None:
+        by_slice = {number: float(value) for number, value in enumerate(saved, start=1)}
+    else:
+        manifest_path = Path(row['run_folder']) / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        records = manifest['reconstructions'].values()
+        by_slice = {int(item['slice_number']): float(item['reconstruction_seconds'])
+                    for item in records}
+    if sorted(by_slice) != list(range(1, count + 1)) or any(
+        not np.isfinite(value) or value <= 0 for value in by_slice.values()
+    ):
+        raise ValueError(f"Invalid per-slice Torch timing for {row['subject']}")
+    return by_slice
 
 
 def boxplot(values, labels, ylabel, title, path):
@@ -144,11 +164,12 @@ def cross_implementation_plots(cpp_rows, torch_rows, output_dir):
 
     corrected = subjects_by_mode['corrected']
     if corrected:
-        maxima = [max(cpp[subject, 'corrected']['reconstruction_seconds_sum'] for subject in corrected),
-                  max(tor[subject, 'corrected']['reconstruction_seconds_sum'] for subject in corrected)]
+        maxima = [max(cpp[subject, 'corrected']['reconstruction_seconds_max'] for subject in corrected),
+                  max(max(torch_slice_solver_times(tor[subject, 'corrected']).values())
+                      for subject in corrected)]
         fig, axis = plt.subplots(figsize=(6, 5))
         axis.bar(['GRICS++', 'GRICS-torch'], maxima)
-        axis.set_ylabel('Maximum corrected sum of per-slice solver times (s)')
+        axis.set_ylabel('Worst per-subject slice solver time (s)')
         axis.set_title(f'Breast 2D corrected calculation time: {len(corrected)} matched acquisitions')
         fig.tight_layout()
         fig.savefig(output_dir/'max_corrected_solver_time_cpp_vs_torch.png', dpi=200)
@@ -171,7 +192,7 @@ def evaluate(cpp_root, torch_measurements, output_dir, nomoco_root=None):
     (output_dir/'measurements.json').write_text(json.dumps(rows, indent=2, allow_nan=False))
     with (output_dir/'measurements.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['subject', 'mode', 'slice_count', 'mean_sharpness',
-                                            'reconstruction_seconds_sum', 'total_elapsed_seconds_sum'],
+                                            'reconstruction_seconds_sum', 'reconstruction_seconds_max', 'total_elapsed_seconds_sum'],
                                 extrasaction='ignore')
         writer.writeheader()
         writer.writerows(rows)
@@ -184,7 +205,7 @@ def evaluate(cpp_root, torch_measurements, output_dir, nomoco_root=None):
              [(x['slice_number'], x['image_shape']) for x in by_mode['nomoco'][s]['slices']]]
     for metric, ylabel, filename in (
         ('mean_sharpness', 'Mean native-grid slice sharpness index', 'sharpness_boxplot.png'),
-        ('reconstruction_seconds_sum', 'Sum of per-slice solver times (s)', 'time_boxplot.png')):
+        ('reconstruction_seconds_max', 'Longest slice solver time per subject (s)', 'time_boxplot.png')):
         if pairs:
             values = [[by_mode[mode][s][metric] for s in pairs] for mode in ('corrected', 'nomoco')]
             labels = ['GRICS++ corrected', 'GRICS++ one-state']
@@ -204,24 +225,42 @@ def evaluate(cpp_root, torch_measurements, output_dir, nomoco_root=None):
             unmatched.append(dict(subject=cpp['subject'], mode=cpp['mode'], reason='Missing/duplicate Torch measurement or unequal slice count'))
             continue
         t = matches[0]
-        seconds = float(t['reconstruction_seconds_sum'])
-        if not np.isfinite(seconds) or seconds <= 0:
-            raise ValueError(f"Invalid Torch timing: {cpp['subject']}")
-        comparison.append(dict(subject=cpp['subject'], mode=cpp['mode'], slice_count=cpp['slice_count'],
-                               cpp_solver_seconds=cpp['reconstruction_seconds_sum'], torch_solver_seconds=seconds,
-                               cpp_over_torch=cpp['reconstruction_seconds_sum']/seconds,
+        try:
+            torch_times = torch_slice_solver_times(t)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            unmatched.append(dict(subject=cpp['subject'], mode=cpp['mode'],
+                                  reason=f"Missing or invalid per-slice Torch timing: {error}"))
+            continue
+        cpp_times = {item['slice_number']: item['reconstruction_seconds']
+                     for item in cpp['slices']}
+        if set(torch_times) != set(cpp_times):
+            unmatched.append(dict(subject=cpp['subject'], mode=cpp['mode'],
+                                  reason="Unequal slice numbers"))
+            continue
+        cpp_max = max(cpp_times.values())
+        torch_max = max(torch_times.values())
+        comparison.append(dict(subject=cpp['subject'], mode=cpp['mode'],
+                               slice_count=cpp['slice_count'],
+                               cpp_max_slice_seconds=cpp_max, torch_max_slice_seconds=torch_max,
+                               cpp_over_torch_max=cpp_max / torch_max,
+                               cpp_solver_seconds_sum=cpp['reconstruction_seconds_sum'],
+                               torch_solver_seconds_sum=float(t['reconstruction_seconds_sum']),
+                               torch_compute_wall_seconds=float(t['compute_wall_seconds']),
                                torch_run_folder=t['run_folder']))
     (output_dir/'unmatched.json').write_text(json.dumps(unmatched, indent=2))
     with (output_dir/'time_comparison.csv').open('w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['subject', 'mode', 'slice_count', 'cpp_solver_seconds',
-                                            'torch_solver_seconds', 'cpp_over_torch', 'torch_run_folder'])
+        writer = csv.DictWriter(f, fieldnames=['subject', 'mode', 'slice_count',
+                                            'cpp_max_slice_seconds', 'torch_max_slice_seconds',
+                                            'cpp_over_torch_max', 'cpp_solver_seconds_sum',
+                                            'torch_solver_seconds_sum', 'torch_compute_wall_seconds',
+                                            'torch_run_folder'])
         writer.writeheader()
         writer.writerows(comparison)
     for mode in ('corrected', 'nomoco'):
         paired = [r for r in comparison if r['mode'] == mode]
         if paired:
-            boxplot([[r[key] for r in paired] for key in ('cpp_solver_seconds', 'torch_solver_seconds')],
-                    ['GRICS++', 'GRICS-torch'], 'Sum of per-slice solver times (s)',
+            boxplot([[r[key] for r in paired] for key in ('cpp_max_slice_seconds', 'torch_max_slice_seconds')],
+                    ['GRICS++', 'GRICS-torch'], 'Longest slice solver time per subject (s)',
                     f'{mode}: {len(paired)} paired acquisitions', output_dir/f'time_cpp_vs_torch_{mode}.png')
     print(f'[results] {output_dir}: {len(rows)} GRICS++ measurements, {len(comparison)} timing pairs')
     cross_implementation_plots(rows, torch_rows, output_dir)

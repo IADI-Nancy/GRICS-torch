@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from src.reconstruction.joint_reconstructor_utils.resampling import (
-    downsample_data, upsample_data, resize_img_xy,
+    downsample_data, upsample_data, resize_img_xy, fourier_crop_spatial,
 )
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.joint_reconstructor_utils.configuration import (
@@ -89,8 +89,8 @@ class JointReconstructor:
             self.Nalpha = 6 if self.Nz_full > 1 else 3
         else:
             self.Nalpha = 3 if self.Nz_full > 1 else 2
-        self.regularization_scaling = getattr(params, 'regularization_scaling', 'direct')
-        self.use_calibration_image_prior = getattr(params, 'use_calibration_image_prior', False)
+        self.regularization_scaling = params.regularization_scaling
+        self.use_calibration_image_prior = params.use_calibration_image_prior
         if self.regularization_scaling not in ('direct', 'grics_cpp'):
             raise ValueError('regularization_scaling must be direct or grics_cpp.')
         if self.use_calibration_image_prior and external_image_regularizer is not None:
@@ -171,7 +171,11 @@ class JointReconstructor:
                 raise ValueError("Calibration image prior cannot be combined with a centered image prior.")
             calibration = calibration.unsqueeze(0).expand(self.params.Nex, *calibration.shape)
             E = CalibrationPriorEncodingOperator(E, calibration)
-            x0 = torch.where(calibration > 0, x0 / calibration.clamp_min(1e-12), torch.zeros_like(x0))
+            # Fourier cropping can make a real calibration image complex.
+            # Divide by its complex value, guarding only zero-magnitude voxels.
+            nonzero = calibration.abs() > 1e-12
+            safe_calibration = torch.where(nonzero, calibration, torch.ones_like(calibration))
+            x0 = torch.where(nonzero, x0 / safe_calibration, torch.zeros_like(x0))
 
         # Back-project measured k-space to form the normal-equation RHS.
         b = E.adjoint(Data_res["KspaceData"])
@@ -274,7 +278,7 @@ class JointReconstructor:
                 solver.regularization_spacing = spacing
                 # J and residual scale together, so k-space normalization cancels.
                 solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
-            if getattr(self.params, "use_motion_preconditioner", False):
+            if self.params.use_motion_preconditioner:
                 diagonal = J.approximate_normal_diagonal()
                 diagonal = diagonal + solver._effective_lambda() * solver._gradient_diagonal(
                     dtype=diagonal.dtype, device=diagonal.device)
@@ -402,7 +406,7 @@ class JointReconstructor:
                      else (Data_res["Nx"], Data_res["Ny"]))
             Data_res["CalibrationImagePrior"] = (
                 self.calibration_image_prior if tuple(self.calibration_image_prior.shape) == shape
-                else resize_img_xy(self.calibration_image_prior, shape)
+                else fourier_crop_spatial(self.calibration_image_prior, shape)
             )
 
         # Initialize image and motion model
@@ -434,7 +438,7 @@ class JointReconstructor:
         with logger.iterations(level_index) as gauss_newton_iteration_indices:
             for gauss_newton_iteration_index in gauss_newton_iteration_indices:
                 is_last_at_level = gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1
-                if getattr(self.params, "image_only_last_iteration_per_level", False):
+                if self.params.image_only_last_iteration_per_level:
                     # GRICS++ does not carry an unevaluated motion update into the next level.
                     update_motion = not is_last_at_level or (level_index == level_count - 1 and update_final_motion)
                 else:

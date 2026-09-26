@@ -151,6 +151,7 @@ are host-clock diagnostics; the synchronized outer timer is the authoritative
 GPU reconstruction measurement. The 3D result reports preprocessing, transfer, and export times
 separately. T2 reports each slice's preprocessing/solver/postprocessing times,
 `reconstruction_seconds_sum` (the sum of solver times, not parallel wall time),
+`reconstruction_seconds_max` (the longest slice solver time when available),
 and `compute_wall_seconds` (slice preparation, reconstruction, postprocessing,
 worker startup and transfers, excluding exports). `pipeline_seconds` includes
 loading and exports through the end of export; manifest `elapsed_s` also

@@ -74,6 +74,6 @@ lambda_m = 0.5
 # Maximum CG iterations for each motion update. Must be a positive integer.
 max_iter_motion = 10
 # Use a local gradient-based Jacobi preconditioner for motion PCG.
-use_motion_preconditioner = true
+use_motion_preconditioner = false
 # Relative convergence tolerance for motion updates. Must be positive.
 tol_motion = 1.0e-2
