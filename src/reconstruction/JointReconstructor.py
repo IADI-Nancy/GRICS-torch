@@ -394,14 +394,8 @@ class JointReconstructor:
 
         with logger.iterations(level_index) as gauss_newton_iteration_indices:
             for gauss_newton_iteration_index in gauss_newton_iteration_indices:
-                # GRICS++ ends every resolution level with an image solve at
-                # the latest accepted motion estimate. Do not create a motion
-                # update that cannot be followed by an image reconstruction at
-                # the same level.
-                is_final_iteration = (
-                    gauss_newton_iteration_index
-                    == gauss_newton_iterations_at_level - 1
-                )
+                # Only the last iteration of the entire run may skip motion.
+                is_final_iteration = (level_index == level_count - 1 and gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1)
                 update_motion = not is_final_iteration or update_final_motion
 
                 result = self.gauss_newton_iteration(
