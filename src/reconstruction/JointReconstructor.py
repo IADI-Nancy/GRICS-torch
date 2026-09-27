@@ -160,8 +160,13 @@ class JointReconstructor:
         if self.regularization_scaling == "grics_cpp":
             level_pixels = Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
             full_pixels = self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"]
-            solver.reg_scale = ((level_pixels / full_pixels) ** 0.5 * self.kspace_scale
-                                * torch.linalg.norm(b.flatten()).item())
+            # Each NEX is an independent image unknown. Its regularization
+            # must use its own RHS norm; a stacked norm couples otherwise
+            # independent images and grows by sqrt(Nex) for identical repeats.
+            rhs_per_image = b.reshape(self.params.Nex, level_pixels)
+            image_scales = ((level_pixels / full_pixels) ** 0.5 * self.kspace_scale
+                            * torch.linalg.vector_norm(rhs_per_image, dim=1))
+            solver.reg_scale = image_scales.repeat_interleave(level_pixels)
 
         # A supplied prior implements lambda * ||x - prior||_2^2.
         if image_prior is not None:
