@@ -1,6 +1,7 @@
 """Run logging, progress display, and diagnostic plots for joint reconstruction."""
 
 import os
+import json
 import time
 from pathlib import Path
 from src.runtime.output_layout import record_reconstruction
@@ -179,6 +180,9 @@ class JointReconstructionLogger:
                 f"image_only = True : {elapsed:.6f} s\n"
             )
             return
+        if motion_cg_info and "iterate_comparison" in motion_cg_info:
+            self.append("    Motion CG iterate comparison: " + json.dumps(
+                motion_cg_info["iterate_comparison"], sort_keys=True))
         self.append(
             "    Model optimization step: "
             f"{_format_cg_info(motion_cg_info)}, "

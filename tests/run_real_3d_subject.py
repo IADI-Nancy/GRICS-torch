@@ -17,6 +17,9 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from contextlib import nullcontext
+from functools import wraps
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -143,6 +146,20 @@ def run_test(subject_file: Path, *, device: str, output_root: Path,
     return result
 
 
+def motion_iterate_diagnostics():
+    """Enable the optional CG audit for nonrigid motion solves in this test only."""
+    from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
+    original = ConjugateGradientSolver.cg
+
+    @wraps(original)
+    def audited(solver, *args, **kwargs):
+        if solver.regularizer == "Tikhonov_gradient":
+            kwargs["compare_iterates"] = True
+        return original(solver, *args, **kwargs)
+
+    return patch.object(ConjugateGradientSolver, 'cg', audited)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--dataset-root', type=Path, default=DEFAULT_DATASET_ROOT,
@@ -153,14 +170,21 @@ def main(argv=None):
                         help='Matching SAEC physiology used with the ISMRMRD acquisition.')
     parser.add_argument('--device', choices=('gpu', 'cpu'), default='gpu')
     parser.add_argument('--output-root', type=Path, default=REPO_ROOT / 'runs/test_real_3d_subject')
+    parser.add_argument('--compare-motion-cg-iterates', action='store_true',
+                        help='Log true residual and quadratic objective for last and best motion CG iterates; '
+                             'keeps the best iterate and adds two operator evaluations per motion solve.')
     args = parser.parse_args(argv)
     subject_file = args.dataset_root.expanduser() / SUBJECT_FILENAME
     if not subject_file.is_file():
         for path in (args.ismrmrd_file.expanduser(), args.saec_file.expanduser()):
             if not path.is_file():
                 parser.error(f'Fallback input does not exist: {path}')
-    run_test(subject_file, device=args.device, output_root=args.output_root.expanduser(),
-             ismrmrd_file=args.ismrmrd_file.expanduser(), saec_file=args.saec_file.expanduser())
+    if args.compare_motion_cg_iterates:
+        print('[audit] Comparing last and minimum-residual motion CG iterates; '
+              'the minimum-residual iterate remains selected. Two extra operator evaluations per solve.', flush=True)
+    with motion_iterate_diagnostics() if args.compare_motion_cg_iterates else nullcontext():
+        run_test(subject_file, device=args.device, output_root=args.output_root.expanduser(),
+                 ismrmrd_file=args.ismrmrd_file.expanduser(), saec_file=args.saec_file.expanduser())
 
 
 if __name__ == '__main__':

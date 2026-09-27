@@ -174,7 +174,7 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False, compare_iterates=False):
         """
         Solve _A(x) = b using Conjugate Gradient.
 
@@ -223,6 +223,7 @@ class ConjugateGradientSolver:
                 stagnation_countdown_steps = max(1, min(n // 50, 5, max(n - max_iter, 1)))
             else:
                 stagnation_countdown_steps = max(1, int(self.stagnation_countdown_steps))
+            best_iteration = 0
             best_x = x.clone()
             best_rel = torch.linalg.norm(r) / b_norm
             iters_done = 0
@@ -285,6 +286,7 @@ class ConjugateGradientSolver:
                 if rel_res < best_rel:
                     best_rel = rel_res
                     best_x = x.clone()
+                    best_iteration = iters_done
                 if self.verbose:
                     print(
                         f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
@@ -339,6 +341,28 @@ class ConjugateGradientSolver:
                 "relres_history": relres_history,
                 "stop_reason": stop_reason,
             }
+
+            if compare_iterates:
+                # Evaluate both candidates against this exact fixed system.
+                # q omits the constant term common to both candidates.
+                def measure(candidate):
+                    applied = self._A(candidate)
+                    return {
+                        "true_relres": float((torch.linalg.vector_norm(b - applied) / b_norm).item()),
+                        "quadratic_objective": float((
+                            0.5 * torch.vdot(candidate, applied).real
+                            - torch.vdot(candidate, b).real).item()),
+                        "update_norm": float(torch.linalg.vector_norm(candidate).item()),
+                    }
+
+                self.last_info["iterate_comparison"] = {
+                    "selected": "minimum_recorded_residual",
+                    "best_iteration": best_iteration,
+                    "last_iteration": iters_done,
+                    "best": measure(best_x),
+                    "last": measure(x),
+                    "difference_norm": float(torch.linalg.vector_norm(x - best_x).item()),
+                }
 
             # Return the iterate with the smallest recorded relative residual,
             # which need not be the last iterate. last_info above describes the
