@@ -174,7 +174,8 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False, compare_iterates=False):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False,
+           compare_iterates=False, return_last_iterate=False):
         """
         Solve _A(x) = b using Conjugate Gradient.
 
@@ -356,7 +357,8 @@ class ConjugateGradientSolver:
                     }
 
                 self.last_info["iterate_comparison"] = {
-                    "selected": "minimum_recorded_residual",
+                    "selected": ("last_iterate" if return_last_iterate
+                                 else "minimum_recorded_residual"),
                     "best_iteration": best_iteration,
                     "last_iteration": iters_done,
                     "best": measure(best_x),
@@ -364,11 +366,12 @@ class ConjugateGradientSolver:
                     "difference_norm": float(torch.linalg.vector_norm(x - best_x).item()),
                 }
 
-            # Return the iterate with the smallest recorded relative residual,
-            # which need not be the last iterate. last_info above describes the
-            # final attempted iteration; residual history is not all "true"
-            # residuals because direct recomputation happens only on refreshes.
-            return best_x
+            # Image solves retain the historical minimum-residual selection.
+            # Motion solves request the final CG iterate, matching GRICS++.
+            # last_info describes the final attempted iteration; residual
+            # history is not all "true" because direct recomputation happens
+            # only on refreshes.
+            return x if return_last_iterate else best_x
         
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG

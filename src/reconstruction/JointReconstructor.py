@@ -246,7 +246,10 @@ class JointReconstructor:
             if self.regularization_scaling == "grics_cpp":
                 solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
-            mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
+            mot_pert_vec = solver.cg(
+                b.flatten(), x0=x0.flatten(), max_iter=max_iterations,
+                tol=self.params.tol_motion, return_last_iterate=True,
+            )
         else:
             # Rigid motion uses a magnitude penalty on the increment itself:
             # (J^H J + mu I) dm = J^H residual.
@@ -262,7 +265,10 @@ class JointReconstructor:
             if self.regularization_scaling == "grics_cpp":
                 spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
                 solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
-            mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
+            mot_pert_vec = solver.cg(
+                b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations,
+                tol=self.params.tol_motion, return_last_iterate=True,
+            )
         self._last_motion_cg_info = solver.last_info
 
         # Restore either per-state rigid parameters or spatial motion fields.

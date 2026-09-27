@@ -52,6 +52,14 @@ class IterateComparisonTests(unittest.TestCase):
         self.assertEqual(info['difference_norm'], 0.)
         self.assertEqual(info['best'], info['last'])
 
+    def test_last_iterate_selection_returns_the_final_candidate(self):
+        b = torch.tensor([1., .1], dtype=torch.float64)
+        s = solver()
+        returned = s.cg(b, max_iter=1, tol=1e-12, compare_iterates=True,
+                        return_last_iterate=True)
+        torch.testing.assert_close(returned, torch.tensor([.505, .0505], dtype=torch.float64))
+        self.assertEqual(s.last_info['iterate_comparison']['selected'], 'last_iterate')
+
 
 if __name__ == '__main__':
     unittest.main()
