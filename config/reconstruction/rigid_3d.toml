@@ -14,6 +14,8 @@ N_motion_states = 4
 # "kspace_energy" requires motion_quantization_bins (integer >= 2; e.g. 256).
 # For "kmeans", omit motion_quantization_bins; the config loader rejects it.
 motion_binning_mode = "kmeans"
+# No additional physiological rescaling.
+motion_signal_normalization = "none"
 
 # Multi-resolution reconstruction
 # Multi-resolution scale factors: strictly increasing in (0, 1], ending at 1.0.

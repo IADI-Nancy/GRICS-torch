@@ -24,7 +24,7 @@ class SAECReader:
         self.metadata = {}
 
     def read_channels(self, filename):
-        """Return processed channels with stop-trigger alignment and edge padding."""
+        """Return IADI-filtered channels aligned to the Siemens start trigger."""
         time_saec, resp = SAECReader._read_and_process_data(
             filename, self.sensor_type)
         if isinstance(resp, (list, tuple)):
@@ -36,12 +36,32 @@ class SAECReader:
             values = [signal.reshape(-1)] if signal.ndim <= 1 else list(signal)
             times = [timestamps[i] if timestamps.ndim > 1 else timestamps
                      for i in range(len(values))]
-        return times, values, 0.0, "edge"
+        bounds = "linear_extrapolate" if self.sensor_type == "BELT" else "raise"
+        return times, values, 0.0, bounds
 
-    @staticmethod
-    def prepare_motion(interpolated):
-        """SAEC channels are already normalized during reading."""
-        return interpolated
+    def prepare_motion(self, interpolated, *, acquisition_times=None):
+        """Apply IADI post-interpolation BELT drift correction and scaling."""
+        if self.sensor_type != 'BELT':
+            return interpolated
+        if acquisition_times is None:
+            raise ValueError('BELT preparation requires MRI acquisition timestamps.')
+        signal = np.asarray(interpolated, dtype=np.float32)
+        times = np.asarray(acquisition_times, dtype=np.float64)
+        if signal.ndim != 2 or signal.shape[0] != times.size:
+            raise ValueError('BELT data must have one row per MRI acquisition timestamp.')
+        output = np.empty(signal.shape, dtype=np.float64)
+        for channel in range(signal.shape[1]):
+            values = signal[:, channel].astype(np.float64)
+            mean, sigma = np.mean(values), np.std(values)
+            if not np.isfinite(sigma) or sigma <= 0:
+                raise ValueError('BELT signal has no finite non-zero variance.')
+            clipped = np.clip(values, mean - 2 * sigma, mean + 2 * sigma)
+            corrected = values - np.polyval(np.polyfit(times, clipped, 2), times)
+            scale = np.std(corrected)
+            if not np.isfinite(scale) or scale <= 0:
+                raise ValueError('Drift-corrected BELT signal has no finite non-zero variance.')
+            output[:, channel] = (corrected - np.mean(corrected)) / scale
+        return output
 
     import numpy as np
 
@@ -85,6 +105,27 @@ class SAECReader:
         return best_start, best_stop, max_duration
 
     @staticmethod
+    def _find_iadi_trigger_interval(starts, stops, respiratory_timestamps):
+        """Reproduce the trigger-pair selection in SavePhysiologicalDataGRICS.py."""
+        starts, stops = np.asarray(starts).reshape(-1), np.asarray(stops).reshape(-1)
+        if not len(starts) or not len(stops) or not respiratory_timestamps:
+            return None, None, 0
+        samples = np.concatenate([np.asarray(t).reshape(-1) for t in respiratory_timestamps])
+        respiratory_span = float(np.max(samples) - np.min(samples))
+        best_start = best_stop = None
+        maximum = 0.0
+        for start in starts[::-1]:
+            candidate_stop = None
+            candidate_duration = respiratory_span
+            for stop in stops[::-1]:
+                duration = float(stop) - float(start)
+                if 0 < duration < candidate_duration:
+                    candidate_stop, candidate_duration = stop, duration
+            if candidate_stop is not None and candidate_duration > maximum:
+                best_start, best_stop, maximum = start, candidate_stop, candidate_duration
+        return best_start, best_stop, maximum
+
+    @staticmethod
     def _get_respiration_from_saec(filename, sensor_type, flag_LR=False):
         SAECData = h5Saec.from_file(filename.strip())
         ticksTo1s = SAECData.attributes.ticksTo1s
@@ -106,8 +147,9 @@ class SAECReader:
                         print("Accelerometer data was not found for a MARMOT")
 
             if 'SAEC_TRIGGER_SIEMENS' in attr:
-                _, sequence_stop, _ = \
-                    SAECReader._find_longest_valid_sequence(value.SeqStart.timestamp.values, value.SeqStop.timestamp.values)
+                sequence_start, _, _ = SAECReader._find_iadi_trigger_interval(
+                    value.SeqStart.timestamp.values, value.SeqStop.timestamp.values,
+                    timestampsSAEC)
 
         if not respiratory_data:
             raise ValueError(
@@ -116,7 +158,7 @@ class SAECReader:
                 "it must contain MARMOT groups with non-empty ACC data."
             )
 
-        if 'sequence_stop' not in locals():
+        if 'sequence_start' not in locals() or sequence_start is None:
             raise ValueError(
                 f"No Siemens sequence trigger found in SAEC file '{filename}'. "
                 "Expected a SAEC_TRIGGER_SIEMENS group with SeqStart/SeqStop timestamps."
@@ -124,7 +166,7 @@ class SAECReader:
 
         timestamps_in_sec = []
         for timestamp in timestampsSAEC:
-            timestamp_in_sec = (np.float64(timestamp) - np.float64(sequence_stop)) / ticksTo1s
+            timestamp_in_sec = (np.float64(timestamp) - np.float64(sequence_start)) / ticksTo1s
             timestamps_in_sec.append(timestamp_in_sec)
 
         return timestamps_in_sec, respiratory_data
@@ -193,7 +235,7 @@ class SAECReader:
             timestamps = np.squeeze(timestamps[0])
             respiratory_data = respiratory_data[0]
             order = 1
-            fcut = 1.
+            fcut = 3.
             fsampling = np.float64(len(timestamps)) / (timestamps[-1] - timestamps[0])
             normal_cutoff = fcut / (fsampling / 2)
 
@@ -204,18 +246,6 @@ class SAECReader:
             idx_track = 0 if sigma1 > sigma2 else 1
 
             respiratory_data_filtered = filtfilt(b, a, respiratory_data[:, idx_track])
-
-            # Remove the outliers
-            mean = np.mean(respiratory_data_filtered)
-            sigma = np.std(respiratory_data_filtered)
-            respiratory_data_within_2_sigma = np.where(respiratory_data_filtered > mean + 2 * sigma, mean + 2 * sigma, respiratory_data_filtered)
-            respiratory_data_within_2_sigma = np.where(respiratory_data_filtered < mean - 2 * sigma, mean - 2 * sigma, respiratory_data_filtered)
-            a2, a1, a0 = np.polyfit(timestamps, respiratory_data_within_2_sigma, 2)
-
-            # Correction of the drift
-
-            correction = -(a2 * timestamps**2 + a1 * timestamps + a0)
-            respiratory_data_filtered = respiratory_data_filtered + correction
 
             if path_to_graph is not None:
                 save_line_plot(timestamps, respiratory_data_filtered, os.path.join(path_to_graph, "respiratory_data_filtered.png"),

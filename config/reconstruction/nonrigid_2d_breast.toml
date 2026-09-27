@@ -18,6 +18,8 @@ motion_binning_mode = "kspace_energy"
 # motion_binning_mode = "kspace_energy". Must be an integer greater than or equal to 2.
 # Required only when motion_binning_mode = "kspace_energy"; omit otherwise.
 motion_quantization_bins = 256
+# GRICS++ acquisition-wide physiological normalization.
+motion_signal_normalization = "acquisition_zscore"
 
 # Multi-resolution reconstruction
 # Spatial scale at each reconstruction level, relative to full resolution.
