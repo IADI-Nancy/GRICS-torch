@@ -221,9 +221,13 @@ class JointReconstructor:
                 if int(Data_res.get("Nz", 1)) > 1
                 else (self.Nalpha, Data_res["Nx"], Data_res["Ny"], self.Nphysio)
             )
+            spacing = ratio = None
+            if self.regularization_scaling == "grics_cpp":
+                spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
             solver = ConjugateGradientSolver(
                 J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov_gradient",
-                regularization_shape=reg_shape, regularization_spatial_dims=(1, 2, 3) if int(Data_res.get("Nz", 1)) > 1 else (1, 2), verbose=self.params.verbose,
+                regularization_shape=reg_shape, regularization_spatial_dims=(1, 2, 3) if int(Data_res.get("Nz", 1)) > 1 else (1, 2),
+                regularization_spacing=spacing, verbose=self.params.verbose,
                 stop_on_stagnation=self.params.cg_stop_on_stagnation, true_residual_interval=self.params.cg_true_residual_interval,
                 stagnation_consecutive_steps=self.params.cg_stagnation_consecutive_steps, stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps,
                 use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy, reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
@@ -235,8 +239,6 @@ class JointReconstructor:
             # b     = J^H r    - mu * GhG(alpha_current)
             _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
             if self.regularization_scaling == "grics_cpp":
-                spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
-                solver.regularization_spacing = spacing
                 solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
