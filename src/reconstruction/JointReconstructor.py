@@ -1,3 +1,4 @@
+import math
 import torch
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -50,7 +51,8 @@ class JointReconstructor:
         motion_plot_context: dict[str, Any] | None = None,
         initial_image: torch.Tensor | None = None,
         initial_motion: torch.Tensor | None = None,
-        external_image_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None):
+        external_image_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        voxel_spacing_mm: tuple[float, ...] | None = None):
         """Initialize joint reconstruction.
 
         Args:
@@ -81,6 +83,15 @@ class JointReconstructor:
             self.Nalpha = 6 if self.Nz_full > 1 else 3
         else:
             self.Nalpha = 3 if self.Nz_full > 1 else 2
+        self.regularization_scaling = params.regularization_scaling
+        spatial_dims = 3 if self.Nz_full > 1 else 2
+        if self.regularization_scaling not in ('direct', 'grics_cpp'):
+            raise ValueError('regularization_scaling must be direct or grics_cpp.')
+        if self.regularization_scaling == 'grics_cpp':
+            if (voxel_spacing_mm is None or len(voxel_spacing_mm) != spatial_dims
+                    or any(not math.isfinite(float(v)) or float(v) <= 0 for v in voxel_spacing_mm)):
+                raise ValueError('GRICS++ scaling requires positive voxel_spacing_mm.')
+        self.voxel_spacing_mm = tuple(float(v) for v in voxel_spacing_mm) if voxel_spacing_mm is not None else None
         self.kspace_scale = float(kspace_scale)
         if motion_signal is None:
             raise ValueError("motion_signal must be provided.")
@@ -146,6 +157,11 @@ class JointReconstructor:
         )
         # Reuse the level's scale so regularization stays consistent across solves.
         _assign_cached_reg_scale(self.params, Data_res, "image", solver, b.flatten())
+        if self.regularization_scaling == "grics_cpp":
+            level_pixels = Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
+            full_pixels = self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"]
+            solver.reg_scale = ((level_pixels / full_pixels) ** 0.5 * self.kspace_scale
+                                * torch.linalg.norm(b.flatten()).item())
 
         # A supplied prior implements lambda * ||x - prior||_2^2.
         if image_prior is not None:
@@ -169,6 +185,13 @@ class JointReconstructor:
         else:
             img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
         return img
+
+    def _grics_cpp_level_spacing_and_ratio(self, data):
+        level_shape = (data["Nx"], data["Ny"]) if self.Nz_full == 1 else (data["Nx"], data["Ny"], data["Nz"])
+        full_shape = (self.Data_full["Nx"], self.Data_full["Ny"]) if self.Nz_full == 1 else (self.Data_full["Nx"], self.Data_full["Ny"], self.Data_full["Nz"])
+        spacing = tuple(self.voxel_spacing_mm[i] * full_shape[i] / level_shape[i]
+                        for i in range(len(level_shape)))
+        return spacing, (math.prod(level_shape) / math.prod(full_shape)) ** 0.5
 
     def _n_motion_params(self, Data_res):
         if self.params.reconstruction_motion_type == "rigid":
@@ -211,6 +234,10 @@ class JointReconstructor:
             # _A(dm) = J^H J dm + mu * GhG(dm)
             # b     = J^H r    - mu * GhG(alpha_current)
             _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
+            if self.regularization_scaling == "grics_cpp":
+                spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
+                solver.regularization_spacing = spacing
+                solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
             mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         else:
@@ -225,6 +252,9 @@ class JointReconstructor:
                                   if self.params.cg_use_reg_scale_proxy else None),
             )
             _assign_cached_reg_scale(self.params, Data_res, "motion_rigid", solver, b_data.flatten())
+            if self.regularization_scaling == "grics_cpp":
+                spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
+                solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
             mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         self._last_motion_cg_info = solver.last_info
 

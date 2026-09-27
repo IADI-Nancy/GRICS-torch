@@ -49,10 +49,12 @@ cg_stagnation_countdown_steps = 6
 # When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.
 cg_use_reg_scale_proxy = false
+# Scale image and motion regularization as in GRICS++.
+regularization_scaling = "grics_cpp"
 
 # Image update
 # Image reconstruction regularization weight.
-lambda_r = 5.0e-2
+lambda_r = 1
 # Maximum CG/GN inner iterations for image update.
 max_iter_recon = 10
 # Convergence tolerance for image update.
@@ -60,7 +62,7 @@ tol_recon = 1.0e-3
 
 # Motion update
 # Motion reconstruction regularization weight.
-lambda_m = 10.0 #0.5 #10.0
+lambda_m = 0.5
 # Maximum CG/GN inner iterations for motion update.
 max_iter_motion = 15
 # Convergence tolerance for motion update.

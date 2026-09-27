@@ -64,7 +64,7 @@ _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothin
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
-    'motion_signal_normalization',
+    'motion_signal_normalization', 'regularization_scaling',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping',
@@ -374,6 +374,7 @@ def _validate_reconstruction(cfg):
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
     _choice(cfg['motion_signal_normalization'], 'motion_signal_normalization', {'none', 'acquisition_zscore'})
+    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
     levels = cfg['ResolutionLevels']
     if not isinstance(levels, list) or not levels:
         raise ValueError('ResolutionLevels must be a nonempty list.')
