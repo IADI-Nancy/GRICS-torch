@@ -23,16 +23,60 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import h5py
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 
 from pipelines.siemens_breast_3d_lowres import run_pipeline
+from article.evaluate_grics_cpp_3d import read_volume, load_cpp_image, selected_planes, oriented_plane
 
 DEFAULT_DATASET_ROOT = Path('/home/pyuser/wkdir/data/GRICS-torch/article_dataset_3D')
 # Fixed subject for reproducible integration runs; change it here when needed.
-SUBJECT_FILENAME = '0072_T1_s.h5'
+SUBJECT_FILENAME = '0079_T1_s.h5'
 RAW_DATA_ROOT = Path('/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database')
 DEFAULT_ISMRMRD_FILE = RAW_DATA_ROOT / 'ISMRMRD' / SUBJECT_FILENAME
 DEFAULT_SAEC_FILE = RAW_DATA_ROOT / 'SAEC' / SUBJECT_FILENAME
+
+DEFAULT_BASELINE = Path('/home/pyuser/wkdir/data/GRICS-torch/article_dataset_3D_old/results/runs/0079_T1_s/corrected/20260923T114822516683-f18c5a40/reconstructions/volume_001/results/image_reconstructed.pt')
+DEFAULT_CPP_FOLDER = RAW_DATA_ROOT / 'GRICS-BELT-3D' / '0079_T1_s'
+
+
+def _magnitude_volume(image):
+    image = torch.as_tensor(image).detach().cpu()
+    return image.abs().mean(dim=0).numpy() if image.ndim == 4 else image.abs().numpy()
+
+
+def _relative_magnitude_l2(image, reference):
+    scale = float(np.vdot(reference.ravel(), image.ravel()).real / np.vdot(image.ravel(), image.ravel()).real)
+    aligned = image * scale
+    return float(np.linalg.norm(aligned - reference) / np.linalg.norm(reference)), scale
+
+
+def _write_cpp_comparison(current, run_folder):
+    baseline = _magnitude_volume(torch.load(DEFAULT_BASELINE, map_location='cpu', weights_only=True))
+    cpp = load_cpp_image(read_volume(DEFAULT_CPP_FOLDER))
+    images = {'release_1_torch': baseline, 'grics_cpp': cpp, 'current_torch': _magnitude_volume(current)}
+    if len({value.shape for value in images.values()}) != 1:
+        raise AssertionError(f'Comparison image shapes differ: { {key: value.shape for key, value in images.items()} }.')
+    reference = images['current_torch']
+    metrics = {key: dict(zip(('relative_magnitude_l2_after_scale', 'scale'), _relative_magnitude_l2(reference, value)))
+               for key, value in images.items() if key != 'current_torch'}
+    folder = Path(run_folder) / 'comparison'
+    folder.mkdir()
+    figure, axes = plt.subplots(3, 3, figsize=(13, 12), constrained_layout=True)
+    vmax = max(float(np.quantile(image, .995)) for image in images.values())
+    for row, plane_name in enumerate(('axial', 'sagittal', 'coronal')):
+        for col, (name, image) in enumerate(images.items()):
+            plane = oriented_plane(selected_planes(image)[row], row)
+            axes[row, col].imshow(plane, cmap='gray', vmin=0, vmax=vmax)
+            axes[row, col].set_title(f'{plane_name}: {name}')
+            axes[row, col].axis('off')
+    figure.savefig(folder / 'comparison_vs_release1_and_cpp.png', dpi=180)
+    plt.close(figure)
+    (folder / 'comparison_vs_release1_and_cpp.json').write_text(json.dumps(metrics, indent=2) + '\n')
+    return folder, metrics
 
 
 def require(condition, message):
@@ -92,6 +136,9 @@ def run_test(subject_file: Path, *, device: str, output_root: Path,
     print(f"[PASS] {subject_file.name}; actual device: {config['runtime_device']}")
     print(f"Image: {tuple(image.shape)}; motion: {tuple(motion.shape)}")
     print(f"Reconstruction including logs: {result['timings']['reconstruction_seconds']:.3f} s")
+    comparison_folder, metrics = _write_cpp_comparison(image, run_folder)
+    print(f'Comparison: {comparison_folder}')
+    print(json.dumps(metrics, indent=2))
     print(f'Outputs: {run_folder}')
     return result
 
