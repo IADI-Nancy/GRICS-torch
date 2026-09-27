@@ -52,6 +52,8 @@ def timed_reconstruction(data):
         kspace_scale=data.kspace_scale, motion_plot_context=data.motion_plot_context,
         calibration_image_prior=getattr(data, 'grics_reference_image', None),
         voxel_spacing_mm=voxel_spacing_mm,
+        virtual_sampling_indices=getattr(data, 'virtual_sampling_idx', None),
+        virtual_motion_signal=getattr(data, 'virtual_motion_signal', None),
     )
     image, motion = reconstructor.run(defer_tensor_export=True)
     synchronize(data.kspace.device)

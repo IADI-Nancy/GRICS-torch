@@ -48,7 +48,7 @@ class StrictConfigurationChecks(unittest.TestCase):
                             'motion_simulation_config': f'config/motion_simulation/{motion}_{dim}.toml',
                             'sampling_config': f'config/sampling_simulation/{sampling}.toml'})
 
-    def test_breast_3d_matches_grics_cpp_solver_profile(self):
+    def test_breast_3d_solver_profile(self):
         params = load_config(
             data_type='preprocessed-real',
             reconstruction_config='config/reconstruction/nonrigid_3d_breast.toml',
@@ -57,9 +57,11 @@ class StrictConfigurationChecks(unittest.TestCase):
         expected = {
             'reconstruction_dimension': '3D',
             'reconstruction_motion_type': 'non-rigid',
+            'repetition_image_model': 'shared',
             'N_motion_states': 16,
             'motion_binning_mode': 'kspace_energy',
             'motion_quantization_bins': 256,
+            'kspace_energy_level_source': 'quantized_virtual_states',
             'motion_signal_normalization': 'acquisition_zscore',
             'ResolutionLevels': [0.25, 0.5, 1.0],
             'N_motion_states_per_level': [8, 16, 16],

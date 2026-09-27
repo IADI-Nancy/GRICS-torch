@@ -89,8 +89,8 @@ class RawDataPreparer:
             raise ValueError('Acquisition times must be a nonempty finite 1D array.')
         if not np.isfinite(physio_clock_drift_seconds):
             raise ValueError('physio_clock_drift_seconds must be finite.')
-        if bounds not in {'raise', 'edge', 'autoregression'}:
-            raise ValueError("bounds must be 'raise', 'edge' or 'autoregression'.")
+        if bounds not in {'raise', 'edge', 'autoregression', 'linear_extrapolate'}:
+            raise ValueError("bounds must be 'raise', 'edge', 'autoregression' or 'linear_extrapolate'.")
         if not len(channel_values) or len(channel_times) != len(channel_values):
             raise ValueError('Provide one timestamp array per physiological channel.')
         if source_sequence_end is not None and not np.isfinite(source_sequence_end):
@@ -125,7 +125,16 @@ class RawDataPreparer:
                                       or target.max() > relative_times[-1] + 1e-9):
                 raise ValueError(f'Channel {index}: physiological data do not cover MRI readouts; '
                                  'cannot synchronize without extrapolation.')
-            interpolated.append(np.interp(target, relative_times, values))
+            result = np.interp(target, relative_times, values)
+            if bounds == 'linear_extrapolate':
+                left, right = target < relative_times[0], target > relative_times[-1]
+                if np.any(left):
+                    slope = (values[1] - values[0]) / (relative_times[1] - relative_times[0])
+                    result[left] = values[0] + slope * (target[left] - relative_times[0])
+                if np.any(right):
+                    slope = (values[-1] - values[-2]) / (relative_times[-1] - relative_times[-2])
+                    result[right] = values[-1] + slope * (target[right] - relative_times[-1])
+            interpolated.append(result)
         return np.column_stack(interpolated)
 
     @staticmethod
@@ -184,6 +193,8 @@ class RawDataPreparer:
         raw = self.reader.read_data()
         times, values, end, bounds = self._physiological_channels()
         acquisition_times = raw["time_seconds"].detach().cpu().numpy()
+        if self.physiological_format == 'SAEC':
+            acquisition_times = acquisition_times - acquisition_times[0]
         if getattr(self.physiological_reader, 'already_synchronized', False):
             if self.physio_clock_drift_seconds != 0:
                 raise ValueError('physio_clock_drift_seconds must be zero for already-synchronized '
@@ -207,7 +218,10 @@ class RawDataPreparer:
             "acquisition_values": interpolated,
             "slice_indices": raw["slice_indices"].detach().cpu().numpy(),
         }
-        motion = self.physiological_reader.prepare_motion(interpolated)
+        motion = (self.physiological_reader.prepare_motion(
+            interpolated, acquisition_times=acquisition_times)
+            if self.physiological_format == 'SAEC'
+            else self.physiological_reader.prepare_motion(interpolated))
         motion, ky, kz, nex = self._reshape_data_slicewise(
             torch.as_tensor(motion, device=self.device), raw["slice_indices"],
             raw["idx_ky"], raw["idx_kz"], raw["idx_nex"],

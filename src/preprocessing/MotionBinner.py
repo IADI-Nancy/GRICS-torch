@@ -73,7 +73,8 @@ def _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx):
     )
 
 
-def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
+def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256,
+                           return_virtual_state_data=False):
     """GRICS++ virtual-time quantization and k-space-energy state selection."""
     quantized = _quantize_motion_features(x, n_quantization_bins)
     virtual_states, inverse = torch.unique(quantized, dim=0, return_inverse=True)
@@ -106,7 +107,18 @@ def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
     for state, virtual_idx in enumerate(selected):
         samples = inverse == virtual_idx
         centers[state] = x[samples].mean(dim=0)
-    return labels, centers
+    if not return_virtual_state_data:
+        return labels, centers
+
+    # Keep one representative physiological value for each quantized virtual
+    # time. A multiresolution GRICS++ solve selects from these original
+    # virtual times after its resolution-specific k-space crop.
+    virtual_centers = torch.empty(
+        (n_virtual, x.shape[1]), dtype=x.dtype, device=x.device,
+    )
+    for virtual_idx in range(n_virtual):
+        virtual_centers[virtual_idx] = x[inverse == virtual_idx].mean(dim=0)
+    return labels, centers, inverse, virtual_centers
 
 
 class MotionBinner:
@@ -121,7 +133,8 @@ class MotionBinner:
     @staticmethod
     def bin_motion(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params,
         tx=None, ty=None, phi=None, tz=None, rx=None, ry=None, rz=None,
-        y_limits=None, return_debug_data=False, kspace=None):
+        y_limits=None, return_debug_data=False, return_virtual_state_data=False,
+        kspace=None):
 
         motion_curve = motion_curve.to(t_device)
         Nbins = params.N_motion_states
@@ -153,8 +166,15 @@ class MotionBinner:
             labels, centers = _kmeans_torch(motion_features, Nbins)
         elif binning_mode == "kspace_energy":
             readout_energy = _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx).to(device=t_device, dtype=motion_features.dtype)
-            labels, centers = _kspace_energy_binning(motion_features, Nbins, readout_energy,
-                    n_quantization_bins=int(params.motion_quantization_bins))
+            kspace_result = _kspace_energy_binning(
+                motion_features, Nbins, readout_energy,
+                n_quantization_bins=int(params.motion_quantization_bins),
+                return_virtual_state_data=return_virtual_state_data,
+            )
+            if return_virtual_state_data:
+                labels, centers, virtual_labels, virtual_centers = kspace_result
+            else:
+                labels, centers = kspace_result
         else:
             raise ValueError(
                 f"Unsupported motion_binning_mode: {binning_mode!r}. "
@@ -186,5 +206,10 @@ class MotionBinner:
                 tx=tx, ty=ty, phi=phi, tz=tz, rx=rx, ry=ry, rz=rz, data_type=params.data_type, y_limits=y_limits)
 
         if return_debug_data:
+            if return_virtual_state_data:
+                return (
+                    binned_ky_indices, binned_kz_indices, centers, labels,
+                    ky_idx, kz_idx, nex_idx, virtual_labels, virtual_centers,
+                )
             return (binned_ky_indices, binned_kz_indices, centers, labels, ky_idx, kz_idx, nex_idx)
         return binned_ky_indices, binned_kz_indices, centers

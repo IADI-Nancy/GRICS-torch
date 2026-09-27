@@ -1,5 +1,6 @@
 import torch
 from  src.utils.fftnc import fftnc, ifftnc
+from src.reconstruction.grics_cpp_motion_preconditioner import GricsCppPseudoGaussSeidelPreconditioner
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
@@ -16,10 +17,15 @@ where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator):
+    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator, Nimages=None):
         self.device = smaps.device
         self.SensitivityMaps = smaps
-        self.Nex = Nex
+        self.Nex = int(Nex)
+        self.Nimages = self.Nex if Nimages is None else int(Nimages)
+        if self.Nimages not in (1, self.Nex):
+            raise ValueError("Nimages must be 1 (shared image) or equal Nex (independent images).")
+        if image.shape[0] != self.Nimages:
+            raise ValueError(f"image has {image.shape[0]} image unknowns, expected {self.Nimages}.")
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
@@ -81,6 +87,24 @@ class MotionPerturbationSimulator:
 
         return gx, gy, gz
 
+    def grics_cpp_pseudo_gauss_seidel_preconditioner(self, *, lambda_scaled, voxel_spacing):
+        """Return GRICS++'s two-factor non-rigid 3D motion preconditioner."""
+        if self.motionOperator.motion_type != "non-rigid" or self.Nalpha != 3:
+            raise ValueError('GRICS++ pseudo Gauss-Seidel preconditioning requires 3D non-rigid motion.')
+        _, nx, ny, nz = self.SensitivityMaps.shape
+        if nz <= 1:
+            raise ValueError('GRICS++ pseudo Gauss-Seidel preconditioning is implemented only for 3D.')
+        gradients = []
+        for state in range(len(self.SamplingIndices[0])):
+            warp = self.motionOperator._get_sparse_operator(state)
+            image = self.image[0 if self.Nimages == 1 else 0].flatten()
+            warped = (warp @ image).reshape(nx, ny, nz)
+            gradients.append(torch.stack(self._gradient_3d(warped)))
+        return GricsCppPseudoGaussSeidelPreconditioner.from_warped_gradients(
+            gradients, self.motionOperator.motion_signal,
+            lambda_scaled=lambda_scaled, voxel_spacing=voxel_spacing,
+        )
+
     def approximate_normal_diagonal(self):
         """Local diagonal approximation to J^H J for non-rigid motion PCG.
 
@@ -106,7 +130,7 @@ class MotionPerturbationSimulator:
                 fraction = self.SamplingIndices[nex][state].numel() / nvoxels
                 if fraction == 0:
                     continue
-                warped = (warp @ self.image[nex].flatten()).reshape(spatial_shape)
+                warped = (warp @ self.image[0 if self.Nimages == 1 else nex].flatten()).reshape(spatial_shape)
                 gradients = self._gradient_3d(warped) if nz > 1 else self._gradient_2d(warped)
                 for dim, gradient in enumerate(gradients):
                     diagonal[dim] += (fraction * coil_power * gradient.abs().square()).unsqueeze(-1) * weights
@@ -148,7 +172,7 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
+                image_nex = self.image[0 if self.Nimages == 1 else nex]
                 # 1) Warp the image using the motion operator
                 if is_3d:
                     WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
@@ -250,7 +274,7 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
+                image_nex = self.image[0 if self.Nimages == 1 else nex]
                 # 1) Warp image with motion state operator
                 if is_3d:
                     WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)

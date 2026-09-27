@@ -8,7 +8,7 @@ import torch
 
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.reconstruction.joint_reconstructor_utils.resampling import (
-    downsample_data, fourier_crop_spatial,
+    downsample_data, fourier_crop_spatial, fourier_resize_spatial, upsample_data,
 )
 from src.utils.fftnc import fftnc
 
@@ -37,12 +37,48 @@ class FourierCropTests(unittest.TestCase):
         )
         torch.testing.assert_close(coarse_spectrum, expected, rtol=1e-12, atol=1e-12)
 
+    def test_zero_padding_keeps_the_centered_spectrum_and_constant(self):
+        image = torch.full((2, 4, 6, 2), 2 + 3j, dtype=torch.complex128)
+        padded = fourier_resize_spatial(image, (8, 12, 4))
+        torch.testing.assert_close(
+            padded, torch.full((2, 8, 12, 4), 2 + 3j, dtype=torch.complex128),
+            rtol=1e-12, atol=1e-12,
+        )
+        old_spectrum = fftnc(image, dims=(-3, -2, -1))
+        new_spectrum = fftnc(padded, dims=(-3, -2, -1))
+        expected = torch.zeros_like(new_spectrum)
+        expected[:, 2:6, 3:9, 1:3] = old_spectrum * math.sqrt(8)
+        torch.testing.assert_close(new_spectrum, expected, rtol=1e-12, atol=1e-12)
+
+    def test_upsample_nonrigid_motion_fourier_resizes_then_scales_components(self):
+        previous = {
+            "Nx": 4, "Ny": 6, "Nz": 2,
+            "ReconstructedImage": torch.ones((1, 4, 6, 2), dtype=torch.complex128),
+            "MotionModel": torch.stack([
+                torch.full((4, 6, 2, 1), float(component + 1), dtype=torch.float64)
+                for component in range(3)
+            ]),
+        }
+        current = {"Nx": 8, "Ny": 12, "Nz": 4}
+        params = SimpleNamespace(reconstruction_motion_type="non-rigid")
+        upsample_data(previous, current, params, 3, torch.device("cpu"))
+        torch.testing.assert_close(
+            current["ReconstructedImage"],
+            torch.ones((1, 8, 12, 4), dtype=torch.complex128),
+            rtol=1e-12, atol=1e-12,
+        )
+        expected = torch.stack([
+            torch.full((8, 12, 4, 1), value, dtype=torch.float64)
+            for value in (2.0, 4.0, 6.0)
+        ])
+        torch.testing.assert_close(current["MotionModel"], expected, rtol=1e-12, atol=1e-12)
+
     def test_breast_coarse_grids_maps_and_prior(self):
         nx, ny = 288, 476
         maps = torch.ones((1, nx, ny, 1), dtype=torch.complex128)
         kspace = torch.zeros((1, 1, nx, ny, 1), dtype=torch.complex128)
         full = {
-            "Nx": nx, "Ny": ny, "Nz": 1,
+            "Nx": nx, "Ny": ny, "Nz": 1, "Nimages": 1,
             "SensitivityMaps": maps, "KspaceData": kspace,
             "SamplingIndices": [[torch.arange(nx * ny)]],
         }
@@ -53,6 +89,7 @@ class FourierCropTests(unittest.TestCase):
             Data_full=full, motion_states_per_level=[1], _current_level_idx=0,
             motion_signal=signal, params=params, device=torch.device("cpu"),
             calibration_image_prior=prior, Nz_full=1,
+            virtual_sampling_indices=None, virtual_motion_signal=None,
         )
 
         for factor, shape in ((0.125, (36, 58)), (0.25, (72, 118)),

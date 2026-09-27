@@ -13,6 +13,7 @@ latex/
 .conda-latex/
 tests/*
 !tests/test_grics_cpp_regularization.py
+!tests/test_shared_repetition_image.py
 !tests/test_fourier_coarse_resampling.py
 !tests/run_all_matched_breast_2d.py
 !tests/profile_isolated_breast_2d.py

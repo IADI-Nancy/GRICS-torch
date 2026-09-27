@@ -28,11 +28,16 @@ from src.runtime.runtime_config import load_config
 
 DATABASE = Path('/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database')
 DATASET = Path('/home/pyuser/wkdir/data/GRICS-torch/article_dataset_3D')
+PHYSIOLOGY_PREPROCESSING = 'iadi-belt-v1'
 
 
 def prepare_subject(raw: Path, saec: Path, destination: Path, params):
     """Reuse an existing prepared volume, otherwise publish a complete HDF5 atomically."""
-    if not destination.exists():
+    rebuild = not destination.exists()
+    if not rebuild:
+        with h5py.File(destination, 'r') as existing:
+            rebuild = existing.attrs.get('physiology_preprocessing') != PHYSIOLOGY_PREPROCESSING
+    if rebuild:
         preparer = RawDataPreparer(
             str(raw), str(saec), physiological_format='SAEC',
             sensor_type=params.rawdata_sensor_type, device='cpu',
@@ -48,6 +53,7 @@ def prepare_subject(raw: Path, saec: Path, destination: Path, params):
                 handle.attrs['source_ismrmrd'] = str(raw.resolve())
                 handle.attrs['source_saec'] = str(saec.resolve())
                 handle.attrs['sensor_type'] = params.rawdata_sensor_type
+                handle.attrs['physiology_preprocessing'] = PHYSIOLOGY_PREPROCESSING
             temporary.replace(destination)
         finally:
             temporary.unlink(missing_ok=True)

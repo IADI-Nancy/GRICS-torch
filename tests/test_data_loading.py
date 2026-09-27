@@ -34,6 +34,27 @@ class DataLoadingChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             DataLoader._normalize_real_image(np.ones((2, 3, 2)))
 
+    def test_iadi_belt_drift_correction_happens_on_mri_grid(self):
+        times = np.linspace(0, 8, 81)
+        interpolated = np.column_stack([
+            0.2 * times**2 - 0.5 * times + np.sin(times),
+        ])
+        actual = SAECReader('BELT').prepare_motion(
+            interpolated, acquisition_times=times)[:, 0]
+        values = interpolated[:, 0].astype(np.float32).astype(np.float64)
+        clipped = np.clip(values, values.mean() - 2 * values.std(),
+                          values.mean() + 2 * values.std())
+        expected = values - np.polyval(np.polyfit(times, clipped, 2), times)
+        expected = (expected - expected.mean()) / expected.std()
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-12)
+
+    def test_iadi_linear_extrapolation_matches_endpoint_slopes(self):
+        actual = RawDataPreparer._synchronize_to_sequence_end(
+            [np.array([0., 1., 2.])], [np.array([1., 3., 7.])],
+            np.array([-1., 0.5, 3.]), source_sequence_end=0.,
+            bounds='linear_extrapolate')[:, 0]
+        np.testing.assert_allclose(actual, [-1., 2., 11.])
+
     def test_single_marmot_rejects_unusable_tracks(self):
         times = [np.arange(12.)]
         for scores in (np.zeros(3), np.full(3, np.nan)):

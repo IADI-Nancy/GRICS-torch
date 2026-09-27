@@ -350,11 +350,37 @@ class DataLoader:
             # flattened ky/kz/nex traces for plotting/debug bookkeeping.
             self._motion_plot_y_limits = compute_motion_plot_y_limits(self._motion_curve_for_binning, **self._motion_plot_kwargs)
             
-            (self.binned_ky_indices, self.binned_kz_indices, self.motion_signal, self.motion_labels,
-                self.ky_idx_chronological, self.kz_idx_chronological, self.nex_idx_chronological) = \
-            MotionBinner.bin_motion(self._motion_curve_for_binning, self.ky_idx, self.kz_idx,
-                self.nex_idx, self.t_device, self.params, y_limits=self._motion_plot_y_limits,
-                return_debug_data=True, kspace=self.kspace, **self._motion_plot_kwargs)
+            retain_virtual_states = (
+                self.params.motion_binning_mode == 'kspace_energy'
+                and self.params.kspace_energy_level_source == 'quantized_virtual_states'
+            )
+            binner_result = MotionBinner.bin_motion(
+                self._motion_curve_for_binning, self.ky_idx, self.kz_idx,
+                self.nex_idx, self.t_device, self.params,
+                y_limits=self._motion_plot_y_limits, return_debug_data=True,
+                return_virtual_state_data=retain_virtual_states,
+                kspace=self.kspace, **self._motion_plot_kwargs,
+            )
+            (self.binned_ky_indices, self.binned_kz_indices, self.motion_signal,
+             self.motion_labels, self.ky_idx_chronological,
+             self.kz_idx_chronological, self.nex_idx_chronological) = binner_result[:7]
+            if retain_virtual_states:
+                virtual_labels, self.virtual_motion_signal = binner_result[7:]
+                virtual_state_count = int(self.virtual_motion_signal.shape[0])
+                self.virtual_binned_ky_indices = [[
+                    self.ky_idx_chronological[(self.nex_idx_chronological == excitation)
+                                              & (virtual_labels == state)]
+                    for state in range(virtual_state_count)
+                ] for excitation in range(self.params.Nex)]
+                self.virtual_binned_kz_indices = None if self.kz_idx_chronological is None else [[
+                    self.kz_idx_chronological[(self.nex_idx_chronological == excitation)
+                                              & (virtual_labels == state)]
+                    for state in range(virtual_state_count)
+                ] for excitation in range(self.params.Nex)]
+            else:
+                self.virtual_motion_signal = None
+                self.virtual_binned_ky_indices = None
+                self.virtual_binned_kz_indices = None
         else:
             # Without motion-driven clustering, treat the chronological acquisition
             # order itself as the effective per-state grouping.
@@ -376,6 +402,9 @@ class DataLoader:
             )
             self.motion_signal = None
             self.motion_labels = None
+            self.virtual_motion_signal = None
+            self.virtual_binned_ky_indices = None
+            self.virtual_binned_kz_indices = None
             self.motion_plot_context = None
             self._motion_plot_y_limits = None
 
@@ -383,6 +412,12 @@ class DataLoader:
         # whether those groups came from clustering or direct chronological order.
         self.sampling_idx = Sampling.build_sampling_per_nex_per_motion(self.binned_ky_indices, self.t_device, self.Nx, self.Ny,
             Nz=self.Nz, binned_kz_indices=getattr(self, 'binned_kz_indices', None))
+        self.virtual_sampling_idx = None
+        if self.virtual_binned_ky_indices is not None:
+            self.virtual_sampling_idx = Sampling.build_sampling_per_nex_per_motion(
+                self.virtual_binned_ky_indices, self.t_device, self.Nx, self.Ny,
+                Nz=self.Nz, binned_kz_indices=self.virtual_binned_kz_indices,
+            )
 
     def _normalize_kspace_if_enabled(self):
         self.kspace_scale = 1.0

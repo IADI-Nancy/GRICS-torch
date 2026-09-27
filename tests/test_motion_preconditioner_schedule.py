@@ -8,6 +8,7 @@ import torch
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.reconstruction.MotionPerturbationSimulator import MotionPerturbationSimulator
+from src.reconstruction.grics_cpp_motion_preconditioner import GricsCppPseudoGaussSeidelPreconditioner
 
 
 class _DiagonalOperator:
@@ -47,6 +48,62 @@ class MotionPreconditionerTests(unittest.TestCase):
             basis[index] = 1
             self.assertAlmostEqual(diagonal[index].item(), solver._gradient_op(basis)[index].item())
 
+    def test_cpp_factor_weight_is_square_root_of_normal_equation_weight(self):
+        # MotionModelOptimizer uses mu = LambdaScaled**2 in J^H J + mu G^H G,
+        # but passes LambdaScaled to createPreconditioner().
+        normal_equation_weight = 0.81
+        factor_weight = JointReconstructor._grics_cpp_preconditioner_lambda_scaled(
+            normal_equation_weight)
+        self.assertAlmostEqual(factor_weight, 0.9)
+        self.assertAlmostEqual(factor_weight ** 2, normal_equation_weight)
+        with self.assertRaisesRegex(ValueError, 'non-negative'):
+            JointReconstructor._grics_cpp_preconditioner_lambda_scaled(-1.0)
+
+    def test_cpp_pseudo_gauss_seidel_matches_explicit_triangular_factors(self):
+        torch.manual_seed(3)
+        nx = ny = nz = 2
+        count = 3
+        local = torch.randn(count, count, nx, ny, nz, dtype=torch.complex64)
+        # The C++ factor needs positive, nonzero local diagonal entries.
+        for component in range(count):
+            local[component, component] = local[component, component].abs() + 3
+        preconditioner = GricsCppPseudoGaussSeidelPreconditioner(
+            local, lambda_scaled=0.2, voxel_spacing=(1.0, 1.5, 2.0),
+        )
+        size = count * preconditioner.nvoxels
+        lower = torch.zeros((size, size), dtype=torch.complex64)
+        upper = torch.zeros_like(lower)
+        nxy = nx * ny
+        for component in range(count):
+            for index in range(preconditioner.nvoxels):
+                row = component * preconditioner.nvoxels + index
+                diagonal = preconditioner.diagonal[component, index]
+                lower[row, row] = diagonal
+                upper[row, row] = diagonal.conj() / diagonal
+                for previous in range(component):
+                    lower[row, previous * preconditioner.nvoxels + index] = preconditioner.lower[component, previous][index]
+                for following in range(component + 1, count):
+                    upper[row, following * preconditioner.nvoxels + index] = (
+                        preconditioner.lower[following, component][index].conj() / diagonal
+                    )
+                x, remainder = index % nx, index // nx
+                y, z = remainder % ny, remainder // ny
+                for offset, coordinate, extent, coefficient in (
+                    (1, x, nx, preconditioner.off[0]),
+                    (nx, y, ny, preconditioner.off[1]),
+                    (nxy, z, nz, preconditioner.off[2]),
+                ):
+                    if coordinate > 0:
+                        lower[row, row - offset] = coefficient
+                    if coordinate < extent - 1:
+                        upper[row, row + offset] = coefficient.conj() / diagonal
+        residual = torch.randn(size, dtype=torch.complex64)
+        cpp_residual = preconditioner._to_cpp_layout(residual)
+        expected = torch.linalg.solve_triangular(
+            upper, torch.linalg.solve_triangular(lower, cpp_residual.reshape(-1, 1), upper=False), upper=True,
+        ).reshape(-1)
+        torch.testing.assert_close(preconditioner(residual), preconditioner._from_cpp_layout(expected))
+
     def test_local_motion_diagonal_uses_gradients_and_signal(self):
         nx, ny = 4, 5
         x = torch.arange(nx, dtype=torch.float64)[:, None]
@@ -77,46 +134,82 @@ class _Logger:
 
 
 class MotionScheduleTests(unittest.TestCase):
-    def test_last_iteration_of_each_level_is_image_only(self):
+    @staticmethod
+    def _reconstructor():
         recon = JointReconstructor.__new__(JointReconstructor)
         recon.external_image_regularizer = None
-        recon.params = SimpleNamespace(lambda_r=0.0, ResolutionLevels=[0.5, 1.0],
-                                       image_only_last_iteration_per_level=True)
+        recon.params = SimpleNamespace(
+            lambda_r=0.0, ResolutionLevels=[0.5, 1.0],
+            image_only_last_iteration_per_level=True)
         recon._current_level_idx = 0
         recon._last_image_cg_info = None
         recon._last_motion_cg_info = None
-        updates = []
+        return recon
+
+    def test_last_iteration_of_each_level_is_image_only(self):
+        recon = self._reconstructor()
+        image_calls, motion_calls = [], []
 
         def iteration(data, **kwargs):
-            updates.append(kwargs["update_motion"])
+            image_calls.append(kwargs["update_motion"])
             image = torch.ones(1)
-            motion = torch.zeros(1)
-            return SimpleNamespace(image=image, motion_for_residual=motion,
-                                   residual=torch.zeros(1), motion=motion)
+            motion = data.get("MotionModel", torch.zeros(1))
+            return SimpleNamespace(
+                image=image, motion_for_residual=motion, residual=torch.zeros(1),
+                motion=motion, motion_update=None, motion_elapsed=None)
+
+        def apply_motion(data, result):
+            motion_calls.append(len(image_calls) - 1)
+            data["MotionModel"] = result.motion_for_residual + 1
+            result.motion = data["MotionModel"]
+            return result
 
         recon.gauss_newton_iteration = iteration
+        recon._apply_motion_update = apply_motion
         logger = _Logger()
         logger.count = 4
-        data = {"KspaceData": torch.ones(1)}
-        recon._run_resolution_level(data, level_index=0, gauss_newton_iterations_at_level=4,
-                                    level_count=2, update_final_motion=False,
-                                    gn_early_stopping=False, logger=logger)
-        self.assertEqual(updates, [True, True, True, False])
+        data = {"KspaceData": torch.ones(1), "MotionModel": torch.zeros(1)}
+        recon._run_resolution_level(
+            data, level_index=0, gauss_newton_iterations_at_level=4,
+            level_count=2, update_final_motion=False,
+            gn_early_stopping=False, logger=logger)
+        self.assertEqual(image_calls, [False, False, False, False])
+        self.assertEqual(motion_calls, [0, 1, 2])
 
-        updates.clear()
+        image_calls.clear()
+        motion_calls.clear()
         logger.count = 1
-        recon._run_resolution_level(data, level_index=1, gauss_newton_iterations_at_level=1,
-                                    level_count=2, update_final_motion=False,
-                                    gn_early_stopping=False, logger=logger)
-        self.assertEqual(updates, [False])
+        recon._run_resolution_level(
+            data, level_index=1, gauss_newton_iterations_at_level=1,
+            level_count=2, update_final_motion=False,
+            gn_early_stopping=False, logger=logger)
+        self.assertEqual(image_calls, [False])
+        self.assertEqual(motion_calls, [])
 
-        updates.clear()
-        recon.params.image_only_last_iteration_per_level = False
+    def test_rejected_image_does_not_launch_motion_solve(self):
+        recon = self._reconstructor()
+        residuals = iter((0.2, 0.3))
+        motion_calls = []
+
+        def iteration(data, **kwargs):
+            motion = data["MotionModel"]
+            return SimpleNamespace(
+                image=torch.ones(1), motion_for_residual=motion,
+                residual=torch.tensor([next(residuals)]), motion=motion,
+                motion_update=None, motion_elapsed=None)
+
+        recon.gauss_newton_iteration = iteration
+        recon._apply_motion_update = lambda data, result: (
+            motion_calls.append(True) or result)
+        logger = _Logger()
         logger.count = 4
-        recon._run_resolution_level(data, level_index=0, gauss_newton_iterations_at_level=4,
-                                    level_count=2, update_final_motion=False,
-                                    gn_early_stopping=False, logger=logger)
-        self.assertEqual(updates, [True, True, True, True])
+        logger.iteration_stopped_early = lambda: None
+        data = {"KspaceData": torch.ones(1), "MotionModel": torch.zeros(1)}
+        recon._run_resolution_level(
+            data, level_index=0, gauss_newton_iterations_at_level=4,
+            level_count=2, update_final_motion=False,
+            gn_early_stopping=True, logger=logger)
+        self.assertEqual(motion_calls, [True])
 
 
 if __name__ == "__main__":

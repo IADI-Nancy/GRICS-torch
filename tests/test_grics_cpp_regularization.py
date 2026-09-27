@@ -24,6 +24,7 @@ class IdentityEncoding:
 def image_reconstructor(kspace_scale):
     reconstructor = JointReconstructor.__new__(JointReconstructor)
     reconstructor.device = torch.device("cpu")
+    reconstructor.Nimages = 1
     reconstructor.params = SimpleNamespace(
         Nex=1, verbose=False, cg_stop_on_stagnation=False,
         cg_true_residual_interval=10, cg_stagnation_consecutive_steps=6,

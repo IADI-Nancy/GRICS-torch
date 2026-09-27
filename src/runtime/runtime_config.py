@@ -63,8 +63,9 @@ _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'es
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
-    'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
+    'reconstruction_dimension', 'reconstruction_motion_type', 'repetition_image_model', 'N_motion_states',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
+    'kspace_energy_level_source',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping', 'image_only_last_iteration_per_level',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
@@ -364,12 +365,18 @@ def _validate_motion(cfg):
 
 
 def _validate_reconstruction(cfg):
-    required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
+    required = _RECONSTRUCTION_KEYS - {
+        'motion_quantization_bins', 'kspace_energy_level_source',
+        'cg_reg_scale_num_probes',
+    }
     _require(cfg, required, 'reconstruction')
     if cfg['motion_binning_mode'] == 'kspace_energy':
-        _require(cfg, {'motion_quantization_bins'}, 'kspace-energy motion binning')
-    elif 'motion_quantization_bins' in cfg:
-        raise ValueError('motion_quantization_bins is only valid when motion_binning_mode="kspace_energy".')
+        _require(cfg, {'motion_quantization_bins', 'kspace_energy_level_source'}, 'kspace-energy motion binning')
+    elif 'motion_quantization_bins' in cfg or 'kspace_energy_level_source' in cfg:
+        raise ValueError(
+            'motion_quantization_bins and kspace_energy_level_source are only valid '
+            'when motion_binning_mode="kspace_energy".'
+        )
     _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
     _choice(cfg['motion_signal_normalization'], 'motion_signal_normalization', {'none', 'acquisition_zscore'})
     if type(cfg['use_calibration_image_prior']) is not bool:
@@ -383,6 +390,7 @@ def _validate_reconstruction(cfg):
     elif 'cg_reg_scale_num_probes' in cfg:
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
+    _choice(cfg['repetition_image_model'], 'repetition_image_model', {'independent', 'shared'})
     levels = cfg['ResolutionLevels']
     if not isinstance(levels, list) or not levels:
         raise ValueError('ResolutionLevels must be a nonempty list.')
@@ -415,6 +423,10 @@ def _validate_reconstruction(cfg):
     _choice(cfg['motion_binning_mode'], 'motion_binning_mode', {'kmeans', 'kspace_energy'})
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _integer(cfg['motion_quantization_bins'], 'motion_quantization_bins', 2)
+        _choice(
+            cfg['kspace_energy_level_source'], 'kspace_energy_level_source',
+            {'selected_states', 'quantized_virtual_states'},
+        )
     states = _integer(cfg['N_motion_states'], 'N_motion_states')
     per_shot = cfg['simulated_motion_type'].endswith('-per-shot')
     if per_shot and 'Nshots' in cfg:

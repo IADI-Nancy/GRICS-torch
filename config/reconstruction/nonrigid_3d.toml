@@ -5,6 +5,9 @@
 reconstruction_dimension = "3D"
 # Motion model used by reconstruction ("rigid" or "non-rigid").
 reconstruction_motion_type = "non-rigid"
+# Relationship between acquired repetitions and image unknowns.
+# "shared" fits every NEX measurement to one image; "independent" fits one image per NEX.
+repetition_image_model = "independent"
 
 # Motion-state binning
 # Number of reconstruction motion states.

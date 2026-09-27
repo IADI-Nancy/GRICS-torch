@@ -157,7 +157,8 @@ def reduce_motion_states(sampling_indices, target_states, motion_signal, params,
     return reduced, centers
 
 
-def downsample_data(Data_full, res_factor, target_states, motion_signal, params, device):
+def downsample_data(Data_full, res_factor, target_states, motion_signal, params, device,
+                    source_sampling_indices=None, source_motion_signal=None):
     # Coarse dimensions are truncated and rounded down to even values.
     # The final resolution retains the original dimensions.
     def level_size(full_size):
@@ -177,6 +178,7 @@ def downsample_data(Data_full, res_factor, target_states, motion_signal, params,
     Data_res["Nx"] = Nx
     Data_res["Ny"] = Ny
     Data_res["Nz"] = Nz
+    Data_res["Nimages"] = int(Data_full["Nimages"])
 
     resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
     smaps = Data_full["SensitivityMaps"]
@@ -186,11 +188,16 @@ def downsample_data(Data_full, res_factor, target_states, motion_signal, params,
     else:
         Data_res["SensitivityMaps"] = fourier_crop_spatial(smaps, resize_shape)
     sampling_indices = downsample_sampling_indices(
-        Data_full, Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
+        Data_full,
+        Data_full["SamplingIndices"] if source_sampling_indices is None else source_sampling_indices,
+        Nx, Ny, Nz_res=Nz,
     )
     Data_res["KspaceData"] = downsample_kspace(Data_full, Nx, Ny, Nz_res=Nz)
     Data_res["SamplingIndices"], Data_res["MotionSignal"] = reduce_motion_states(
-        sampling_indices, target_states, motion_signal, params, device, kspace=Data_res["KspaceData"])
+        sampling_indices, target_states,
+        motion_signal if source_motion_signal is None else source_motion_signal,
+        params, device, kspace=Data_res["KspaceData"],
+    )
     Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
     return Data_res

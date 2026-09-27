@@ -353,7 +353,12 @@ For corruption, simulation uses one state per acquired readout (`Ny * Nz * Nex` 
 After loading or simulation, motion signals are grouped into reconstruction states using `motion_binning_mode` from the reconstruction configuration:
 
 - `"kmeans"`: clusters the motion-channel values with k-means.
-- `"kspace_energy"`: quantizes motion-channel values using `motion_quantization_bins`, selects the highest-energy virtual states, and assigns the others to their nearest selected state. This mode requires k-space data and is used by `nonrigid_2d_breast.toml`.
+- `"kspace_energy"`: quantizes motion-channel values using `motion_quantization_bins`, selects the highest-energy virtual states, and assigns the others to their nearest selected state. This mode requires k-space data and is used by the breast configurations.
+
+For `"kspace_energy"`, `kspace_energy_level_source` is required explicitly:
+
+- `"selected_states"` reduces the full-resolution selected states at coarser levels.
+- `"quantized_virtual_states"` retains the original quantized virtual states and reselects from them after each resolution-specific k-space crop. This matches the 3D GRICS++ breast hierarchy.
 
 Key points:
 - simulation state count and reconstruction state count can differ.
