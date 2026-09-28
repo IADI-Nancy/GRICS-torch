@@ -142,30 +142,26 @@ def _metric_image(item: dict, cpp_image: np.ndarray) -> tuple[np.ndarray, str]:
         )
     return image, 'pipeline returned image'
 
-def main(argv=None) -> dict:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--sequence', choices=('s', 'm'), default='s',
-                        help='0079 T2 acquisition: s is the default.')
-    parser.add_argument('--dataset-root', type=Path, default=DATASET)
-    parser.add_argument('--cpp-root', type=Path, default=CPP_ROOT)
-    parser.add_argument('--output-root', type=Path, default=ROOT / 'runs/test_real_2d_subject')
-    parser.add_argument('--device', choices=('cpu', 'gpu'), default='cpu')
-    parser.add_argument('--max-workers', type=int, default=None)
-    parser.add_argument('--slice-start', type=int, default=0)
-    parser.add_argument('--slice-stop', type=int, default=None)
-    args = parser.parse_args(argv)
-
-    subject = f'0079_T2_{args.sequence}'
-    prepared = args.dataset_root / f'{subject}.h5'
-    cpp_subject = args.cpp_root / subject
+def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATASET,
+                cpp_root: Path = CPP_ROOT, output_root: Path = ROOT / 'runs/test_real_2d_subject',
+                device: str = 'cpu', max_workers: int | None = None,
+                slice_start: int = 0, slice_stop: int | None = None) -> dict:
+    """Reconstruct one subject and compare all of its axial slices with GRICS++."""
+    if not re.fullmatch(r'\d{4}', subject):
+        raise ValueError(f'Subject must be a four-digit identifier, got {subject!r}.')
+    if sequence not in ('s', 'm'):
+        raise ValueError(f'Sequence must be "s" or "m", got {sequence!r}.')
+    acquisition = f'{subject}_T2_{sequence}'
+    prepared = Path(dataset_root) / f'{acquisition}.h5'
+    cpp_subject = Path(cpp_root) / acquisition
     if not prepared.is_file():
         raise FileNotFoundError(f'Prepared input is required: {prepared}')
     cpp_folders = _cpp_slice_folders(cpp_subject)
 
     result = run_pipeline(
-        prepared, output_root=args.output_root, device=args.device,
-        max_workers=args.max_workers, slice_start=args.slice_start,
-        slice_stop=args.slice_stop, return_tensors=True, export_dicom=False,
+        prepared, output_root=output_root, device=device,
+        max_workers=max_workers, slice_start=slice_start,
+        slice_stop=slice_stop, return_tensors=True, export_dicom=False,
     )
     rows = []
     central_slice = sorted(cpp_folders)[len(cpp_folders) // 2]
@@ -184,7 +180,7 @@ def main(argv=None) -> dict:
         raise ValueError(f'Central GRICS++ slice {central_slice} was not reconstructed.')
 
     summary = {
-        'subject': subject,
+        'subject': acquisition,
         'run_folder': str(result['run_folder']),
         'grics_cpp_subject_folder': str(cpp_subject),
         'slice_count': len(rows),
@@ -204,6 +200,27 @@ def main(argv=None) -> dict:
     print(f'[comparison] NRMSE={summary["mean_nrmse"]:.6f} ± {summary["std_nrmse"]:.6f}; '
           f'SSIM={summary["mean_ssim"]:.6f} ± {summary["std_ssim"]:.6f}; {output}', flush=True)
     return summary
+
+
+def main(argv=None) -> dict:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--subject', default='0079', help='Four-digit subject identifier.')
+    parser.add_argument('--sequence', choices=('s', 'm'), default='s',
+                        help='0079 T2 acquisition: s is the default.')
+    parser.add_argument('--dataset-root', type=Path, default=DATASET)
+    parser.add_argument('--cpp-root', type=Path, default=CPP_ROOT)
+    parser.add_argument('--output-root', type=Path, default=ROOT / 'runs/test_real_2d_subject')
+    parser.add_argument('--device', choices=('cpu', 'gpu'), default='cpu')
+    parser.add_argument('--max-workers', type=int, default=None)
+    parser.add_argument('--slice-start', type=int, default=0)
+    parser.add_argument('--slice-stop', type=int, default=None)
+    args = parser.parse_args(argv)
+
+    return run_subject(
+        args.subject, sequence=args.sequence, dataset_root=args.dataset_root,
+        cpp_root=args.cpp_root, output_root=args.output_root, device=args.device,
+        max_workers=args.max_workers, slice_start=args.slice_start, slice_stop=args.slice_stop,
+    )
 
 
 if __name__ == '__main__':

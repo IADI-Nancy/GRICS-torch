@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -34,8 +35,6 @@ from pipelines.siemens_breast_3d_lowres import run_pipeline
 DATA = Path('/home/pyuser/wkdir/data')
 DATASET_ROOT = DATA / 'GRICS-torch/article_dataset_3D'
 RAW_ROOT = DATA / 'Breast-INNOV_GRICS_database'
-SUBJECT_FILENAME = '0079_T1_s.h5'
-CPP_FOLDER = RAW_ROOT / 'GRICS-BELT-3D' / '0079_T1_s'
 XML_NAME = 'ParamGRICS++_GRE_3D_LR.xml'
 
 
@@ -106,7 +105,8 @@ def _metric_label(summary: dict[str, float]) -> str:
             f"SSIM {summary['mean_ssim']:.4f} ± {summary['std_ssim']:.4f}")
 
 
-def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder: Path) -> dict:
+def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder: Path,
+                      cpp_folder: Path) -> dict:
     if torch_image.shape != cpp_image.shape:
         raise ValueError(f'Torch/GRICS++ shape mismatch: {torch_image.shape} versus {cpp_image.shape}.')
     rows = [{'axial_slice': z + 1, **_slice_metrics(torch_image[:, :, z], cpp_image[:, :, z])}
@@ -135,7 +135,7 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
     figure.savefig(folder / 'comparison_vs_grics_cpp.png', dpi=180)
     plt.close(figure)
     result = {
-        'grics_cpp_folder': str(CPP_FOLDER),
+        'grics_cpp_folder': str(cpp_folder),
         'volume_scale_torch_to_grics_cpp': volume_scale,
         'axial_metrics': summary,
         'per_axial_slice': rows,
@@ -145,17 +145,22 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
     return result
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--dataset-root', type=Path, default=DATASET_ROOT)
-    parser.add_argument('--ismrmrd-file', type=Path, default=RAW_ROOT / 'ISMRMRD' / SUBJECT_FILENAME)
-    parser.add_argument('--saec-file', type=Path, default=RAW_ROOT / 'SAEC' / SUBJECT_FILENAME)
-    parser.add_argument('--device', choices=('gpu', 'cpu'), default='gpu')
-    parser.add_argument('--output-root', type=Path, default=REPO_ROOT / 'runs/test_real_3d_subject')
-    args = parser.parse_args(argv)
-    prepared = args.dataset_root / SUBJECT_FILENAME
+def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATASET_ROOT,
+                raw_root: Path = RAW_ROOT, output_root: Path = REPO_ROOT / 'runs/test_real_3d_subject',
+                device: str = 'gpu') -> dict:
+    """Reconstruct one 3D subject and compare it with its GRICS++ result."""
+    if not re.fullmatch(r'\d{4}', subject):
+        raise ValueError(f'Subject must be a four-digit identifier, got {subject!r}.')
+    if sequence not in ('s', 'm'):
+        raise ValueError(f'Sequence must be "s" or "m", got {sequence!r}.')
+    acquisition = f'{subject}_T1_{sequence}'
+    prepared = Path(dataset_root) / f'{acquisition}.h5'
+    raw_root = Path(raw_root)
+    ismrmrd_file = raw_root / 'ISMRMRD' / f'{acquisition}.h5'
+    saec_file = raw_root / 'SAEC' / f'{acquisition}.h5'
+    cpp_folder = raw_root / 'GRICS-BELT-3D' / acquisition
     if not prepared.is_file():
-        for path in (args.ismrmrd_file, args.saec_file):
+        for path in (ismrmrd_file, saec_file):
             if not path.is_file():
                 raise FileNotFoundError(path)
     if prepared.is_file():
@@ -163,15 +168,29 @@ def main(argv=None):
             if source['kspace'].ndim != 5:
                 raise ValueError('Prepared 3D k-space must have five dimensions.')
     result = run_pipeline(
-        args.ismrmrd_file, args.saec_file, preprocessed_file=prepared,
-        output_root=args.output_root, device=args.device,
+        ismrmrd_file, saec_file, preprocessed_file=prepared,
+        output_root=output_root, device=device,
         return_tensors=True, export_dicom=False,
     )
     volume = result['reconstructions'][0]
-    comparison = _write_comparison(_torch_magnitude(volume['image']), _load_cpp_volume(CPP_FOLDER),
-                                   Path(result['run_folder']))
+    comparison = _write_comparison(_torch_magnitude(volume['image']), _load_cpp_volume(cpp_folder),
+                                   Path(result['run_folder']), cpp_folder)
     print(json.dumps(comparison['axial_metrics'], indent=2))
     print(f"[outputs] {result['run_folder']}")
+    return comparison
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--subject', default='0079', help='Four-digit subject identifier.')
+    parser.add_argument('--sequence', choices=('s', 'm'), default='s')
+    parser.add_argument('--dataset-root', type=Path, default=DATASET_ROOT)
+    parser.add_argument('--raw-root', type=Path, default=RAW_ROOT)
+    parser.add_argument('--device', choices=('gpu', 'cpu'), default='gpu')
+    parser.add_argument('--output-root', type=Path, default=REPO_ROOT / 'runs/test_real_3d_subject')
+    args = parser.parse_args(argv)
+    return run_subject(args.subject, sequence=args.sequence, dataset_root=args.dataset_root,
+                       raw_root=args.raw_root, output_root=args.output_root, device=args.device)
 
 
 if __name__ == '__main__':
