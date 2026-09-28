@@ -232,6 +232,11 @@ def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple
     encoded = enc.encodedSpace.matrixSize
     target_y = int(recon.y)
     encoded_y = int(encoded.y)
+    # Some prepared Siemens T2 headers retain the encoded matrix but contain
+    # a zero reconstruction matrix. The loaded k-space grid is the actual
+    # native reconstruction size in that case (e.g. 0079_T2_s: 288 x 476).
+    if target_y <= 0:
+        target_y = int(raw_data.Ny)
     if target_y > encoded_y:
         target_y //= 2
 

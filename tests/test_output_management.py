@@ -157,6 +157,17 @@ class OutputManagementTests(unittest.TestCase):
         self.assertEqual(dataset.pixel_array.shape, (8, 8))
         self.assertEqual(int(dataset.pixel_array.max()), 4095)
 
+    def test_grics_zero_fill_uses_loaded_grid_when_header_recon_y_is_zero(self):
+        from pipelines import siemens_breast_T2 as pipeline
+
+        header = SimpleNamespace(encoding=[SimpleNamespace(
+            reconSpace=SimpleNamespace(matrixSize=SimpleNamespace(x=288, y=0)),
+            encodedSpace=SimpleNamespace(matrixSize=SimpleNamespace(x=288, y=588)),
+        )])
+        raw = SimpleNamespace(Nx=288, Ny=476)
+        with patch.object(pipeline, 'acquisition_header', return_value=header):
+            self.assertEqual(pipeline.grics_zero_fill_shapes(raw), ((288, 476), (288, 588)))
+
     @staticmethod
     def header_xml():
         return """<?xml version="1.0" encoding="UTF-8"?>
