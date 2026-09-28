@@ -25,7 +25,6 @@ import torch
 from skimage.metrics import structural_similarity
 
 from pipelines.siemens_breast_T2 import run_pipeline
-from src.utils.zero_fill import zero_fill_grics_image_to_shape
 
 
 DATA = Path('/home/pyuser/wkdir/data')
@@ -47,7 +46,7 @@ def _cpp_slice_folders(subject_root: Path) -> dict[int, Path]:
     return folders
 
 
-def _load_cpp_slice(folder: Path, target_shape: tuple[int, int]) -> np.ndarray:
+def _load_cpp_slice(folder: Path) -> np.ndarray:
     xml = ET.parse(folder / 'ParamGRICS++_TSE_Breast.xml').getroot()
     dimensions = xml.find('./PreProcessing/Dimensions')
     nx, ny, nz = (int(dimensions.attrib[key]) for key in ('Nx', 'Ny', 'Nz'))
@@ -58,13 +57,7 @@ def _load_cpp_slice(folder: Path, target_shape: tuple[int, int]) -> np.ndarray:
     image = np.fromfile(image_path, dtype='<c8')
     if image.size != nx * ny:
         raise ValueError(f'{image_path}: expected {nx * ny} complex values, got {image.size}.')
-    native = torch.from_numpy(image.reshape(nx, ny).copy())
-    # Torch exports the post-reconstruction zero-filled image. Apply the same
-    # centered Fourier zero fill to GRICS++ before measuring both images.
-    matched = zero_fill_grics_image_to_shape(
-        native, target_shape=target_shape, encoded_shape=target_shape,
-    )
-    return matched.abs().numpy()
+    return np.abs(image.reshape(nx, ny)).copy()
 
 
 def _torch_magnitude(image: torch.Tensor) -> np.ndarray:
@@ -128,8 +121,8 @@ def main(argv=None) -> dict:
         number = int(item['slice_number'])
         if number not in cpp_folders:
             raise ValueError(f'No GRICS++ image for Torch slice {number}.')
-        torch_image = _torch_magnitude(item['image'])
-        cpp_image = _load_cpp_slice(cpp_folders[number], tuple(torch_image.shape))
+        torch_image = _torch_magnitude(item['native_image'])
+        cpp_image = _load_cpp_slice(cpp_folders[number])
         rows.append({'slice_number': number, **_metrics(torch_image, cpp_image)})
 
     summary = {

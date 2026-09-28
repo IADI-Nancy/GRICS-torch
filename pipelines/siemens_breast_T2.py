@@ -206,6 +206,9 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
         image, _ = normalize_reconstruction_by_grics_reference(image, reference_image)
+    # Retain the native solver image for quantitative comparisons. `image`
+    # below remains the zero-filled export used for DICOM and saved output.
+    native_image = image.detach().cpu().numpy()
     target_shape, encoded_shape = source.zero_fill_shapes
     image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
     synchronize(image.device)
@@ -214,7 +217,8 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     # Transfers and IPC are excluded from the per-slice solver timer.
     return {
         'slice_idx': slice_idx, 'slice_number': slice_idx + 1,
-        'image': image.detach().cpu().numpy(), 'motion': motion.detach().cpu().numpy(),
+        'image': image.detach().cpu().numpy(), 'native_image': native_image,
+        'motion': motion.detach().cpu().numpy(),
         'preprocessing_seconds': preprocessing_seconds,
         'reconstruction_seconds': reconstruction_seconds,
         'postprocessing_seconds': postprocessing_seconds,
@@ -311,9 +315,10 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
     """Reconstruct one acquisition using explicit settings and return its results.
 
     preprocessed_file is preferred when present; otherwise raw_data_file and SAEC are used.
-    reconstructions contains ordered per-slice CPU image/motion tensors, paths,
-    and solver times. Images include configured normalization and zero-filling;
-    motion tensors stay on the reconstruction grid. Slice range is half-open.
+    reconstructions contains ordered per-slice CPU image/native_image/motion
+    tensors, paths, and solver times. `native_image` is after configured
+    normalization and before zero filling; `image` is the zero-filled export.
+    Motion tensors stay on the reconstruction grid. Slice range is half-open.
     All final tensor/DICOM writes are deferred until every slice has finished.
     Common save_reconstruction_logs/tensors flags control output independently;
     None uses the TOML/overrides value. export_dicom is independent.
@@ -356,7 +361,11 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
                 reference_dicom_path=Path(dicom_header_dir) if dicom_header_dir is not None else None,
                 **uids)
             result['dicom_file'] = dicom_path
+        # This is needed by in-memory comparison callers, but is not an output
+        # artifact or JSON-serializable run-manifest field.
+        native_image = result.pop('native_image')
         export_reconstruction(params, result)
+        result['native_image'] = native_image
     timings = {
         'load_seconds': load_seconds,
         'compute_wall_seconds': compute_wall_seconds,
