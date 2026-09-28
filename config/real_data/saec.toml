@@ -1,3 +1,9 @@
 [real_data]
 # Physiological sensor channel to read from the SAEC file.
-rawdata_sensor_type = "1MARMOT"
+rawdata_sensor_type = "BELT"
+
+# Zero-phase Butterworth filter cutoffs in Hz. Each must be below the source
+# channel Nyquist frequency.
+saec_belt_lowpass_cutoff_hz = 1.0
+saec_marmot_lowpass_cutoff_hz = 0.3
+saec_marmot_highpass_cutoff_hz = 0.03

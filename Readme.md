@@ -124,21 +124,21 @@ Uses the corresponding MRI data format together with physiological data file in 
 
 SAEC processing depends on `rawdata_sensor_type`:
 
-- `BELT`: selects the belt track with the larger standard deviation, applies a first-order zero-phase Butterworth low-pass filter with a 1 Hz cutoff, and removes quadratic drift. The drift is fitted to a copy clipped to the mean plus or minus two standard deviations, then subtracted from the unclipped filtered signal. The returned single channel is not standardized.
-- `1MARMOT`: for every MARMOT sensor, each of the three accelerometer tracks is low-pass filtered at 0.3 Hz and then high-pass filtered at 0.03 Hz, using first-order zero-phase Butterworth filters. Tracks identified as displaced, constant, non-finite, or otherwise invalid are rejected. The valid track with the largest standard deviation is selected across all sensors and normalized by its standard deviation.
-- `ALL_MARMOTS` (also accepted as `ALL_MARMOTs`): applies the same 0.3/0.03 Hz filtering and displacement checks, selects the highest-variance valid track from each usable sensor, and returns one standard-deviation-normalized channel per usable sensor.
+- `BELT`: selects the belt track with the larger standard deviation, applies a first-order zero-phase Butterworth low-pass filter using `saec_belt_lowpass_cutoff_hz`, and removes quadratic drift. The drift is fitted to a copy clipped to the mean plus or minus two standard deviations, then subtracted from the unclipped filtered signal.
+- `1MARMOT`: for every MARMOT sensor, each accelerometer track is low-pass filtered using `saec_marmot_lowpass_cutoff_hz` and high-pass filtered using `saec_marmot_highpass_cutoff_hz`. Tracks identified as displaced, constant, non-finite, or otherwise invalid are rejected, then the valid track with the largest standard deviation is selected across all sensors.
+- `ALL_MARMOTS` (also accepted as `ALL_MARMOTs`): applies the same configured filtering and displacement checks and selects the highest-variance valid track from each usable sensor.
 
 Timestamped SAEC channels are aligned to the full MRI sequence before slice selection and interpolated onto MRI readout times. SAEC timestamps are referenced to the Siemens stop trigger. The filters are applied before this interpolation; readouts outside the SAEC recording use the nearest endpoint value.
 
 ### `ismrmrd-polaris` and `siemens-polaris`
 Uses the corresponding MRI data format together with a single-tool NDI ToolBox `.tsv` export from a Polaris Vega infrared camera tracker (`polaris_file`). Pass `polaris_config="config/real_data/polaris.toml"` and `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` to `load_config(...)`. Select the tracks and clock shift in `polaris.toml`. The final timestamp must correspond to the end of the MRI sequence; clock correction is applied after end alignment.
 
-Polaris reads the XYZ tool-position channels and applies a first-order zero-phase Butterworth low-pass filter with a 1 Hz cutoff to each axis. The sampling rate is estimated from the recording duration; at least seven samples are required, and the rate must exceed twice the cutoff. The filtered signals are then linearly interpolated onto full-sequence MRI readout times. With `polaris_channel_mode = "all"`, the Tx, Ty, and Tz channels are retained. With `"largest-amplitude"`, only the axis with the largest peak-to-peak range is retained (ties are resolved in Tx, Ty, Tz order). Each retained channel is centered by subtracting its mean, then all retained channels are divided by their largest standard deviation, if nonzero. Channel selection, centering, and scaling are computed at full-sequence MRI readout times, before slice selection.
+Polaris reads the XYZ tool-position channels and applies a first-order zero-phase Butterworth low-pass filter using `polaris_lowpass_cutoff_hz`. The sampling rate is estimated from the recording duration; at least seven samples are required, and the rate must exceed twice the cutoff. The filtered signals are then interpolated onto full-sequence MRI readout times. With `polaris_channel_mode = "all"`, Tx, Ty, and Tz are retained. With `"largest-amplitude"`, only the axis with the largest peak-to-peak range is retained (ties are resolved in Tx, Ty, Tz order). Shared per-channel normalization follows selection.
 
 ### Post-processing and synchronization
 Text inputs automatically load `config/real_data/physio_text.toml`; array inputs load `config/real_data/physio_array.toml`. Each file owns its clock-shift value independently. To use another sensor configuration, pass `physio_config="path/to/physio_text.toml"` to `load_config(...)`. The clock setting belongs to the sensor configuration, not `ismrmrd_reader.toml`.
 
-Generic `physio_text` and `physio_array` inputs are not filtered, centered, or normalized. Their channels are preserved in sensor/track order after timestamp alignment and interpolation. If all timestamps are `-1`, values are treated as already synchronized and must contain one sample for every full-acquisition MRI readout; interpolation is skipped and clock correction must be zero.
+Generic `physio_text` and `physio_array` inputs are not filtered. Their channels are preserved in sensor/track order through timestamp alignment and interpolation, then standardized by the shared per-channel normalization. If all timestamps are `-1`, values are treated as already synchronized and must contain one sample for every full-acquisition MRI readout; interpolation is skipped and clock correction must be zero.
 
 Physiological clock correction (Polaris, `physio_text`, `physio_array`): set `physio_clock_drift_seconds` in `config/real_data/polaris.toml` for Polaris, `config/real_data/physio_text.toml` for text inputs, or `config/real_data/physio_array.toml` for array inputs (default `0.0`), or pass `overrides={"physio_clock_drift_seconds": -0.25}`. Positive shifts samples later; negative shifts earlier, after sequence-end alignment. Already-synchronized (`-1`) inputs reject any nonzero clock correction. Missing coverage at either edge is extrapolated with $\hat{x}[n] = c + \sum_{k=1}^{p} a_k x[n-k]$, fitted per channel (up to 20 lags over the nearest 10 seconds; reversed history at the start). Any required extension greater than 1 second raises an error. SAEC is unchanged.
 
@@ -221,6 +221,13 @@ Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z
 For corruption, simulation uses one state per acquired readout (`Ny * Nz * Nex` for fully sampled data).
 
 ## Motion Binning and Reconstruction States
+
+Physiological signals from real acquisitions are standardized after reader-specific processing and synchronization, before slice grouping and motion binning.
+Each sensor is normalized independently as `(signal - mean) / std`, using the
+population standard deviation (`sqrt(mean((signal - mean)**2))`, denominator N).
+Statistics cover every MRI readout in the full acquisition, before slice selection and motion binning. This gives each sensor zero mean and unit
+variance over the acquisition. Constant sensors and non-finite samples raise
+an error. Simulated signals are unaffected.
 
 After loading or simulation, motion signals are grouped into reconstruction states using `motion_binning_mode` from the reconstruction configuration:
 

@@ -821,6 +821,14 @@ class DataLoader:
             physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
             polaris_channel_mode=(self.params.polaris_channel_mode
                                   if self.params.data_type.endswith("-polaris") else None),
+            polaris_lowpass_cutoff_hz=(self.params.polaris_lowpass_cutoff_hz
+                                       if self.params.data_type.endswith("-polaris") else None),
+            saec_belt_lowpass_cutoff_hz=(self.params.saec_belt_lowpass_cutoff_hz
+                                         if self.params.data_type.endswith("-saec") else None),
+            saec_marmot_lowpass_cutoff_hz=(self.params.saec_marmot_lowpass_cutoff_hz
+                                            if self.params.data_type.endswith("-saec") else None),
+            saec_marmot_highpass_cutoff_hz=(self.params.saec_marmot_highpass_cutoff_hz
+                                             if self.params.data_type.endswith("-saec") else None),
             physiological_format={
                 "polaris": "PolarisInfraredTracker", "saec": "SAEC",
                 "physio_text": "physio_text", "physio_array": "physio_array",

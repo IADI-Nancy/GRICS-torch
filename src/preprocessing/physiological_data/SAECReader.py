@@ -19,14 +19,25 @@ ready for further analysis or integration with MRI data.
 
 class SAECReader:
 
-    def __init__(self, sensor_type="BELT"):
+    def __init__(self, sensor_type="BELT", *, belt_lowpass_cutoff_hz,
+                 marmot_lowpass_cutoff_hz, marmot_highpass_cutoff_hz):
         self.sensor_type = sensor_type
+        cutoffs = {
+            "saec_belt_lowpass_cutoff_hz": belt_lowpass_cutoff_hz,
+            "saec_marmot_lowpass_cutoff_hz": marmot_lowpass_cutoff_hz,
+            "saec_marmot_highpass_cutoff_hz": marmot_highpass_cutoff_hz,
+        }
+        for name, value in cutoffs.items():
+            if not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be a finite positive number.")
+        self.belt_lowpass_cutoff_hz = float(belt_lowpass_cutoff_hz)
+        self.marmot_lowpass_cutoff_hz = float(marmot_lowpass_cutoff_hz)
+        self.marmot_highpass_cutoff_hz = float(marmot_highpass_cutoff_hz)
         self.metadata = {}
 
     def read_channels(self, filename):
         """Return processed channels with stop-trigger alignment and edge padding."""
-        time_saec, resp = SAECReader._read_and_process_data(
-            filename, self.sensor_type)
+        time_saec, resp = self._read_and_process_data(filename, self.sensor_type)
         if isinstance(resp, (list, tuple)):
             values = [np.asarray(channel).reshape(-1) for channel in resp]
             times = [np.asarray(time_saec[i] if isinstance(time_saec, (list, tuple))
@@ -40,7 +51,7 @@ class SAECReader:
 
     @staticmethod
     def prepare_motion(interpolated):
-        """SAEC channels are already normalized during reading."""
+        """Return filtered SAEC channels; shared normalization follows synchronization."""
         return interpolated
 
     import numpy as np
@@ -158,12 +169,11 @@ class SAECReader:
             displaced[i] = 1 if dif_norm < threshold else 0
         return displaced
 
-    @staticmethod
-    def _get_filtered_marmot_data(timestamps, respiratory_data, i_sensor):
+    def _get_filtered_marmot_data(self, timestamps, respiratory_data, i_sensor):
         fsampling = np.float64(len(timestamps[i_sensor])) / (timestamps[i_sensor][-1] - timestamps[i_sensor][0])
 
         order = 1
-        fcut = 0.3
+        fcut = self.marmot_lowpass_cutoff_hz
         normal_cutoff = fcut / (fsampling / 2)
 
         b, a = butter(order, normal_cutoff, btype='low', analog=False)
@@ -172,7 +182,7 @@ class SAECReader:
             respiratory_data_filtered_lp[:, idx_track] = filtfilt(b, a, respiratory_data[i_sensor][:, idx_track])
 
         order = 1
-        fcut = 0.03
+        fcut = self.marmot_highpass_cutoff_hz
         normal_cutoff = fcut / (fsampling / 2)
 
         b, a = butter(order, normal_cutoff, btype='hp', analog=False)
@@ -187,13 +197,12 @@ class SAECReader:
 
         return respiratory_data_filtered_hp, sigma
 
-    @staticmethod
-    def _get_filtered_resp_data(timestamps, respiratory_data, sersor_type, path_to_graph=None):
+    def _get_filtered_resp_data(self, timestamps, respiratory_data, sersor_type, path_to_graph=None):
         if sersor_type == 'BELT' :
             timestamps = np.squeeze(timestamps[0])
             respiratory_data = respiratory_data[0]
             order = 1
-            fcut = 1.
+            fcut = self.belt_lowpass_cutoff_hz
             fsampling = np.float64(len(timestamps)) / (timestamps[-1] - timestamps[0])
             normal_cutoff = fcut / (fsampling / 2)
 
@@ -234,7 +243,7 @@ class SAECReader:
             max_sigma = np.zeros(len(respiratory_data))
             tracks = np.zeros(len(respiratory_data))
             for i_sensor in range(len(respiratory_data)):
-                respiratory_data_filtered_hp, sigma = SAECReader._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
+                respiratory_data_filtered_hp, sigma = self._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
 
                 # A rejected, constant, or nonfinite track cannot be selected.
                 valid = (np.isfinite(sigma) & (sigma > 0)
@@ -255,7 +264,7 @@ class SAECReader:
             scale = np.std(respiratory_data_MARMOT)
             if not np.isfinite(scale) or scale <= 0:
                 raise ValueError("Selected 1MARMOT signal has no finite non-zero variance after filtering.")
-            respiratory_data_MARMOT = respiratory_data_MARMOT / scale
+            # Amplitude scaling is applied once after MRI-readout synchronization.
 
             timestamps_MARMOT = timestamps[sensor_idx]
 
@@ -271,7 +280,7 @@ class SAECReader:
             max_sigma = np.zeros(len(respiratory_data))
             tracks = np.zeros(len(respiratory_data), dtype=int)
             for i_sensor in range(len(respiratory_data)):
-                respiratory_data_filtered_hp, sigma = SAECReader._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
+                respiratory_data_filtered_hp, sigma = self._get_filtered_marmot_data(timestamps, respiratory_data, i_sensor)
                 track_idx = int(np.argmax(sigma))
                 max_sigma[i_sensor] = sigma[track_idx]
                 tracks[i_sensor] = track_idx
@@ -289,10 +298,10 @@ class SAECReader:
             for sensor_idx in sensors:
                 signal = respiratory_data_filtered[sensor_idx]
                 sigma = np.std(signal)
-                if sigma == 0:
+                if not np.isfinite(sigma) or sigma <= 0:
                     continue
                 timestamps_MARMOT.append(np.squeeze(timestamps[sensor_idx]))
-                respiratory_data_MARMOT.append(np.squeeze(signal / sigma))
+                respiratory_data_MARMOT.append(np.squeeze(signal))
 
             if not respiratory_data_MARMOT:
                 raise ValueError("No ALL_MARMOTS signal had non-zero variance after filtering.")
@@ -301,8 +310,7 @@ class SAECReader:
         else:
             raise ValueError(f"Physiological sensor type is not correct: {sersor_type!r}")
 
-    @staticmethod
-    def _read_and_process_data(saec_filename, sensor_type, path_to_graph=None):
-        timestamps_saec, respiratory_data_saec = SAECReader._get_respiration_from_saec(saec_filename, sensor_type)
-        timestamps, respiratory_data_filtered = SAECReader._get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
+    def _read_and_process_data(self, saec_filename, sensor_type, path_to_graph=None):
+        timestamps_saec, respiratory_data_saec = self._get_respiration_from_saec(saec_filename, sensor_type)
+        timestamps, respiratory_data_filtered = self._get_filtered_resp_data(timestamps_saec, respiratory_data_saec, sensor_type, path_to_graph=path_to_graph)
         return timestamps, respiratory_data_filtered
