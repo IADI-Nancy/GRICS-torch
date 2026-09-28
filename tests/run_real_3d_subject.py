@@ -99,10 +99,10 @@ def _summary(rows: list[dict[str, float]]) -> dict[str, float]:
     }
 
 
-def _metric_label(summary: dict[str, float]) -> str:
-    return (f"Axial slices (n={summary['axial_slice_count']})\n"
-            f"NRMSE {summary['mean_nrmse']:.4f} ± {summary['std_nrmse']:.4f}\n"
-            f"SSIM {summary['mean_ssim']:.4f} ± {summary['std_ssim']:.4f}")
+def _metric_label(metrics: dict[str, float]) -> str:
+    return ("Whole volume\n"
+            f"NRMSE {metrics['nrmse']:.4f}\n"
+            f"SSIM {metrics['ssim']:.4f}")
 
 
 def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder: Path,
@@ -115,6 +115,14 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
     volume_scale = float(np.vdot(torch_image.ravel(), cpp_image.ravel()).real /
                          np.vdot(torch_image.ravel(), torch_image.ravel()).real)
     aligned_torch = torch_image * volume_scale
+    volume_range = float(max(aligned_torch.max(), cpp_image.max()) -
+                         min(aligned_torch.min(), cpp_image.min()))
+    if volume_range <= 0:
+        raise ValueError('The comparison volumes have zero range.')
+    volume_metrics = {
+        'nrmse': float(np.linalg.norm(aligned_torch - cpp_image) / np.linalg.norm(cpp_image)),
+        'ssim': float(structural_similarity(cpp_image, aligned_torch, data_range=volume_range)),
+    }
     folder = run_folder / 'comparison'
     folder.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(3, 2, figsize=(10, 13), constrained_layout=True)
@@ -129,7 +137,7 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
             axis.set_title(f'{plane_name}: {name}')
             axis.axis('off')
             if row == 0:
-                axis.text(.02, .02, _metric_label(summary), transform=axis.transAxes,
+                axis.text(.02, .02, _metric_label(volume_metrics), transform=axis.transAxes,
                           va='bottom', ha='left', fontsize=9,
                           bbox={'facecolor': 'white', 'alpha': .8, 'edgecolor': 'none'})
     figure.savefig(folder / 'comparison_vs_grics_cpp.png', dpi=180)
@@ -137,6 +145,7 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
     result = {
         'grics_cpp_folder': str(cpp_folder),
         'volume_scale_torch_to_grics_cpp': volume_scale,
+        'volume_metrics': volume_metrics,
         'axial_metrics': summary,
         'per_axial_slice': rows,
         'comparison_image': str(folder / 'comparison_vs_grics_cpp.png'),
@@ -175,7 +184,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
     volume = result['reconstructions'][0]
     comparison = _write_comparison(_torch_magnitude(volume['image']), _load_cpp_volume(cpp_folder),
                                    Path(result['run_folder']), cpp_folder)
-    print(json.dumps(comparison['axial_metrics'], indent=2))
+    print(json.dumps(comparison['volume_metrics'], indent=2))
     print(f"[outputs] {result['run_folder']}")
     return comparison
 
