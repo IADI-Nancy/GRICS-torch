@@ -55,7 +55,6 @@ touch ~/.gitconfig
 #   /home/<user>/wkdir/data
 MOUNTS=(
   -v "$WKDIR":/home/pyuser/wkdir
-  -v ~/.ssh:/home/pyuser/.ssh
   -v ~/.gitconfig:/home/pyuser/.gitconfig
 )
 
