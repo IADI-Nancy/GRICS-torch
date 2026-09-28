@@ -255,6 +255,7 @@ runs/<workflow_label>/<unique-run-id>/
 │       │                            # corrupted image, optional synchronization
 │       ├── results/
 │       │   ├── image_reconstructed.pt
+│       │   ├── image_reconstructed_native.pt
 │       │   ├── image_reconstructed.png
 │       │   ├── image_reconstructed_nex_001.png  # Multiple repetitions only
 │       │   ├── motion_parameters.pt
@@ -277,9 +278,10 @@ In notebooks and direct solver runs, `image_reconstructed.pt` is the complex
 reconstruction before reference-image normalization and zero-filling, preserving
 the repetition dimension. Its PNG shows the magnitude of the repetition mean;
 individual repetition previews are also saved when multiple repetitions exist.
-The callable Siemens pipelines instead save only the final image and motion
-tensors and GRICS text logs, with no preview or intermediate tensors. T2's final image
-includes configured reference-image normalization and zero-filling. DICOM export
+The callable Siemens pipelines save both `image_reconstructed_native.pt`, captured
+immediately after GRICS, and the final `image_reconstructed.pt`, plus motion and
+GRICS text logs. T2's final image includes configured reference-image normalization
+and zero-filling; its native image includes neither operation. DICOM export
 uses the magnitude of the repetition mean with DICOM intensity scaling. Motion
 maps retain the reconstruction grid.
 
@@ -293,7 +295,7 @@ save_debug_plots = true
 ```
 
 - `save_reconstruction_logs`: write `reconstruction.log`, independently of tensors and plots.
-- `save_reconstruction_tensors`: save the final image and motion `.pt` files, independently of logs and plots.
+- `save_reconstruction_tensors`: save the native and final images and motion `.pt` files, independently of logs and plots.
 - `save_debug_plots`: save preprocessing, per-level, residual, and final preview/motion figures, independently of logs and tensors.
 
 All three flags can be set through `load_config(overrides={...})` in notebooks

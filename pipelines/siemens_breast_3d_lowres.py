@@ -148,8 +148,9 @@ def run_pipeline(raw_data_file, saec_file=None, *, output_root=OUTPUT_ROOT,
     preprocessing_seconds = time.perf_counter() - started
     image, motion, reconstruction_seconds = timed_reconstruction(data)
     transfer_started = time.perf_counter()
+    image = image.detach().cpu()
     result = {
-        'image': image.detach().cpu(), 'motion': motion.detach().cpu(),
+        'image': image, 'native_image': image, 'motion': motion.detach().cpu(),
         'reconstruction_seconds': reconstruction_seconds,
         'image_stage': 'before_postprocessing',
     }

@@ -3,7 +3,7 @@
 *.pt
 __pycache__/
 
-tests/artifacts/
+tests/
 bart-*
 .env
 .jupyter_local/

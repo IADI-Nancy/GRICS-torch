@@ -208,6 +208,7 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     synchronize(data.kspace.device)
     preprocessing_seconds = time.perf_counter() - started
     image, motion, reconstruction_seconds = timed_reconstruction(data)
+    native_image = image.detach().cpu().numpy()
     started = time.perf_counter()
     if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
@@ -220,7 +221,8 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     # Transfers and IPC are excluded from the per-slice solver timer.
     return {
         'slice_idx': slice_idx, 'slice_number': slice_idx + 1,
-        'image': image.detach().cpu().numpy(), 'motion': motion.detach().cpu().numpy(),
+        'image': image.detach().cpu().numpy(), 'native_image': native_image,
+        'motion': motion.detach().cpu().numpy(),
         'preprocessing_seconds': preprocessing_seconds,
         'reconstruction_seconds': reconstruction_seconds,
         'postprocessing_seconds': postprocessing_seconds,

@@ -55,21 +55,28 @@ def export_reconstruction(params, result):
                           if params.save_reconstruction_logs else None)
     result['output_dir'] = folder
     result['image_file'] = None
+    result['native_image_file'] = None
     result['motion_file'] = None
     if params.save_reconstruction_tensors:
         folder.mkdir(parents=True, exist_ok=True)
         result['image_file'] = folder / 'image_reconstructed.pt'
+        result['native_image_file'] = folder / 'image_reconstructed_native.pt'
         result['motion_file'] = folder / 'motion_parameters.pt'
         torch.save(result['image'], result['image_file'])
+        torch.save(result['native_image'], result['native_image_file'])
         torch.save(result['motion'], result['motion_file'])
     image_axes = ['nex', 'x', 'y'] + (['z'] if result['image'].ndim == 4 else [])
     motion_axes = (['component', 'motion_state'] if params.reconstruction_motion_type == 'rigid'
                    else ['component'] + image_axes[1:])
     if len(motion_axes) < result['motion'].ndim:
         motion_axes.append('sensor')
-    metadata = {key: value for key, value in result.items() if key not in {'image', 'motion'}}
+    metadata = {
+        key: value for key, value in result.items()
+        if key not in {'image', 'native_image', 'motion'}
+    }
     record_reconstruction(
         params, **metadata, status='complete', image_shape=list(result['image'].shape),
+        native_image_shape=list(result['native_image'].shape),
         tensor_export='pipeline' if params.save_reconstruction_tensors else 'disabled',
         motion_shape=list(result['motion'].shape), image_axes=image_axes, motion_axes=motion_axes,
         motion_grid='reconstruction', motion_type=params.reconstruction_motion_type,
@@ -88,6 +95,7 @@ def finish_run(data, results, timings, *, return_tensors, **metadata):
     if not return_tensors:
         for result in results:
             result.pop('image')
+            result.pop('native_image')
             result.pop('motion')
     return {'run_folder': Path(data.params.run_folder), 'timings': timings,
             'reconstructions': results}
