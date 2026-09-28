@@ -299,6 +299,7 @@ def reconstruct_slices_in_parallel(source, slice_indices, max_workers=None):
     results.sort(key=lambda item: item['slice_idx'])
     for result in results:
         result['image'] = torch.from_numpy(result['image'])
+        result['native_image'] = torch.from_numpy(result['native_image'])
         result['motion'] = torch.from_numpy(result['motion'])
     return results, workers
 
@@ -366,6 +367,11 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
         native_image = result.pop('native_image')
         export_reconstruction(params, result)
         result['native_image'] = native_image
+        result['native_image_file'] = None
+        if params.save_reconstruction_tensors:
+            native_path = Path(params.results_folder) / 'image_reconstructed_native.pt'
+            torch.save(native_image, native_path)
+            result['native_image_file'] = native_path
     timings = {
         'load_seconds': load_seconds,
         'compute_wall_seconds': compute_wall_seconds,

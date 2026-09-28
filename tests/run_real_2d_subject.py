@@ -121,9 +121,13 @@ def main(argv=None) -> dict:
         number = int(item['slice_number'])
         if number not in cpp_folders:
             raise ValueError(f'No GRICS++ image for Torch slice {number}.')
-        torch_image = _torch_magnitude(item['native_image'])
+        native_path = item.get('native_image_file')
+        if native_path is None or not Path(native_path).is_file():
+            raise FileNotFoundError(f'Native pre-zero-fill image was not saved for slice {number}.')
+        torch_image = _torch_magnitude(torch.load(native_path, map_location='cpu', weights_only=True))
         cpp_image = _load_cpp_slice(cpp_folders[number])
-        rows.append({'slice_number': number, **_metrics(torch_image, cpp_image)})
+        rows.append({'slice_number': number, 'torch_native_image_file': str(native_path),
+                     **_metrics(torch_image, cpp_image)})
 
     summary = {
         'subject': subject,
