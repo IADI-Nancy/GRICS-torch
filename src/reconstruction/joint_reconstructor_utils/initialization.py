@@ -3,6 +3,7 @@
 import torch
 
 from .resampling import resize_img_xy
+from .resampling.fourier_crop import fourier_resize_spatial
 
 
 def apply_external_initializer(
@@ -13,17 +14,20 @@ def apply_external_initializer(
     Images and non-rigid fields are interpolated to the level's spatial grid.
     Motion values are used as supplied, without displacement rescaling.
     """
+    fourier = params.resolution_resampling == "fourier"
+    nimages = data.get("Nimages", params.Nex)
     spatial = ((data["Nx"], data["Ny"], data["Nz"]) if int(data.get("Nz", 1)) > 1 else (data["Nx"], data["Ny"]))
     if initial_image is not None:
         image = torch.as_tensor(initial_image, device=device)
         # Accept an omitted acquisition axis or share one image across Nex.
         if image.ndim == len(spatial):
             image = image.unsqueeze(0)
-        if image.shape[0] == 1 and params.Nex > 1:
-            image = image.expand(params.Nex, *image.shape[1:])
-        if image.ndim != len(spatial) + 1 or image.shape[0] != params.Nex:
+        if image.shape[0] == 1 and nimages > 1:
+            image = image.expand(nimages, *image.shape[1:])
+        if image.ndim != len(spatial) + 1 or image.shape[0] != nimages:
             raise ValueError(f"Invalid initial_image shape {tuple(image.shape)}.")
-        data["ReconstructedImage"] = resize_img_xy(image.to(torch.complex128), spatial)
+        data["ReconstructedImage"] = (fourier_resize_spatial(image.to(torch.complex128), spatial)
+                                      if fourier else resize_img_xy(image.to(torch.complex128), spatial))
     if initial_motion is not None:
         motion = torch.as_tensor(initial_motion, device=device, dtype=torch.float64)
         if params.reconstruction_motion_type == "non-rigid":
@@ -32,7 +36,9 @@ def apply_external_initializer(
                 motion = motion.unsqueeze(-1)
             if motion.shape[0] != Nalpha or motion.shape[-1] != Nphysio:
                 raise ValueError(f"Invalid initial_motion shape {tuple(motion.shape)}; expected Nalpha={Nalpha}, Nsensor={Nphysio}.")
-            data["MotionModel"] = resize_img_xy(motion, spatial)
+            data["MotionModel"] = (fourier_resize_spatial(motion, spatial,
+                                  spatial_dims=tuple(range(1, 1+len(spatial)))).real
+                                  if fourier else resize_img_xy(motion, spatial))
         else:
             # Rigid parameters are indexed by motion state, not spatial position.
             expected = (Nalpha, params.N_motion_states)
@@ -43,12 +49,13 @@ def apply_external_initializer(
 
 def initialize_zero_image_and_motion(Data_res, *, params, device, Nalpha, Nphysio):
     """Create zero image and motion estimates in place for the coarsest level."""
+    nimages = Data_res.get("Nimages", params.Nex)
     if int(Data_res.get("Nz", 1)) > 1:
         Data_res["ReconstructedImage"] = torch.zeros(
-            (params.Nex, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]),
+            (nimages, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]),
             dtype=torch.complex128, device=device)
     else:
-        Data_res["ReconstructedImage"] = torch.zeros((params.Nex, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=device)
+        Data_res["ReconstructedImage"] = torch.zeros((nimages, Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=device)
 
     if params.reconstruction_motion_type == "rigid":
         Data_res["MotionModel"] = torch.zeros((Nalpha, params.N_motion_states), device=device)

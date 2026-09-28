@@ -3,6 +3,7 @@
 import torch
 
 from .resize import resize_img_xy
+from .fourier_crop import fourier_resize_spatial
 
 
 def upsample_data(Data_prev, Data_res, params, Nalpha, device):
@@ -12,7 +13,8 @@ def upsample_data(Data_prev, Data_res, params, Nalpha, device):
         if int(Data_res.get("Nz", 1)) > 1 else
         (Data_res["Nx"], Data_res["Ny"])
     )
-    img_res = resize_img_xy(img_prev, resize_shape)
+    fourier = params.resolution_resampling == "fourier"
+    img_res = fourier_resize_spatial(img_prev, resize_shape) if fourier else resize_img_xy(img_prev, resize_shape)
     Data_res["ReconstructedImage"] = img_res
 
     mot_prev = Data_prev["MotionModel"]
@@ -31,7 +33,9 @@ def upsample_data(Data_prev, Data_res, params, Nalpha, device):
             if int(Data_res.get("Nz", 1)) > 1 else
             (Data_res["Nx"], Data_res["Ny"])
         )
-        mot_res = resize_img_xy(mot_prev, resize_shape)
+        mot_res = (fourier_resize_spatial(mot_prev, resize_shape,
+                   spatial_dims=tuple(range(1, 1 + len(resize_shape)))).real.to(mot_prev.dtype)
+                   if fourier else resize_img_xy(mot_prev, resize_shape))
         mot_res[0] = mot_res[0] * Data_res["Nx"] / Data_prev["Nx"]
         mot_res[1] = mot_res[1] * Data_res["Ny"] / Data_prev["Ny"]
         if mot_res.shape[0] > 2 and int(Data_res.get("Nz", 1)) > 1:

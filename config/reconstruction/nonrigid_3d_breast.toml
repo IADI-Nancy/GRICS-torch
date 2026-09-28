@@ -1,5 +1,19 @@
 [reconstruction]
 
+# Explicit operator and solver compatibility settings.
+# NEX image model: independent images or one shared image.
+repetition_image_model = "shared"
+# Fourier mode also uses even coarse grids, as in GRICS++.
+resolution_resampling = "fourier"
+# GRICS++ triangular PCG for shared breast 3D images (phase/partition/readout order).
+# Sequential triangular solves run on CPU, also when reconstruction uses CUDA.
+motion_preconditioner = "grics_cpp"
+# Image-gradient derivatives at the spatial boundaries.
+motion_gradient_boundary = "zero"
+# GRICS++ ends each level image-only and transfers its accepted pair.
+gn_level_schedule = "grics_cpp"
+
+
 # Data and motion model
 # Reconstruction data dimensionality tag for compatibility checks.
 reconstruction_dimension = "3D"
@@ -26,7 +40,7 @@ motion_signal_normalization = "none"
 ResolutionLevels = [0.25, 0.5, 1.0]
 # "full" uses all configured motion states at every resolution level.
 # Alternatively, give one positive count per level (reduction requires non-rigid motion).
-N_motion_states_per_level = "full"
+N_motion_states_per_level = [8, 16, 16]
 # Must contain exactly one positive GN iteration count per ResolutionLevels entry.
 GN_iterations_per_level = [8, 8, 2]
 # false keeps the conventional final GN iteration image-only.
@@ -54,9 +68,9 @@ regularization_scaling = "grics_cpp"
 
 # Image update
 # Image reconstruction regularization weight.
-lambda_r = 1
+lambda_r = 1.0
 # Maximum CG/GN inner iterations for image update.
-max_iter_recon = 10
+max_iter_recon = 15
 # Convergence tolerance for image update.
 tol_recon = 1.0e-3
 

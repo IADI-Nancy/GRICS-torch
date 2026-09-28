@@ -111,8 +111,10 @@ def run_test(subject_file: Path, *, device: str, output_root: Path,
     image, motion = volume['image'], volume['motion']
     require(image.ndim == 4 and image.shape[-1] > 1,
             f'Expected image [repetitions, x, y, z], got {tuple(image.shape)}.')
+    resolved = json.loads((result['run_folder'] / 'config_resolved.json').read_text())
     if shape is not None:
-        require(tuple(image.shape) == tuple(shape[1:]),
+        nimages = 1 if resolved['repetition_image_model'] == 'shared' else shape[1]
+        require(tuple(image.shape) == (nimages, *shape[2:]),
                 f'Image shape {tuple(image.shape)} does not match input {shape[1:]}.')
     require(torch.is_complex(image), 'Expected a complex reconstructed image.')
     require(bool(torch.isfinite(image).all()), 'Image contains non-finite values.')
@@ -172,7 +174,7 @@ def main(argv=None):
     parser.add_argument('--output-root', type=Path, default=REPO_ROOT / 'runs/test_real_3d_subject')
     parser.add_argument('--compare-motion-cg-iterates', action='store_true',
                         help='Log true residual and quadratic objective for last and best motion CG iterates; '
-                             'keeps the best iterate and adds two operator evaluations per motion solve.')
+                             'keeps the configured final motion iterate and adds two operator evaluations per motion solve.')
     args = parser.parse_args(argv)
     subject_file = args.dataset_root.expanduser() / SUBJECT_FILENAME
     if not subject_file.is_file():
@@ -181,7 +183,7 @@ def main(argv=None):
                 parser.error(f'Fallback input does not exist: {path}')
     if args.compare_motion_cg_iterates:
         print('[audit] Comparing last and minimum-residual motion CG iterates; '
-              'the minimum-residual iterate remains selected. Two extra operator evaluations per solve.', flush=True)
+              'the final motion iterate remains selected. Two extra operator evaluations per solve.', flush=True)
     with motion_iterate_diagnostics() if args.compare_motion_cg_iterates else nullcontext():
         run_test(subject_file, device=args.device, output_root=args.output_root.expanduser(),
                  ismrmrd_file=args.ismrmrd_file.expanduser(), saec_file=args.saec_file.expanduser())

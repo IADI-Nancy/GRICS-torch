@@ -3,6 +3,7 @@
 import torch
 
 from .resize import resize_img_xy
+from .fourier_crop import fourier_resize_spatial
 
 
 def downsample_sampling_indices(Data_full, Sampling_full, Nx_res, Ny_res, Nz_res=1):
@@ -158,21 +159,32 @@ def reduce_motion_states(sampling_indices, target_states, motion_signal, params,
 
 
 def downsample_data(Data_full, res_factor, target_states, motion_signal, params, device):
-    Nx = int(round(Data_full["Nx"] * res_factor))
-    Ny = int(round(Data_full["Ny"] * res_factor))
+    fourier = params.resolution_resampling == 'fourier'
+    def level_size(size):
+        if fourier and res_factor != 1:
+            return max(2, 2 * (int(size * res_factor) // 2))
+        return int(round(size * res_factor))
+    Nx = level_size(Data_full["Nx"])
+    Ny = level_size(Data_full["Ny"])
     Nz_full = int(Data_full.get("Nz", 1))
     # Preserve 3D motion at every level: its spatial gradients require at
     # least two depth samples. A singleton depth would select 2D operators
     # and misinterpret the original volume axis during sensitivity resizing.
-    Nz = max(2, int(round(Nz_full * res_factor))) if Nz_full > 1 else 1
+    Nz = max(2, level_size(Nz_full)) if Nz_full > 1 else 1
 
     Data_res = {}
+    Data_res["Nimages"] = Data_full.get("Nimages", params.Nex)
     Data_res["Nx"] = Nx
     Data_res["Ny"] = Ny
     Data_res["Nz"] = Nz
 
     resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
-    Data_res["SensitivityMaps"] = resize_img_xy(Data_full["SensitivityMaps"], resize_shape)
+    if fourier:
+        smaps = Data_full["SensitivityMaps"]
+        Data_res["SensitivityMaps"] = (fourier_resize_spatial(smaps, resize_shape) if Nz > 1
+                                       else fourier_resize_spatial(smaps[..., 0], resize_shape).unsqueeze(-1))
+    else:
+        Data_res["SensitivityMaps"] = resize_img_xy(Data_full["SensitivityMaps"], resize_shape)
     sampling_indices = downsample_sampling_indices(
         Data_full, Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
     )

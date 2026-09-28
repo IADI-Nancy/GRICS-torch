@@ -23,11 +23,13 @@ def build_motion_operator(Data_res, params):
 
 def build_encoding_operator(Data_res, params):
     E = EncodingOperator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
-                         params.Nex, Data_res["MotionOperator"])
+                         params.Nex, Data_res["MotionOperator"], Nimages=Data_res.get("Nimages", params.Nex))
     return E
 
 
 def build_motion_perturbation_simulator(Data_res, params):
     J = MotionPerturbationSimulator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
-                                    params.Nex, Data_res["ReconstructedImage"], Data_res["MotionOperator"])
+                                    params.Nex, Data_res["ReconstructedImage"], Data_res["MotionOperator"],
+                                    Nimages=Data_res.get("Nimages", params.Nex),
+                                    gradient_boundary=params.motion_gradient_boundary)
     return J

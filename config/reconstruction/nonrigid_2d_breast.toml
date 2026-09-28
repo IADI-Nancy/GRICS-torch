@@ -1,5 +1,18 @@
 [reconstruction]
 
+# Explicit operator and solver compatibility settings.
+# NEX image model: independent images or one shared image.
+repetition_image_model = "independent"
+# Fourier mode also uses even coarse grids, as in GRICS++.
+resolution_resampling = "linear"
+# GRICS++ triangular PCG currently supports shared 3D nonrigid images.
+motion_preconditioner = "none"
+# Image-gradient derivatives at the spatial boundaries.
+motion_gradient_boundary = "one_sided"
+# GRICS++ ends each level image-only and transfers its accepted pair.
+gn_level_schedule = "legacy"
+
+
 # Data and motion model
 # Data dimensionality. Allowed values: "2D" or "3D"; it must match the input data.
 reconstruction_dimension = "2D"

@@ -15,7 +15,7 @@ class ConjugateGradientSolver:
     def __init__(self, encoding_operator, *, reg_lambda, regularizer, regularization_shape,
         regularization_spatial_dims, verbose, stop_on_stagnation, true_residual_interval,
         stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes,
-        regularization_spacing=None):
+        regularization_spacing=None, preconditioner=None):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -27,6 +27,7 @@ class ConjugateGradientSolver:
         self.regularization_shape = regularization_shape
         self.regularization_spatial_dims = regularization_spatial_dims
         self.regularization_spacing = regularization_spacing
+        self.preconditioner = preconditioner
         if self.regularizer in ("Tikhonov_gradient", "Tikhonov_laplacian"):
             if self.regularization_shape is None:
                 raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
@@ -213,7 +214,7 @@ class ConjugateGradientSolver:
             # bound on image or motion error.
             tolb = tol * b_norm
 
-            z = r.clone()
+            z = r.clone() if self.preconditioner is None else self.preconditioner(r)
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
             eps = torch.finfo(r.real.dtype).eps
@@ -317,7 +318,7 @@ class ConjugateGradientSolver:
                         stop_reason = "early_stopping"
                         break
 
-                z = r.clone()
+                z = r.clone() if self.preconditioner is None else self.preconditioner(r)
 
                 rz_new = torch.dot(torch.conj(r), z).real
                 if rz_old.abs() < 1e-15:

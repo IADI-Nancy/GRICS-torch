@@ -1,5 +1,6 @@
 import torch
 from  src.utils.fftnc import fftnc, ifftnc
+from src.reconstruction.grics_cpp_motion_preconditioner import GricsCppPseudoGaussSeidelPreconditioner
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
@@ -16,13 +17,21 @@ where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator):
+    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator, Nimages=None, gradient_boundary="one_sided"):
         self.device = smaps.device
         self.SensitivityMaps = smaps
-        self.Nex = Nex
+        self.Nex = int(Nex)
+        self.Nimages = self.Nex if Nimages is None else int(Nimages)
+        if self.Nimages not in (1, self.Nex):
+            raise ValueError("Nimages must be 1 (shared image) or equal Nex (independent images).")
+        if image.shape[0] != self.Nimages:
+            raise ValueError(f"image has {image.shape[0]} image unknowns, expected {self.Nimages}.")
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
+        if gradient_boundary not in ("zero", "one_sided"):
+            raise ValueError("gradient_boundary must be zero or one_sided.")
+        self.gradient_boundary = gradient_boundary
         self.motionOperator = motionOperator
         self.Nalpha = motionOperator.alpha.shape[0]  # number of displacement or rigid parameters
         if motionOperator.motion_type == "non-rigid":
@@ -56,6 +65,9 @@ class MotionPerturbationSimulator:
         gy[:, 0] = img[:, 1] - img[:, 0]
         gy[:, -1] = img[:, -1] - img[:, -2]
 
+        if self.gradient_boundary == "zero":
+            gx[0, :] = gx[-1, :] = 0
+            gy[:, 0] = gy[:, -1] = 0
         return gx, gy
 
     def _gradient_3d(self, img):
@@ -79,7 +91,31 @@ class MotionPerturbationSimulator:
         gz[:, :, 0] = img[:, :, 1] - img[:, :, 0]
         gz[:, :, -1] = img[:, :, -1] - img[:, :, -2]
 
+        if self.gradient_boundary == "zero":
+            gx[0, :, :] = gx[-1, :, :] = 0
+            gy[:, 0, :] = gy[:, -1, :] = 0
+            gz[:, :, 0] = gz[:, :, -1] = 0
         return gx, gy, gz
+
+    def grics_cpp_pseudo_gauss_seidel_preconditioner(self, *, lambda_scaled, voxel_spacing, image_scale):
+        """Return GRICS++'s two-factor non-rigid 3D motion preconditioner."""
+        if self.motionOperator.motion_type != "non-rigid" or self.Nalpha != 3:
+            raise ValueError('GRICS++ pseudo Gauss-Seidel preconditioning requires 3D non-rigid motion.')
+        _, nx, ny, nz = self.SensitivityMaps.shape
+        if nz <= 1:
+            raise ValueError('GRICS++ pseudo Gauss-Seidel preconditioning is implemented only for 3D.')
+        if self.Nimages != 1:
+            raise ValueError("GRICS++ preconditioning requires a shared NEX image.")
+        def warped_gradients():
+            image = self.image[0].flatten() * image_scale
+            for state in range(len(self.SamplingIndices[0])):
+                warp = self.motionOperator._get_sparse_operator(state)
+                warped = (warp @ image).reshape(nx, ny, nz)
+                yield torch.stack(self._gradient_3d(warped))
+        return GricsCppPseudoGaussSeidelPreconditioner.from_warped_gradients(
+            warped_gradients(), self.motionOperator.motion_signal,
+            lambda_scaled=lambda_scaled, voxel_spacing=voxel_spacing,
+        )
 
     def forward(self, MotionModelPerturbation):
         Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
@@ -117,7 +153,7 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
+                image_nex = self.image[0 if self.Nimages == 1 else nex]
                 # 1) Warp the image using the motion operator
                 if is_3d:
                     WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
@@ -219,7 +255,7 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
+                image_nex = self.image[0 if self.Nimages == 1 else nex]
                 # 1) Warp image with motion state operator
                 if is_3d:
                     WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)

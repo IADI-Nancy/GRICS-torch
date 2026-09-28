@@ -76,6 +76,7 @@ class JointReconstructor:
 
         # Parameters constant for all resolutions        
         self.params = params
+        self.Nimages = 1 if params.repetition_image_model == "shared" else int(params.Nex)
         self.Ncoils = Ncoils
         self.Nz_full = int(Nz_full)
         self.device = KspaceData.device
@@ -113,6 +114,7 @@ class JointReconstructor:
         # Data changing with resolution
         self.Data_full = {}
         self.Data_full["Nx"] = Nx_full
+        self.Data_full["Nimages"] = self.Nimages
         self.Data_full["Ny"] = Ny_full
         self.Data_full["Nz"] = self.Nz_full
         self.Data_full["SensitivityMaps"] = smaps
@@ -160,10 +162,9 @@ class JointReconstructor:
         if self.regularization_scaling == "grics_cpp":
             level_pixels = Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
             full_pixels = self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"]
-            # Each NEX is an independent image unknown. Its regularization
-            # must use its own RHS norm; a stacked norm couples otherwise
-            # independent images and grows by sqrt(Nex) for identical repeats.
-            rhs_per_image = b.reshape(self.params.Nex, level_pixels)
+            # Scale each image unknown using its RHS norm. In shared mode
+            # the adjoint has already summed all NEX into that one RHS.
+            rhs_per_image = b.reshape(x0.shape[0], level_pixels)
             image_scales = ((level_pixels / full_pixels) ** 0.5 * self.kspace_scale
                             * torch.linalg.vector_norm(rhs_per_image, dim=1))
             solver.reg_scale = image_scales.repeat_interleave(level_pixels)
@@ -186,9 +187,9 @@ class JointReconstructor:
 
         # Convert the flattened CG solution back to the image's spatial layout.
         if int(Data_res.get("Nz", 1)) > 1:
-            img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+            img = img_vec.reshape(x0.shape[0], Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
         else:
-            img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
+            img = img_vec.reshape(x0.shape[0], Data_res["Nx"], Data_res["Ny"])
         return img
 
     def _grics_cpp_level_spacing_and_ratio(self, data):
@@ -246,6 +247,12 @@ class JointReconstructor:
             if self.regularization_scaling == "grics_cpp":
                 solver.reg_scale = ratio * min(spacing) ** 4 * torch.linalg.norm(b_data.flatten()).item()
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
+            if self.params.motion_preconditioner == 'grics_cpp' and torch.count_nonzero(b).item():
+                # C++ builds factors in raw signal units: its smoothing term
+                # uses sqrt(mu), whereas its data term scales as |image|^2.
+                solver.preconditioner = J.grics_cpp_pseudo_gauss_seidel_preconditioner(
+                    lambda_scaled=math.sqrt(solver._effective_lambda()) * self.kspace_scale,
+                    voxel_spacing=spacing, image_scale=self.kspace_scale)
             mot_pert_vec = solver.cg(
                 b.flatten(), x0=x0.flatten(), max_iter=max_iterations,
                 tol=self.params.tol_motion, return_last_iterate=True,
@@ -335,19 +342,8 @@ class JointReconstructor:
 
         # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
         if update_motion:
-            # 4) Build linearized motion-perturbation simulator around current
-            # estimate: ∇_u(E)·δu = δkspace
-            with Timer() as motion_timer, torch.no_grad():
-                motion_data = dict(data)
-                motion_data["ReconstructedImage"] = image.detach()
-                motion_data["MotionModel"] = motion_for_residual.detach()
-                motion_data["J"] = build_motion_perturbation_simulator(motion_data, self.params)
-
-                # 5) Solve for motion update
-                motion_update = self._solve_motion(
-                    motion_data, residual.detach(), max_iterations=motion_cg_iterations)
-                motion = (motion_for_residual.detach() + motion_update.real).detach()
-            motion_elapsed = motion_timer.elapsed
+            motion, motion_update, motion_elapsed = self._motion_update(
+                data, image, motion_for_residual, residual, motion_cg_iterations)
         else:
             motion = motion_for_residual.detach()
 
@@ -357,6 +353,19 @@ class JointReconstructor:
         data["MotionModel"] = motion
         return _GaussNewtonIterationResult(
             image, motion, predicted, residual, motion_for_residual, motion_update, image_timer.elapsed, motion_elapsed)
+
+    def _motion_update(self, data, image, motion_for_residual, residual, max_iterations=None):
+        """Rebuild the motion operator after an accepted image-only solve."""
+        with Timer() as timer, torch.no_grad():
+            motion_data = dict(data)
+            motion_data["ReconstructedImage"] = image.detach()
+            motion_data["MotionModel"] = motion_for_residual.detach()
+            if "MotionOperator" not in motion_data:
+                motion_data["MotionOperator"] = build_motion_operator(motion_data, self.params)
+            motion_data["J"] = build_motion_perturbation_simulator(motion_data, self.params)
+            update = self._solve_motion(motion_data, residual.detach(), max_iterations=max_iterations)
+            motion = (motion_for_residual.detach() + update.real).detach()
+        return motion, update, timer.elapsed
 
     def _prepare_resolution_level(self, idx_res, r):
         # Prepare low-resolution dataset
@@ -392,17 +401,19 @@ class JointReconstructor:
         best_relative_residual = float("inf")
         best_image = best_motion = None
 
+        cpp_schedule = self.params.gn_level_schedule == "grics_cpp"
         with logger.iterations(level_index) as gauss_newton_iteration_indices:
             for gauss_newton_iteration_index in gauss_newton_iteration_indices:
-                # Only the last iteration of the entire run may skip motion.
-                is_final_iteration = (level_index == level_count - 1 and gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1)
+                # C++ finishes every level with the accepted image/motion pair.
+                is_final_iteration = ((self.params.gn_level_schedule == "grics_cpp" or level_index == level_count - 1)
+                                      and gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1)
                 update_motion = not is_final_iteration or update_final_motion
 
                 result = self.gauss_newton_iteration(
                     data, image_regularizer=self.external_image_regularizer,
                     regularization_weight=image_regularization_weight_for_level(
                         self.params, self._current_level_idx),
-                    update_motion=update_motion)
+                    update_motion=update_motion and not cpp_schedule)
                 # This residual uses the newly solved image and the motion
                 # estimate from before the current motion update.
                 relative_residual = torch.linalg.norm(result.residual).item() / (measured_norm + 1e-12)
@@ -421,9 +432,17 @@ class JointReconstructor:
                 best_image = result.image.clone()
                 best_motion = result.motion_for_residual.clone()
 
+                if cpp_schedule and update_motion:
+                    result.motion, result.motion_update, result.motion_elapsed = self._motion_update(
+                        data, result.image, result.motion_for_residual, result.residual)
+                    data["MotionModel"] = result.motion
+
                 logger.iteration_finished(
                     result, relative_residual, self._last_image_cg_info, self._last_motion_cg_info)
 
+        if self.params.gn_level_schedule == "grics_cpp":
+            data["ReconstructedImage"] = best_image
+            data["MotionModel"] = best_motion
         return best_image, best_motion
 
     # ----------------------------------------------------------------------
@@ -435,7 +454,7 @@ class JointReconstructor:
         defer_tensor_export leaves enabled tensor exports to the caller without
         changing configuration. Logs, metadata and plots retain their normal behavior.
 
-        The image is ``[Ne, Nx, Ny, (Nz)]``. Motion is ``[Nalpha, Nm]`` for
+        The image is ``[Nimages, Nx, Ny, (Nz)]`` (one for shared NEX). Motion is ``[Nalpha, Nm]`` for
         rigid or ``[Nalpha, Nx, Ny, (Nz), Ns]`` for non-rigid reconstruction.
         """
         if type(defer_tensor_export) is not bool:
@@ -504,7 +523,7 @@ class JointReconstructor:
         squeeze_nex = image.ndim == len(spatial_shape)
         if squeeze_nex:
             image = image.unsqueeze(0)
-        expected_image_shape = (self.params.Nex, *spatial_shape)
+        expected_image_shape = (self.Nimages, *spatial_shape)
         if tuple(image.shape) != expected_image_shape:
             raise ValueError(f"image must have shape {expected_image_shape} or {spatial_shape}; got {tuple(image.shape)}.")
 
@@ -515,7 +534,7 @@ class JointReconstructor:
             "KspaceData": self.Data_full["KspaceData"].reshape(self.Ncoils, self.params.Nex, -1),
             "Nsamples": self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"],
             "SamplingIndices": self.Data_full["SamplingIndices"] if sampling_indices is None else sampling_indices,
-            "MotionSignal": self.motion_signal, "ReconstructedImage": image,
+            "Nimages": self.Nimages, "MotionSignal": self.motion_signal, "ReconstructedImage": image,
             "MotionModel": torch.as_tensor(motion, device=self.device), "_squeeze_nex": squeeze_nex,
         }
 

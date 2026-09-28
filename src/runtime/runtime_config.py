@@ -65,6 +65,8 @@ _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
     'motion_signal_normalization', 'regularization_scaling',
+    'repetition_image_model', 'resolution_resampling', 'motion_preconditioner',
+    'motion_gradient_boundary', 'gn_level_schedule',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping',
@@ -375,6 +377,17 @@ def _validate_reconstruction(cfg):
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
     _choice(cfg['motion_signal_normalization'], 'motion_signal_normalization', {'none', 'acquisition_zscore'})
     _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
+    _choice(cfg['repetition_image_model'], 'repetition_image_model', {'shared', 'independent'})
+    _choice(cfg['resolution_resampling'], 'resolution_resampling', {'fourier', 'linear'})
+    _choice(cfg['motion_preconditioner'], 'motion_preconditioner', {'grics_cpp', 'none'})
+    _choice(cfg['motion_gradient_boundary'], 'motion_gradient_boundary', {'zero', 'one_sided'})
+    _choice(cfg['gn_level_schedule'], 'gn_level_schedule', {'legacy', 'grics_cpp'})
+    if cfg['gn_level_schedule'] == 'grics_cpp' and cfg['update_motion_on_final_iteration']:
+        raise ValueError('GRICS++ level scheduling requires update_motion_on_final_iteration = false.')
+    if cfg['motion_preconditioner'] == 'grics_cpp':
+        if (cfg['reconstruction_dimension'] != '3D' or cfg['reconstruction_motion_type'] != 'non-rigid'
+                or cfg['repetition_image_model'] != 'shared' or cfg['regularization_scaling'] != 'grics_cpp'):
+            raise ValueError('GRICS++ motion preconditioning requires shared 3D nonrigid images and grics_cpp scaling.')
     levels = cfg['ResolutionLevels']
     if not isinstance(levels, list) or not levels:
         raise ValueError('ResolutionLevels must be a nonempty list.')
