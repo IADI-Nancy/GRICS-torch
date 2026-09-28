@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from src.reconstruction.joint_reconstructor_utils.resampling import (
-    downsample_data, upsample_data,
+    downsample_data, upsample_data, fourier_crop_spatial,
 )
 from src.reconstruction.ConjugateGadientSolver import ConjugateGradientSolver
 from src.reconstruction.joint_reconstructor_utils.configuration import (
@@ -22,6 +22,7 @@ from src.reconstruction.joint_reconstructor_utils.state import (
     remove_temporary_operators, extract_image_and_motion_for_next_level,
 )
 from src.reconstruction.joint_reconstructor_utils.regularization import _assign_cached_reg_scale
+from src.reconstruction.joint_reconstructor_utils.calibration_prior import CalibrationPriorEncodingOperator
 from src.reconstruction.joint_reconstructor_utils.logging import JointReconstructionLogger
 from src.reconstruction.joint_reconstructor_utils.timing import Timer
 
@@ -52,6 +53,7 @@ class JointReconstructor:
         initial_image: torch.Tensor | None = None,
         initial_motion: torch.Tensor | None = None,
         external_image_regularizer: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        calibration_image_prior: torch.Tensor | None = None,
         voxel_spacing_mm: tuple[float, ...] | None = None):
         """Initialize joint reconstruction.
 
@@ -71,6 +73,8 @@ class JointReconstructor:
                 ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
             external_image_regularizer: Optional callable mapping an image to
                 a same-shape, same-device image prior.
+            calibration_image_prior: Optional nonnegative calibration magnitude
+                used as the multiplicative GRICS++ image constraint.
         """
         Ncoils, Nx_full, Ny_full, Nz_full = smaps.shape
 
@@ -86,8 +90,24 @@ class JointReconstructor:
             self.Nalpha = 3 if self.Nz_full > 1 else 2
         self.regularization_scaling = params.regularization_scaling
         spatial_dims = 3 if self.Nz_full > 1 else 2
+        self.use_calibration_image_prior = params.use_calibration_image_prior
         if self.regularization_scaling not in ('direct', 'grics_cpp'):
             raise ValueError('regularization_scaling must be direct or grics_cpp.')
+        if self.use_calibration_image_prior and external_image_regularizer is not None:
+            raise ValueError('Calibration image prior cannot be combined with an external image regularizer.')
+        spatial_shape = (Nx_full, Ny_full, self.Nz_full) if self.Nz_full > 1 else (Nx_full, Ny_full)
+        if self.use_calibration_image_prior:
+            if calibration_image_prior is None:
+                raise ValueError('Calibration image prior is enabled, but no calibration image was supplied.')
+            calibration = torch.as_tensor(calibration_image_prior, device=self.device)
+            if self.Nz_full == 1 and tuple(calibration.shape) == (Nx_full, Ny_full, 1):
+                calibration = calibration[..., 0]
+            if (tuple(calibration.shape) != spatial_shape or calibration.is_complex()
+                    or not torch.isfinite(calibration).all() or torch.any(calibration < 0)):
+                raise ValueError(f'Calibration image prior must be a finite nonnegative real image of shape {spatial_shape}.')
+            self.calibration_image_prior = calibration.to(torch.float64)
+        else:
+            self.calibration_image_prior = None
         if self.regularization_scaling == 'grics_cpp':
             if (voxel_spacing_mm is None or len(voxel_spacing_mm) != spatial_dims
                     or any(not math.isfinite(float(v)) or float(v) <= 0 for v in voxel_spacing_mm)):
@@ -124,6 +144,8 @@ class JointReconstructor:
             for ms in range(len(SamplingIndices[0]))
         )
         self.Data_full["SamplingIndices"] = SamplingIndices
+        if self.calibration_image_prior is not None:
+            self.Data_full['CalibrationImagePrior'] = self.calibration_image_prior
         self.motion_states_per_level = configure_motion_states_per_resolution_level(
             self.params, self.motion_signal)
 
@@ -142,6 +164,15 @@ class JointReconstructor:
             self.device, dtype=torch.complex128
         )
         E = Data_res["E"]
+        calibration = Data_res.get("CalibrationImagePrior")
+        if calibration is not None:
+            if image_prior is not None:
+                raise ValueError("Calibration image prior cannot be combined with a centered image prior.")
+            calibration = calibration.unsqueeze(0).expand(self.Nimages, *calibration.shape)
+            E = CalibrationPriorEncodingOperator(E, calibration)
+            nonzero = calibration.abs() > 1e-12
+            safe_calibration = torch.where(nonzero, calibration, torch.ones_like(calibration))
+            x0 = torch.where(nonzero, x0 / safe_calibration, torch.zeros_like(x0))
 
         # Back-project measured k-space to form the normal-equation RHS.
         b = E.adjoint(Data_res["KspaceData"])
@@ -190,6 +221,8 @@ class JointReconstructor:
             img = img_vec.reshape(x0.shape[0], Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
         else:
             img = img_vec.reshape(x0.shape[0], Data_res["Nx"], Data_res["Ny"])
+        if calibration is not None:
+            img = calibration * img
         return img
 
     def _grics_cpp_level_spacing_and_ratio(self, data):
@@ -374,6 +407,13 @@ class JointReconstructor:
             target_states=self.motion_states_per_level[self._current_level_idx],
             motion_signal=self.motion_signal, params=self.params, device=self.device,
         )
+        if self.calibration_image_prior is not None:
+            shape = ((Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+                     if self.Nz_full > 1 else (Data_res["Nx"], Data_res["Ny"]))
+            Data_res["CalibrationImagePrior"] = (
+                self.calibration_image_prior if tuple(self.calibration_image_prior.shape) == shape
+                else fourier_crop_spatial(self.calibration_image_prior, shape)
+            )
 
         # Initialize image and motion model
         if idx_res == 0:

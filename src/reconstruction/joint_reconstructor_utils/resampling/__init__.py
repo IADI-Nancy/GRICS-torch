@@ -7,10 +7,12 @@ from .downsample import (
     reduce_motion_states,
 )
 from .resize import resize_img_xy
+from .fourier_crop import fourier_crop_spatial
 from .upsample import upsample_data
 
 __all__ = [
     "resize_img_xy",
+    "fourier_crop_spatial",
     "downsample_sampling_indices",
     "downsample_kspace",
     "reduce_motion_states",

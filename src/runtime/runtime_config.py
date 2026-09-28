@@ -64,7 +64,7 @@ _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothin
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
-    'motion_signal_normalization', 'regularization_scaling',
+    'motion_signal_normalization', 'regularization_scaling', 'use_calibration_image_prior',
     'repetition_image_model', 'resolution_resampling', 'motion_preconditioner',
     'motion_gradient_boundary', 'gn_level_schedule',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
@@ -104,6 +104,7 @@ _BOOL_KEYS = {
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
+    'use_calibration_image_prior',
 }
 
 
@@ -377,6 +378,10 @@ def _validate_reconstruction(cfg):
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
     _choice(cfg['motion_signal_normalization'], 'motion_signal_normalization', {'none', 'acquisition_zscore'})
     _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
+    if type(cfg['use_calibration_image_prior']) is not bool:
+        raise ValueError('use_calibration_image_prior must be a boolean.')
+    if cfg['use_calibration_image_prior'] and cfg['coil_sensitivity_method'] != 'odille-spline':
+        raise ValueError('Calibration image prior requires odille-spline coil sensitivities.')
     _choice(cfg['repetition_image_model'], 'repetition_image_model', {'shared', 'independent'})
     _choice(cfg['resolution_resampling'], 'resolution_resampling', {'fourier', 'linear'})
     _choice(cfg['motion_preconditioner'], 'motion_preconditioner', {'grics_cpp', 'none'})

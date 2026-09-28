@@ -84,6 +84,13 @@ class StrictConfigurationChecks(unittest.TestCase):
             with self.subTest(synthetic=values), self.assertRaises(ValueError):
                 load_config(**SYNTH, overrides=values)
 
+    def test_calibration_image_prior_requires_odille_spline_maps(self):
+        params = load_config(**BASE, overrides={'use_calibration_image_prior': True})
+        self.assertTrue(params.use_calibration_image_prior)
+        with self.assertRaisesRegex(ValueError, 'odille-spline'):
+            load_config(**{**BASE, 'coil_sensitivity_config': 'config/coil_sensitivity/espirit.toml'},
+                        overrides={'use_calibration_image_prior': True})
+
     def test_real_data_settings_are_loaded_only_for_saec(self):
         saec = {**BASE, 'data_type':'siemens-saec', 'real_data_config':'config/real_data/saec.toml', 'polaris_config':None}
         self.assertEqual(load_config(**saec).rawdata_sensor_type, '1MARMOT')

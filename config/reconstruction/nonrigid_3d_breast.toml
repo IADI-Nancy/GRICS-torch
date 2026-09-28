@@ -65,6 +65,7 @@ cg_stagnation_countdown_steps = 6
 cg_use_reg_scale_proxy = false
 # Scale image and motion regularization as in GRICS++.
 regularization_scaling = "grics_cpp"
+use_calibration_image_prior = false
 
 # Image update
 # Image reconstruction regularization weight.

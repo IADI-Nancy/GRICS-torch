@@ -60,6 +60,7 @@ cg_stagnation_countdown_steps = 6
 cg_use_reg_scale_proxy = true
 # Use the configured regularization weight directly.
 regularization_scaling = "direct"
+use_calibration_image_prior = false
 # Number of probes for regularization scaling estimate.
 # Required only when cg_use_reg_scale_proxy = true; omit otherwise.
 cg_reg_scale_num_probes = 8
