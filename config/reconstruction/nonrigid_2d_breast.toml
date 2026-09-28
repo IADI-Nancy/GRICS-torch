@@ -10,7 +10,7 @@ motion_preconditioner = "none"
 # Image-gradient derivatives at the spatial boundaries.
 motion_gradient_boundary = "one_sided"
 # GRICS++ ends each level image-only and transfers its accepted pair.
-gn_level_schedule = "legacy"
+gn_level_schedule = "grics_cpp"
 
 
 # Data and motion model

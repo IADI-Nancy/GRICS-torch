@@ -33,7 +33,7 @@ motion_binning_mode = "kspace_energy"
 # Required only when motion_binning_mode = "kspace_energy"; omit otherwise.
 motion_quantization_bins = 256
 # Physiological normalization is handled by the SAEC/BELT reader for 3D.
-motion_signal_normalization = "none"
+motion_signal_normalization = "acquisition_zscore"
 
 # Multi-resolution reconstruction
 # Multi-resolution scale factors: strictly increasing in (0, 1], ending at 1.0.

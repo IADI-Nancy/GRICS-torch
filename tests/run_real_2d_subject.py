@@ -164,7 +164,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
         slice_stop=slice_stop, return_tensors=True, export_dicom=False,
     )
     rows = []
-    central_slice = sorted(cpp_folders)[len(cpp_folders) // 2]
+    central_slice = sorted(cpp_folders)[len(cpp_folders) // 4]
     central_images = None
     for item in result['reconstructions']:
         number = int(item['slice_number'])
