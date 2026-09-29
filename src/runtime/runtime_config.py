@@ -73,7 +73,7 @@ _RECONSTRUCTION_KEYS = {
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
-    'use_calibration_weighted_image',
+    'use_calibration_weighted_image', 'regularization_scaling',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -417,6 +417,7 @@ def _validate_reconstruction(cfg):
     elif 'cg_reg_scale_num_probes' in cfg:
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
+    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
     if type(cfg['use_calibration_weighted_image']) is not bool:
         raise ValueError('use_calibration_weighted_image must be a boolean.')
     if cfg['use_calibration_weighted_image'] and cfg['coil_sensitivity_method'] != 'odille-spline':

@@ -42,6 +42,8 @@ cg_stagnation_consecutive_steps = 12
 cg_stagnation_countdown_steps = 6
 
 # Regularization scaling
+# "grics_cpp" scales image and motion lambda by resolution; motion gradients use encoded voxel spacing.
+regularization_scaling = "direct"
 # Estimate regularization scaling internally from probes.
 # When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.

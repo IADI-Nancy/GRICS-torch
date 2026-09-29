@@ -49,6 +49,8 @@ cg_stagnation_consecutive_steps = 6
 cg_stagnation_countdown_steps = 0
 
 # Regularization scaling
+# "grics_cpp" scales image and motion lambda by resolution; motion gradients use encoded voxel spacing.
+regularization_scaling = "grics_cpp"
 # Estimate regularization scaling internally from probes.
 # When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.
@@ -59,7 +61,7 @@ use_calibration_weighted_image = true
 
 # Image update
 # Image reconstruction regularization weight. Must be non-negative.
-lambda_r = 5.0e-2
+lambda_r = 1.0
 # Maximum CG iterations for each image update. Must be a positive integer.
 max_iter_recon = 50
 # Relative convergence tolerance for image updates. Must be positive.
@@ -67,7 +69,7 @@ tol_recon = 1.0e-3
 
 # Motion update
 # Motion reconstruction regularization weight. Must be non-negative.
-lambda_m = 10.0
+lambda_m = 0.5
 # Maximum CG iterations for each motion update. Must be a positive integer.
 max_iter_motion = 10
 # Relative convergence tolerance for motion updates. Must be positive.

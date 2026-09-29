@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+import math
 
 import torch
 
@@ -13,7 +14,8 @@ class ConjugateGradientSolver:
     """
     def __init__(self, encoding_operator, *, reg_lambda, regularizer, regularization_shape,
         regularization_spatial_dims, verbose, stop_on_stagnation, true_residual_interval,
-        stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes):
+        stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes,
+        regularization_spacing=None):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -24,11 +26,18 @@ class ConjugateGradientSolver:
         self.regularizer = regularizer
         self.regularization_shape = regularization_shape
         self.regularization_spatial_dims = regularization_spatial_dims
+        self.regularization_spacing = regularization_spacing
         if self.regularizer == "Tikhonov_gradient":
             if self.regularization_shape is None:
                 raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
             if self.regularization_spatial_dims is None:
                 raise ValueError(f"regularization_spatial_dims must be set for {self.regularizer} regularization.")
+            if self.regularization_spacing is not None:
+                if len(self.regularization_spacing) != len(self.regularization_spatial_dims):
+                    raise ValueError("regularization_spacing must have one value per spatial dimension.")
+                if any(not math.isfinite(float(value)) or float(value) <= 0
+                       for value in self.regularization_spacing):
+                    raise ValueError("regularization_spacing must contain finite positive values.")
         self.verbose = verbose
         self.stop_on_stagnation = stop_on_stagnation
         self.true_residual_interval = true_residual_interval
@@ -102,7 +111,9 @@ class ConjugateGradientSolver:
         result = torch.zeros_like(field)
 
         # Compute -div(grad(field)) along selected spatial dimensions.
-        for d in spatial_dims:
+        for index, d in enumerate(spatial_dims):
+            spacing_squared = (float(self.regularization_spacing[index]) ** 2
+                               if self.regularization_spacing is not None else 1.0)
             # Forward difference along dimension d (zero-gradient boundary).
             df = torch.zeros_like(field)
             slc_src = [slice(None)] * field.ndim
@@ -125,7 +136,7 @@ class ConjugateGradientSolver:
             sn_prev = [slice(None)] * field.ndim; sn_prev[d] = -2
             div[tuple(sn)] = df[tuple(sn_prev)]
 
-            result += div
+            result += div / spacing_squared
 
         return result.reshape(-1)
     
