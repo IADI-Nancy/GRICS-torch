@@ -8,6 +8,11 @@ coil_sensitivity_config = "espirit"
 reconstruction_dimension = "3D"
 # Motion model used by reconstruction ("rigid" or "non-rigid").
 reconstruction_motion_type = "non-rigid"
+# Enable pseudo Gauss-Seidel motion preconditioning (non-rigid only).
+# Requires lambda_m > 0 when enabled.
+motion_preconditioner = false
+# Gradient rule at image boundaries for the motion Jacobian.
+motion_gradient_boundary = "zero"
 
 # Motion-state binning
 # Number of reconstruction motion states.

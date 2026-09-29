@@ -16,13 +16,17 @@ where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator):
+    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator,
+                 gradient_boundary="one_sided"):
         self.device = smaps.device
         self.SensitivityMaps = smaps
         self.Nex = Nex
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
+        if gradient_boundary not in ("zero", "one_sided"):
+            raise ValueError('gradient_boundary must be "zero" or "one_sided".')
+        self.gradient_boundary = gradient_boundary
         expected_ndim = 3 if int(smaps.shape[-1]) > 1 else 2
         if image.ndim != expected_ndim:
             raise ValueError(
@@ -61,6 +65,9 @@ class MotionPerturbationSimulator:
         gy[:, 0] = img[:, 1] - img[:, 0]
         gy[:, -1] = img[:, -1] - img[:, -2]
 
+        if self.gradient_boundary == "zero":
+            gx[0, :] = gx[-1, :] = 0
+            gy[:, 0] = gy[:, -1] = 0
         return gx, gy
 
     def _gradient_3d(self, img):
@@ -84,6 +91,10 @@ class MotionPerturbationSimulator:
         gz[:, :, 0] = img[:, :, 1] - img[:, :, 0]
         gz[:, :, -1] = img[:, :, -1] - img[:, :, -2]
 
+        if self.gradient_boundary == "zero":
+            gx[0, :, :] = gx[-1, :, :] = 0
+            gy[:, 0, :] = gy[:, -1, :] = 0
+            gz[:, :, 0] = gz[:, :, -1] = 0
         return gx, gy, gz
 
     def forward(self, MotionModelPerturbation):

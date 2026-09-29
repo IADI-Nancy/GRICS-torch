@@ -15,7 +15,7 @@ class ConjugateGradientSolver:
     def __init__(self, encoding_operator, *, reg_lambda, regularizer, regularization_shape,
         regularization_spatial_dims, verbose, stop_on_stagnation, true_residual_interval,
         stagnation_consecutive_steps, stagnation_countdown_steps, use_reg_scale_proxy, reg_scale_num_probes,
-        regularization_spacing=None):
+        regularization_spacing=None, preconditioner=None):
         """
         encoding_operator : instance of EncodingOperator
         motion_operator   : list of motion operators (same used inside forward/backward)
@@ -27,6 +27,7 @@ class ConjugateGradientSolver:
         self.regularization_shape = regularization_shape
         self.regularization_spatial_dims = regularization_spatial_dims
         self.regularization_spacing = regularization_spacing
+        self.preconditioner = preconditioner
         if self.regularizer == "Tikhonov_gradient":
             if self.regularization_shape is None:
                 raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
@@ -143,7 +144,8 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False,
+           return_last_iterate=False):
         """
         Solve _A(x) = b using Conjugate Gradient.
 
@@ -154,6 +156,7 @@ class ConjugateGradientSolver:
             tol      : tolerance
             differentiable : preserve autograd through CG when True. The default
                              False retains the validated inference behavior.
+            return_last_iterate : return the final PCG iterate, as in GRICS++.
         """
         context = nullcontext() if differentiable else torch.no_grad()
         with context:
@@ -181,7 +184,7 @@ class ConjugateGradientSolver:
             # bound on image or motion error.
             tolb = tol * b_norm
 
-            z = r.clone()
+            z = r.clone() if self.preconditioner is None else self.preconditioner(r)
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
             eps = torch.finfo(r.real.dtype).eps
@@ -283,7 +286,7 @@ class ConjugateGradientSolver:
                         stop_reason = "early_stopping"
                         break
 
-                z = r.clone()
+                z = r.clone() if self.preconditioner is None else self.preconditioner(r)
 
                 rz_new = torch.dot(torch.conj(r), z).real
                 if rz_old.abs() < 1e-15:
@@ -309,11 +312,10 @@ class ConjugateGradientSolver:
                 "stop_reason": stop_reason,
             }
 
-            # Return the iterate with the smallest recorded relative residual,
-            # which need not be the last iterate. last_info above describes the
-            # final attempted iteration; residual history is not all "true"
-            # residuals because direct recomputation happens only on refreshes.
-            return best_x
+            # Image solves retain the lowest recorded residual. Preconditioned
+            # motion solves use the final iterate, matching GRICS++. last_info
+            # describes the final attempted iteration in either case.
+            return x if return_last_iterate else best_x
         
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG

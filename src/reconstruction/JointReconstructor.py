@@ -22,6 +22,7 @@ from src.reconstruction.joint_reconstructor_utils.state import (
     remove_temporary_operators, extract_image_and_motion_for_next_level,
 )
 from src.reconstruction.joint_reconstructor_utils.regularization import _assign_cached_reg_scale
+from src.reconstruction.joint_reconstructor_utils.motion_preconditioners import PseudoGaussSeidelMotionPreconditioner
 from src.reconstruction.joint_reconstructor_utils.calibration_prior import (
     CalibrationPriorEncodingOperator, fourier_crop_calibration_image,
 )
@@ -240,6 +241,17 @@ class JointReconstructor:
             return self.Nalpha * self.params.N_motion_states
         return self.Nalpha * self.Nphysio * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
+    def _build_pseudo_gauss_seidel_motion_preconditioner(self, jacobian, solver, data):
+        if self.regularization_scaling == "grics_cpp":
+            spacing, _ = self._grics_cpp_level_spacing_and_ratio(data)
+            image_scale = self.kspace_scale
+        else:
+            spacing = (1.0,) * self.Nalpha
+            image_scale = 1.0
+        return PseudoGaussSeidelMotionPreconditioner.from_motion_simulator(
+            jacobian, lambda_scaled=math.sqrt(solver._effective_lambda()) * image_scale,
+            voxel_spacing=spacing, image_scale=image_scale)
+
     def _solve_motion(self, Data_res, residual, *, max_iterations=None):
         """Solve for a motion increment using the current linearized encoding.
 
@@ -284,7 +296,11 @@ class JointReconstructor:
                 solver.reg_scale = (ratio * min(spacing) ** 4
                                     * torch.linalg.vector_norm(b_data.flatten()).item())
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
-            mot_pert_vec = solver.cg(b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
+            if self.params.motion_preconditioner and torch.count_nonzero(b).item():
+                solver.preconditioner = self._build_pseudo_gauss_seidel_motion_preconditioner(J, solver, Data_res)
+            mot_pert_vec = solver.cg(
+                b.flatten(), x0=x0.flatten(), max_iter=max_iterations,
+                tol=self.params.tol_motion, return_last_iterate=self.params.motion_preconditioner)
         else:
             # Rigid motion uses a magnitude penalty on the increment itself:
             # (J^H J + mu I) dm = J^H residual.
@@ -301,7 +317,9 @@ class JointReconstructor:
                 spacing, ratio = self._grics_cpp_level_spacing_and_ratio(Data_res)
                 solver.reg_scale = (ratio * min(spacing) ** 4
                                     * torch.linalg.vector_norm(b_data.flatten()).item())
-            mot_pert_vec = solver.cg(b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
+            mot_pert_vec = solver.cg(
+                b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations,
+                tol=self.params.tol_motion)
         self._last_motion_cg_info = solver.last_info
 
         # Restore either per-state rigid parameters or spatial motion fields.

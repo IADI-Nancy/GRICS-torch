@@ -73,7 +73,8 @@ _RECONSTRUCTION_KEYS = {
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
-    'use_calibration_weighted_image', 'regularization_scaling',
+    'use_calibration_weighted_image', 'regularization_scaling', 'motion_preconditioner',
+    'motion_gradient_boundary',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -106,7 +107,7 @@ _BOOL_KEYS = {
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
-    'use_calibration_weighted_image',
+    'use_calibration_weighted_image', 'motion_preconditioner',
 }
 
 
@@ -407,6 +408,8 @@ def _validate_motion(cfg):
 
 def _validate_reconstruction(cfg):
     required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
+    if cfg.get('reconstruction_motion_type') == 'rigid':
+        required.remove('motion_preconditioner')
     _require(cfg, required, 'reconstruction')
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _require(cfg, {'motion_quantization_bins'}, 'kspace-energy motion binning')
@@ -418,6 +421,12 @@ def _validate_reconstruction(cfg):
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
     _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
+    if cfg['reconstruction_motion_type'] == 'rigid':
+        if 'motion_preconditioner' in cfg:
+            raise ValueError('motion_preconditioner is only valid for non-rigid reconstruction.')
+    elif type(cfg['motion_preconditioner']) is not bool:
+        raise ValueError('motion_preconditioner must be a boolean.')
+    _choice(cfg['motion_gradient_boundary'], 'motion_gradient_boundary', {'zero', 'one_sided'})
     if type(cfg['use_calibration_weighted_image']) is not bool:
         raise ValueError('use_calibration_weighted_image must be a boolean.')
     if cfg['use_calibration_weighted_image'] and cfg['coil_sensitivity_method'] != 'odille-spline':
@@ -451,6 +460,8 @@ def _validate_reconstruction(cfg):
             values = [values]
         for value in values:
             _number(value, key, minimum=0)
+    if cfg['reconstruction_motion_type'] == 'non-rigid' and cfg['motion_preconditioner'] and cfg['lambda_m'] == 0:
+        raise ValueError('motion_preconditioner=true requires lambda_m > 0.')
     _choice(cfg['motion_binning_mode'], 'motion_binning_mode', {'kmeans', 'kspace_energy'})
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _integer(cfg['motion_quantization_bins'], 'motion_quantization_bins', 2)
