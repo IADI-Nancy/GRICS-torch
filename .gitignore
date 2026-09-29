@@ -13,6 +13,7 @@ latex/
 tests/*
 !tests/run_real_2d_subject.py
 !tests/run_real_3d_subject.py
+
 data/*
 !data/demo_motion-free_breast_image.png
 

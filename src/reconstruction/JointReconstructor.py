@@ -63,8 +63,7 @@ class JointReconstructor:
                 ``prepared.params``; do not pass a dict or TOML filename.
             kspace_scale: Scalar used to restore output-image magnitude.
             motion_plot_context: Optional plotting metadata.
-            initial_image: Optional complex ``[Ne, Nx, Ny, (Nz)]`` tensor;
-                the ``Ne`` axis may be omitted only when ``Ne=1``.
+            initial_image: Optional complex ``[Nx, Ny, (Nz)]`` shared image.
             initial_motion: Optional real ``[Nalpha, Nm]`` rigid tensor or
                 ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
             external_image_regularizer: Optional callable mapping an image to
@@ -125,9 +124,7 @@ class JointReconstructor:
         supplied prior, the penalty is lambda * ||x||^2.
         """
         # Start CG from the current image estimate at this resolution.
-        x0 = Data_res["ReconstructedImage"].to(
-            self.device, dtype=torch.complex128
-        )
+        x0 = Data_res["ReconstructedImage"].to(self.device, dtype=torch.complex128)
         E = Data_res["E"]
 
         # Back-project measured k-space to form the normal-equation RHS.
@@ -165,9 +162,9 @@ class JointReconstructor:
 
         # Convert the flattened CG solution back to the image's spatial layout.
         if int(Data_res.get("Nz", 1)) > 1:
-            img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
+            img = img_vec.reshape(Data_res["Nx"], Data_res["Ny"], Data_res["Nz"])
         else:
-            img = img_vec.reshape(self.params.Nex, Data_res["Nx"], Data_res["Ny"])
+            img = img_vec.reshape(Data_res["Nx"], Data_res["Ny"])
         return img
 
     def _n_motion_params(self, Data_res):
@@ -392,7 +389,7 @@ class JointReconstructor:
         defer_tensor_export leaves enabled tensor exports to the caller without
         changing configuration. Logs, metadata and plots retain their normal behavior.
 
-        The image is ``[Ne, Nx, Ny, (Nz)]``. Motion is ``[Nalpha, Nm]`` for
+        The shared image is ``[Nx, Ny, (Nz)]``. Motion is ``[Nalpha, Nm]`` for
         rigid or ``[Nalpha, Nx, Ny, (Nz), Ns]`` for non-rigid reconstruction.
         """
         if type(defer_tensor_export) is not bool:
@@ -458,12 +455,8 @@ class JointReconstructor:
         spatial_shape = ((self.Data_full["Nx"], self.Data_full["Ny"], self.Data_full["Nz"])
                          if self.Nz_full > 1 else (self.Data_full["Nx"], self.Data_full["Ny"]))
         image = torch.as_tensor(image, device=self.device)
-        squeeze_nex = image.ndim == len(spatial_shape)
-        if squeeze_nex:
-            image = image.unsqueeze(0)
-        expected_image_shape = (self.params.Nex, *spatial_shape)
-        if tuple(image.shape) != expected_image_shape:
-            raise ValueError(f"image must have shape {expected_image_shape} or {spatial_shape}; got {tuple(image.shape)}.")
+        if tuple(image.shape) != spatial_shape:
+            raise ValueError(f"image must have shape {spatial_shape}; got {tuple(image.shape)}.")
 
         self._current_level_idx = len(self.params.ResolutionLevels) - 1
         return {
@@ -473,7 +466,7 @@ class JointReconstructor:
             "Nsamples": self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"],
             "SamplingIndices": self.Data_full["SamplingIndices"] if sampling_indices is None else sampling_indices,
             "MotionSignal": self.motion_signal, "ReconstructedImage": image,
-            "MotionModel": torch.as_tensor(motion, device=self.device), "_squeeze_nex": squeeze_nex,
+            "MotionModel": torch.as_tensor(motion, device=self.device),
         }
 
     def full_resolutions_gauss_newton_iteration_api(
@@ -485,8 +478,7 @@ class JointReconstructor:
         """Perform one full-resolution image update and optional motion update.
 
         Args:
-            image: Complex ``[Ne, Nx, Ny, (Nz)]`` tensor; the ``Ne`` axis may
-                be omitted only when ``Ne=1``.
+            image: Complex ``[Nx, Ny, (Nz)]`` shared image.
             motion: Real ``[Nalpha, Nm]`` rigid tensor or
                 ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
             image_regularizer: Optional same-shape image-prior callable.
@@ -502,8 +494,7 @@ class JointReconstructor:
             data, image_regularizer=image_regularizer, regularization_weight=regularization_weight,
             update_motion=update_motion, image_cg_iterations=image_cg_iterations,
             motion_cg_iterations=motion_cg_iterations)
-        output_image = result.image[0] if data["_squeeze_nex"] else result.image
-        return output_image.to(input_image_dtype), result.motion
+        return result.image.to(input_image_dtype), result.motion
 
     def predict_kspace_api(
         self, image: torch.Tensor, motion: torch.Tensor, *,
@@ -511,8 +502,7 @@ class JointReconstructor:
         """Return flattened complex predicted k-space.
 
         Args:
-            image: Complex ``[Ne, Nx, Ny, (Nz)]`` tensor; the ``Ne`` axis may
-                be omitted only when ``Ne=1``.
+            image: Complex ``[Nx, Ny, (Nz)]`` shared image.
             motion: Real ``[Nalpha, Nm]`` rigid tensor or
                 ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
             sampling_indices: Optional nested ``[Ne][Nm]`` lists of 1D integer

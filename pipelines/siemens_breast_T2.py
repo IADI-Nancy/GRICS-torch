@@ -158,15 +158,8 @@ def grics_reference_image_for_normalization(data: DataLoader, image: torch.Tenso
         )
     reference_image = reference_image.to(device=image.device)
 
-    if reference_image.ndim == image.ndim and image.ndim >= 3:
-        reference_image = reference_image.unsqueeze(0)
-    if reference_image.ndim == image.ndim + 1 and reference_image.shape[-1] == 1:
-        reference_image = reference_image[..., 0]
-
     if tuple(reference_image.shape) == tuple(image.shape):
         return reference_image
-    if reference_image.shape[0] == 1 and tuple(reference_image.shape[1:]) == tuple(image.shape[1:]):
-        return reference_image.expand(image.shape[0], *reference_image.shape[1:])
 
     raise ValueError(
         "GRICS reference image shape is incompatible with reconstructed image: "

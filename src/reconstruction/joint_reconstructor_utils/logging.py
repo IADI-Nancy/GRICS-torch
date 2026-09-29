@@ -78,7 +78,7 @@ def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, 
     if alpha.shape[0] < 2:
         return
 
-    image = Data_res["ReconstructedImage"][0]
+    image = Data_res["ReconstructedImage"]
     if alpha.ndim in (3, 4) and not (alpha.ndim == 4 and image.ndim == 2):
         save_nonrigid_alpha_plots(
             alpha, image,
@@ -259,7 +259,7 @@ class JointReconstructionLogger:
         if self.plot_enabled:
             level_folder = str(Path(self.params.debug_folder) / f'level_{self._level_index + 1:02d}')
             show_and_save_image(
-                data["ReconstructedImage"][0], "image_reconstructed",
+                data["ReconstructedImage"], "image_reconstructed",
                 level_folder, flip_for_display=self.params.flip_for_display)
             _save_nonrigid_motion_debug(
                 data, self._level_index + 1, self.params.reconstruction_motion_type,
@@ -278,7 +278,7 @@ class JointReconstructionLogger:
     def save_final_outputs(self, image, motion, *, defer_tensor_export=False):
         """Record metadata unconditionally; save configured tensors/plots separately."""
         if hasattr(self.params, 'reconstruction_folder'):
-            image_axes = ['nex', 'x', 'y'] + (['z'] if image.ndim == 4 else [])
+            image_axes = ['x', 'y'] + (['z'] if image.ndim == 3 else [])
             motion_axes = (['component', 'motion_state'] if self.params.reconstruction_motion_type == 'rigid'
                            else ['component'] + image_axes[1:])
             if len(motion_axes) < motion.ndim:
@@ -290,7 +290,7 @@ class JointReconstructionLogger:
                                   image_stage='before_postprocessing', status='reconstructed',
                                   tensor_export=('deferred' if defer_tensor_export else 'solver')
                                   if self.tensor_enabled else 'disabled',
-                                  preview_repetition_reduction='mean' if image.shape[0] > 1 else 'none')
+                                  preview_repetition_reduction='none')
         write_tensors = self.tensor_enabled and not defer_tensor_export
         if not (write_tensors or self.plot_enabled):
             return
@@ -301,19 +301,12 @@ class JointReconstructionLogger:
             torch.save(motion.detach().cpu(), folder / 'motion_parameters.pt')
         if not self.plot_enabled:
             return
-        if image.shape[0] == 1:
-            show_and_save_image(image[0], "image_reconstructed", self.params.results_folder,
-                flip_for_display=self.params.flip_for_display)
-        else:
-            show_and_save_image(image.mean(dim=0), "image_reconstructed", self.params.results_folder,
-                flip_for_display=self.params.flip_for_display)
-            for nex_index in range(image.shape[0]):
-                show_and_save_image(image[nex_index], f"image_reconstructed_nex_{nex_index + 1:03d}",
-                    self.params.results_folder, flip_for_display=self.params.flip_for_display)
+        show_and_save_image(image, "image_reconstructed", self.params.results_folder,
+            flip_for_display=self.params.flip_for_display)
 
         if self.params.reconstruction_motion_type == "rigid":
             save_final_rigid_motion_plots(motion, self.motion_plot_context, self.params.results_folder,
                 self.params.N_motion_states, self.params.ResolutionLevels, self.params.data_type)
         elif self.params.reconstruction_motion_type == "non-rigid":
-            save_final_nonrigid_alpha_maps(motion, image[0], self.params.results_folder,
+            save_final_nonrigid_alpha_maps(motion, image, self.params.results_folder,
                 flip_for_display=self.params.flip_for_display, motion_plot_context=self.motion_plot_context)

@@ -67,10 +67,8 @@ def _load_cpp_slice(folder: Path) -> np.ndarray:
 
 def _torch_magnitude(image: torch.Tensor) -> np.ndarray:
     image = torch.as_tensor(image).detach().cpu()
-    if image.ndim == 3:
-        image = image.mean(dim=0)
     if image.ndim != 2:
-        raise ValueError(f'Expected [NEX, Nx, Ny] or [Nx, Ny], got {tuple(image.shape)}.')
+        raise ValueError(f'Expected spatial image [Nx, Ny], got {tuple(image.shape)}.')
     return image.abs().numpy()
 
 

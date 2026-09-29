@@ -234,8 +234,12 @@ class DataLoader:
             self.kspace, reference_kspace=self.reference_kspace,
         )
         self.grics_reference_image = getattr(calculator, "grics_reference_image", None)
-        img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
-        self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
+        averaged_kspace = torch.mean(self.kspace, dim=1)
+        img_cplx = ifftnc(averaged_kspace, dims=(-3, -2, -1))
+        image_ground_truth = torch.sum(img_cplx * self.smaps.conj(), dim=0)
+        if self.params.data_dimension == "2D":
+            image_ground_truth = image_ground_truth.squeeze(-1)
+        self.image_ground_truth = image_ground_truth.to(self.t_device)
         del img_cplx
 
     def _prepare_motion_simulator_inputs(self):
@@ -411,10 +415,10 @@ class DataLoader:
         flip_for_display = self.params.flip_for_display
 
         if (self._has_simulated_motion() and hasattr(self, "image_ground_truth") and self.image_ground_truth is not None):
-            show_and_save_image(self.image_ground_truth[0], "image_ground_truth", folder,
+            show_and_save_image(self.image_ground_truth, "image_ground_truth", folder,
                 flip_for_display=flip_for_display, jupyter_display=False)
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
-            show_and_save_image(self.image_no_moco[0], "image_corrupted", folder,
+            show_and_save_image(self.image_no_moco, "image_corrupted", folder,
                 flip_for_display=flip_for_display, jupyter_display=False)
 
         if (hasattr(self, "alpha_maps_true") and self.alpha_maps_true is not None
@@ -422,7 +426,7 @@ class DataLoader:
             and self.alpha_maps_true.shape[0] >= 2):
 
             scale = (self.motion_plot_context or {}).get("alpha_visual_scale", None)
-            save_nonrigid_alpha_plots(self.alpha_maps_true[..., 0], self.image_ground_truth[0],
+            save_nonrigid_alpha_plots(self.alpha_maps_true[..., 0], self.image_ground_truth,
                 "simulated_input", folder, flip_vertical=flip_for_display,
                 abs_max_x=None if scale is None else scale.get("alpha_abs_max_x"),
                 abs_max_y=None if scale is None else scale.get("alpha_abs_max_y"),
@@ -903,9 +907,9 @@ class DataLoader:
             )
             img_vec = solver._solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
             if self.Nz > 1:
-                img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny, self.Nz)
+                img_back = img_vec.reshape(self.Nx, self.Ny, self.Nz)
             else:
-                img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
+                img_back = img_vec.reshape(self.Nx, self.Ny)
 
             if tuple(img_back.shape) == tuple(self.image_ground_truth.shape):
                 num = torch.linalg.norm((img_back - self.image_ground_truth).flatten())
@@ -915,7 +919,7 @@ class DataLoader:
             # Running the check and saving its recovered image are independent options.
             if self.params.save_debug_plots:
                 show_and_save_image(
-                    img_back[0], "gn_input_consistency_recovered_image", str(Path(self.params.debug_folder) / "consistency_checks"),
+                    img_back, "gn_input_consistency_recovered_image", str(Path(self.params.debug_folder) / "consistency_checks"),
                     flip_for_display=self.params.flip_for_display,
                 )
 

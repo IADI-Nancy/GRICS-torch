@@ -23,6 +23,11 @@ class MotionPerturbationSimulator:
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
+        expected_ndim = 3 if int(smaps.shape[-1]) > 1 else 2
+        if image.ndim != expected_ndim:
+            raise ValueError(
+                f"Motion optimization requires a {expected_ndim}D shared image; "
+                f"got shape {tuple(image.shape)}.")
         self.motionOperator = motionOperator
         self.Nalpha = motionOperator.alpha.shape[0]  # number of displacement or rigid parameters
         if motionOperator.motion_type == "non-rigid":
@@ -117,12 +122,11 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
                 # 1) Warp the image using the motion operator
                 if is_3d:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny, Nz)
                 else:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
 
                 # 2) Spatial gradients
                 if is_3d:
@@ -219,12 +223,11 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
                 # 1) Warp image with motion state operator
                 if is_3d:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny, Nz)
                 else:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
 
                 # 2) Gradients of warped image
                 if is_3d:

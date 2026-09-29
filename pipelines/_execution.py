@@ -65,7 +65,7 @@ def export_reconstruction(params, result):
         torch.save(result['image'], result['image_file'])
         torch.save(result['native_image'], result['native_image_file'])
         torch.save(result['motion'], result['motion_file'])
-    image_axes = ['nex', 'x', 'y'] + (['z'] if result['image'].ndim == 4 else [])
+    image_axes = ['x', 'y'] + (['z'] if result['image'].ndim == 3 else [])
     motion_axes = (['component', 'motion_state'] if params.reconstruction_motion_type == 'rigid'
                    else ['component'] + image_axes[1:])
     if len(motion_axes) < result['motion'].ndim:

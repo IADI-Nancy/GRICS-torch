@@ -68,12 +68,18 @@ class MotionSimulator:
             motion_type = self.params.simulated_motion_type.split("-", 1)[0]
 
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz)
-        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.sampling_idx, self.params.Nex, self.MotionOperator)
-        kspace_corruped = E.forward(self.image)
-        self.kspace = kspace_corruped.reshape(self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nz)
+        encoding = EncodingOperator(
+            self.smaps, self.TotalKspaceSamples, self.sampling_idx,
+            self.params.Nex, self.MotionOperator,
+        )
+        self.kspace = encoding.forward(self.image).reshape(
+            self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nz,
+        )
 
-        img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
-        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
+        averaged_kspace = torch.mean(self.kspace, dim=1)
+        img_cplx = ifftnc(averaged_kspace, dims=(-3, -2, -1)).to(self.t_device)
+        image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=0)
+        self.image_no_moco = image_no_moco if self.Nz > 1 else image_no_moco.squeeze(-1)
 
     # =============================================================================
     # ============================== RIGID MOTION =================================
@@ -449,7 +455,7 @@ class MotionSimulator:
         self.alpha_maps = alpha_maps
 
         if self.params.save_debug_plots:
-            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
+            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image, "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
 
         self._apply_motion(alpha_maps, centers=None, motion_signal=s, motion_type='non-rigid')
         expanded_curves = expand_motion_states_to_readouts(ky_readout_layout, {"navigator": s[:, 0]}, device=self.t_device)
@@ -498,6 +504,6 @@ class MotionSimulator:
         self._apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
         if self.params.save_debug_plots:
-            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
+            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image, "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
 
     

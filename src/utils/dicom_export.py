@@ -35,11 +35,10 @@ def write_reconstruction_dicom(
     raw-data ISMRMRD header when available. ``raw_data`` may be a DataLoader
     instance produced by this repository; otherwise pass ``ismrmrd_file``.
 
-    ``image`` may be a NumPy array or Torch tensor with shape ``[Nx, Ny]``,
-    ``[Nex, Nx, Ny]``, ``[Nx, Ny, 1]``, or ``[Nex, Nx, Ny, 1]``.
-    Multi-Nex images are averaged before export. Complex images are exported
-    as magnitude. Set use_reference_geometry=False to use acquisition geometry
-    while copying other public metadata from a DICOM donor.
+    ``image`` must be a NumPy array or Torch tensor with shape ``[Nx, Ny]``.
+    Complex images are exported as magnitude. Set use_reference_geometry=False
+    to use acquisition geometry while copying other public metadata from a
+    DICOM donor.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +77,7 @@ def write_reconstruction_dicom(
 
 def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
                         reference_dicom_path=None):
-    """Export [Nex, Nx, Ny, Nz] as a single-frame MR series on its native grid.
+    """Export [Nx, Ny, Nz] as a single-frame MR series on its native grid.
 
     Siemens 3D acquisition positions describe the slab center, not kz partitions.
     Expand that center along slice_dir using encoded z FOV (no z crop is applied
@@ -88,8 +87,8 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     import ismrmrd
     from pydicom.uid import generate_uid
 
-    if image.ndim != 4 or any(size < 1 for size in image.shape) or image.shape[-1] < 2:
-        raise ValueError('Volume DICOM export requires [Nex, Nx, Ny, Nz] with Nz > 1.')
+    if image.ndim != 3 or any(size < 1 for size in image.shape) or image.shape[-1] < 2:
+        raise ValueError('Volume DICOM export requires [Nx, Ny, Nz] with Nz > 1.')
     header = acquisition_header(raw_data)
     enc = header.encoding[0]
     slab_geometries = getattr(raw_data, '_source_slice_geometry', None)
@@ -125,7 +124,7 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     for z in range(nz):
         path = Path(output_dir) / f'slice_{z + 1:03d}.dcm'
         write_reconstruction_dicom(
-            image[..., z:z + 1], path, raw_data=volume_source, slice_index=z,
+            image[..., z], path, raw_data=volume_source, slice_index=z,
             series_description='GRICS reconstruction RESEARCH ONLY',
             images_in_acquisition=nz, series_number=series_number,
             reference_dicom_path=reference_dicom_path, use_reference_geometry=False,
@@ -274,17 +273,8 @@ def _prepare_single_frame_image(image: Any, geometry: Any | None = None) -> np.n
     else:
         arr = np.asarray(image)
 
-    if arr.ndim == 4:
-        if arr.shape[-1] != 1:
-            raise ValueError(f"Expected a single slice in the last dimension, got shape {arr.shape}.")
-        arr = arr.mean(axis=0)
-    if arr.ndim == 3:
-        if arr.shape[-1] == 1:
-            arr = arr[..., 0]
-        else:
-            arr = arr.mean(axis=0)
     if arr.ndim != 2:
-        raise ValueError(f"Expected a 2D image after preparation, got shape {arr.shape}.")
+        raise ValueError(f"DICOM export requires a spatial 2D image, got shape {arr.shape}.")
 
     if np.iscomplexobj(arr):
         arr = np.abs(arr)
