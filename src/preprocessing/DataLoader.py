@@ -642,6 +642,7 @@ class DataLoader:
             # From-data per-shot simulation uses one state per recorded readout.
             requested_states = self.params.N_motion_states
             self.params.N_motion_states = ky_idx.numel()
+            self.params._motion_states_per_level = [self.params.N_motion_states] * len(self.params.ResolutionLevels)
             if requested_states != self.params.N_motion_states:
                 print(f"[config] Per-shot simulation: N_motion_states changed from {requested_states} to {self.params.N_motion_states} (recorded readout count).", flush=True)
         self._motion_curve_for_binning = (motion_data if self.params.simulated_motion_type == "as-it-is" else None)

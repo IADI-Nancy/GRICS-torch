@@ -15,9 +15,12 @@ motion_preconditioner = true
 motion_gradient_boundary = "one_sided"
 
 # Motion-state binning
-# Number of motion states. Must be a positive integer and cannot exceed the
-# number of available physiological samples. Per-shot simulation replaces it with the shot count.
-N_motion_states = 16
+# Motion states: a positive integer applies at every resolution level.
+# A list gives one positive count per ResolutionLevels entry, coarse to fine.
+# Different counts across levels require non-rigid reconstruction.
+# The largest count cannot exceed the available physiological samples.
+# Per-shot simulation uses the shot count and requires a scalar here.
+N_motion_states = [4, 8, 16, 16]
 # Motion-state construction method. Allowed values: "kmeans" or "kspace_energy".
 # "kspace_energy" requires motion_quantization_bins (integer >= 2; e.g. 256).
 # For "kmeans", omit motion_quantization_bins; the config loader rejects it.
@@ -31,11 +34,8 @@ motion_quantization_bins = 256
 # Spatial scale at each reconstruction level, relative to full resolution.
 # Values must increase in (0, 1] and end at 1.0 (full resolution).
 ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
-# Number of motion states at each resolution level, ordered from coarse to fine.
-# The list length must match ResolutionLevels. Each value must be between 1 and
-# N_motion_states. State reduction is supported only for non-rigid reconstruction.
-N_motion_states_per_level = [4, 8, 16, 16]
-# Must contain exactly one positive GN iteration count per ResolutionLevels entry.
+# Gauss-Newton iterations: one positive integer applies to every level,
+# or use a list with exactly one entry per ResolutionLevels value (coarse to fine).
 GN_iterations_per_level = [4, 4, 4, 1]
 # false keeps the conventional final GN iteration image-only.
 update_motion_on_final_iteration = false

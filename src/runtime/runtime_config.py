@@ -68,7 +68,7 @@ _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
     'coil_sensitivity_config',
-    'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
+    'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
@@ -439,9 +439,11 @@ def _validate_reconstruction(cfg):
     if any(a >= b for a, b in zip(levels, levels[1:])) or levels[-1] != 1:
         raise ValueError('ResolutionLevels must increase strictly and end at 1.0.')
     iterations = cfg['GN_iterations_per_level']
-    if not isinstance(iterations, list) or len(iterations) != len(levels):
-        raise ValueError('GN_iterations_per_level must contain one positive integer per resolution level.')
-    for value in iterations:
+    if isinstance(iterations, list) and len(iterations) != len(levels):
+        raise ValueError(f'GN_iterations_per_level has {len(iterations)} entries; ResolutionLevels has {len(levels)}.')
+    if not isinstance(iterations, (int, list)) or type(iterations) is bool:
+        raise ValueError('GN_iterations_per_level must be a positive integer or a list of positive integers.')
+    for value in iterations if isinstance(iterations, list) else [iterations]:
         _integer(value, 'GN_iterations_per_level entry')
     for key in ('max_iter_recon', 'max_iter_motion', 'cg_true_residual_interval'):
         _integer(cfg[key], key)
@@ -465,25 +467,27 @@ def _validate_reconstruction(cfg):
     _choice(cfg['motion_binning_mode'], 'motion_binning_mode', {'kmeans', 'kspace_energy'})
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _integer(cfg['motion_quantization_bins'], 'motion_quantization_bins', 2)
-    states = _integer(cfg['N_motion_states'], 'N_motion_states')
+    configured_states = cfg['N_motion_states']
+    if isinstance(configured_states, list):
+        if len(configured_states) != len(levels):
+            raise ValueError(f'N_motion_states has {len(configured_states)} entries; ResolutionLevels has {len(levels)}.')
+        states_per_level = [_integer(value, 'N_motion_states entry') for value in configured_states]
+    else:
+        states = _integer(configured_states, 'N_motion_states')
+        states_per_level = [states] * len(levels)
     per_shot = cfg['simulated_motion_type'].endswith('-per-shot')
+    if per_shot and isinstance(configured_states, list):
+        raise ValueError('N_motion_states must be a scalar for per-shot simulation because the shot count determines the number of states.')
     if per_shot and 'Nshots' in cfg:
-        cfg['N_motion_states'] = cfg['Nshots']
-        if states != cfg['N_motion_states']:
-            print(f"[config] Per-shot simulation: N_motion_states changed from {states} to {cfg['N_motion_states']} (shot count).", flush=True)
-    schedule = cfg['N_motion_states_per_level']
-    if schedule == 'full':
-        return
-    if not isinstance(schedule, list) or len(schedule) != len(levels):
-        raise ValueError('N_motion_states_per_level must be "full" or one integer per resolution level.')
-    for value in schedule:
-        _integer(value, 'N_motion_states_per_level entry')
-        if per_shot and cfg['kspace_sampling_type'] == 'from-data':
-            raise ValueError('Use N_motion_states_per_level="full" when shot counts come from data.')
-        if value > cfg['N_motion_states']:
-            raise ValueError('N_motion_states_per_level cannot exceed N_motion_states.')
-        if cfg['reconstruction_motion_type'] == 'rigid' and value != cfg['N_motion_states']:
-            raise ValueError('Per-level motion-state reduction requires non-rigid reconstruction.')
+        shot_count = cfg['Nshots']
+        if configured_states != shot_count:
+            print(f"[config] Per-shot simulation: N_motion_states changed from {configured_states} to {shot_count} (shot count).", flush=True)
+        states_per_level = [shot_count] * len(levels)
+    full_states = max(states_per_level)
+    if cfg['reconstruction_motion_type'] == 'rigid' and any(value != full_states for value in states_per_level):
+        raise ValueError('Per-level motion-state reduction requires non-rigid reconstruction.')
+    cfg['N_motion_states'] = full_states
+    cfg['_motion_states_per_level'] = states_per_level
 
 
 def _apply_notebook_logging(cfg, overrides):
