@@ -82,8 +82,7 @@ class DataLoader:
         self.siemens_filenames = None
         self.slice_idx = slice_idx
         if hasattr(params, 'run_folder'):
-            unit = 'volume_001' if params.data_dimension == '3D' else f'slice_{(slice_idx or 0) + 1:03d}'
-            bind_output_paths(params, Path(params.run_folder) / 'reconstructions' / unit)
+            bind_output_paths(params, Path(params.run_folder))
         self.motion_plot_context = None
         self._motion_curve_for_binning = None
         self._motion_plot_kwargs = {}
@@ -789,7 +788,10 @@ class DataLoader:
 
         self.slice_idx = slice_idx
         if hasattr(self.params, 'run_folder'):
-            bind_output_paths(self.params, Path(self.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+            folder = Path(self.params.run_folder)
+            if getattr(self.params, '_output_unit_count', 1) > 1:
+                folder /= f'slice_{slice_idx + 1:03d}'
+            bind_output_paths(self.params, folder)
             record_reconstruction(self.params, inputs=self.filename, source_slice_index=slice_idx)
         self.kspace = self._source_kspace[..., slice_idx:slice_idx + 1]
         self.reference_kspace = (

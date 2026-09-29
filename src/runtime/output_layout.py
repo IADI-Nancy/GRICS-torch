@@ -43,8 +43,8 @@ class RunOutputs:
         workflow_label = params.workflow_label
         if not workflow_label or Path(workflow_label).name != workflow_label or workflow_label in {'.', '..'}:
             raise ValueError('workflow_label must be a single directory name.')
-        # Give each execution its own directory, including simultaneous runs.
-        run_id = datetime.now().strftime('%Y%m%dT%H%M%S%f') + '-' + uuid.uuid4().hex[:8]
+        # Name the run directory with the local date and time to the second.
+        run_id = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         self.root = Path(params.output_root).expanduser().resolve() / workflow_label / run_id
         self.root.mkdir(parents=True, exist_ok=False)
         self._lock = (self.root / ".run.lock").open("a+b")
@@ -67,8 +67,7 @@ class RunOutputs:
             self.manifest['code_revision'] = None
         params.run_folder = str(self.root)
         params._run_outputs = self
-        unit = 'volume_001' if params.data_dimension == '3D' else 'slice_001'
-        bind_output_paths(params, self.root / 'reconstructions' / unit)
+        bind_output_paths(params, self.root)
         self.snapshot(params)
         self.flush()
         active = _ACTIVE_RUNS.get()
@@ -94,8 +93,12 @@ class RunOutputs:
         if error is not None:
             self.manifest['error'] = str(error)
         # Per-worker metadata avoids concurrent writes to the run manifest.
-        for metadata in self.root.glob('reconstructions/*/.metadata.json'):
-            self.manifest['reconstructions'][metadata.parent.name] = json.loads(metadata.read_text())
+        metadata_files = [self.root / '.metadata.json', *self.root.glob('slice_*/.metadata.json')]
+        for metadata in metadata_files:
+            if metadata.exists():
+                unit = metadata.parent.name if metadata.parent != self.root else (
+                    'volume_001' if self.params.data_dimension == '3D' else 'slice_001')
+                self.manifest['reconstructions'][unit] = json.loads(metadata.read_text())
         self.manifest['outputs'] = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')
                                           if p.is_file() and not p.name.startswith('.'))
         self.flush()

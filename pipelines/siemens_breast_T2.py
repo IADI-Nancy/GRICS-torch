@@ -199,7 +199,10 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
         raise RuntimeError("Source data is not initialized.")
     data = copy.copy(source)
     data.params = copy.copy(source.params)
-    bind_output_paths(data.params, Path(data.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+    folder = Path(data.params.run_folder)
+    if getattr(data.params, '_output_unit_count', 1) > 1:
+        folder /= f'slice_{slice_idx + 1:03d}'
+    bind_output_paths(data.params, folder)
     started = time.perf_counter()
     data.run_slice_pipeline(slice_idx=slice_idx)
     synchronize(data.kspace.device)
@@ -354,6 +357,7 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
     data.params._run_outputs.manifest['inputs'] = {
         'raw_data_file': str(raw_data_file.resolve()), 'saec_file': str(saec_file.resolve()) if saec_file is not None else None}
     indices = selected_slices(int(data.Nz), slice_start, slice_stop)
+    data.params._output_unit_count = len(indices)
     data.zero_fill_shapes = grics_zero_fill_shapes(data)
     synchronize(data.kspace.device)
     load_seconds = time.perf_counter() - started

@@ -1,5 +1,5 @@
 [paths]
-# Each execution creates output_root/workflow_label/<unique-run-id>/.
+# Each execution creates output_root/workflow_label/<date-time>/.
 output_root = "runs"
 # Label grouping related runs under output_root; notebooks and pipelines override this with their demo/pipeline name.
 workflow_label = "reconstruction"
