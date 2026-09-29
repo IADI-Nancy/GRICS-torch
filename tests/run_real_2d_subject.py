@@ -177,6 +177,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
         input_file, input_saec_file, output_root=output_root, device=device,
         max_workers=max_workers, slice_start=slice_start,
         slice_stop=slice_stop, return_tensors=True, export_dicom=False,
+        prepared_output_file=prepared if not prepared.is_file() else None,
     )
     rows = []
     central_slice = sorted(cpp_folders)[len(cpp_folders) // 4]

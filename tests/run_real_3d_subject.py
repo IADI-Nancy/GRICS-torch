@@ -181,6 +181,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
     result = run_pipeline(
         input_file, input_saec_file, output_root=output_root, device=device,
         return_tensors=True, export_dicom=False,
+        prepared_output_file=prepared if not prepared.is_file() else None,
     )
     volume = result['reconstructions'][0]
     comparison = _write_comparison(_torch_magnitude(volume['image']), _load_cpp_volume(cpp_folder),

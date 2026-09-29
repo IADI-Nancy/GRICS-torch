@@ -1,5 +1,8 @@
 [reconstruction]
 
+# Coil sensitivity method: "espirit" or "odille-spline".
+coil_sensitivity_config = "odille-spline"
+
 # Data and motion model
 # Reconstruction data dimensionality tag for compatibility checks.
 reconstruction_dimension = "3D"
@@ -47,6 +50,9 @@ cg_stagnation_countdown_steps = 6
 # When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.
 cg_use_reg_scale_proxy = false
+# If true, solve x = C p and regularize p, where C is the calibration image.
+# Requires odille-spline coil sensitivities.
+use_calibration_weighted_image = true
 
 # Image update
 # Image reconstruction regularization weight.

@@ -67,11 +67,13 @@ _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothin
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
+    'coil_sensitivity_config',
     'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
+    'use_calibration_weighted_image',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -96,7 +98,7 @@ _FILE_SCHEMAS = {
     'coil_sensitivity': {'coil_sensitivity': _CSM_KEYS},
 }
 _OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
-                  _RECONSTRUCTION_KEYS | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
+                  (_RECONSTRUCTION_KEYS - {'coil_sensitivity_config'}) | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
                   _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
 _BOOL_KEYS = {
     'save_debug_plots', 'check_simulated_motion_consistency', 'use_deterministic_algorithms',
@@ -104,6 +106,7 @@ _BOOL_KEYS = {
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
+    'use_calibration_weighted_image',
 }
 
 
@@ -414,6 +417,10 @@ def _validate_reconstruction(cfg):
     elif 'cg_reg_scale_num_probes' in cfg:
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
+    if type(cfg['use_calibration_weighted_image']) is not bool:
+        raise ValueError('use_calibration_weighted_image must be a boolean.')
+    if cfg['use_calibration_weighted_image'] and cfg['coil_sensitivity_method'] != 'odille-spline':
+        raise ValueError('Calibration-weighted images require odille-spline coil sensitivities.')
     levels = cfg['ResolutionLevels']
     if not isinstance(levels, list) or not levels:
         raise ValueError('ResolutionLevels must be a nonempty list.')
@@ -595,7 +602,7 @@ def _validate_known_source_size(cfg):
     validate_motion_readout_count(params, readouts)
 
 
-def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
+def load_config(*, data_type, reconstruction_config,
                 shepp_logan_config=None, from_image_config=None, real_data_config=None,
                 ismrmrd_reader_config=None, polaris_config=None, physio_config=None, sampling_config=None,
                 motion_simulation_config=None, overrides=None):
@@ -605,7 +612,12 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
     cfg = _load_toml_flat(root / 'general.toml', 'general')
     cfg['data_type'] = data_type
     cfg.update(_load_toml_flat(reconstruction_config, 'reconstruction'))
-    cfg.update(_load_toml_flat(coil_sensitivity_config, 'coil_sensitivity'))
+    _require(cfg, {'coil_sensitivity_config'}, 'reconstruction')
+    csm_method = cfg['coil_sensitivity_config']
+    csm_files = {'espirit': 'espirit.toml', 'odille-spline': 'odille_spline.toml'}
+    if not isinstance(csm_method, str) or csm_method not in csm_files:
+        raise ValueError('coil_sensitivity_config must be espirit or odille-spline.')
+    cfg.update(_load_toml_flat(root / 'coil_sensitivity' / csm_files[csm_method], 'coil_sensitivity'))
     cfg.update(_load_source_config(
         root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
         real_data_config=real_data_config, ismrmrd_reader_config=ismrmrd_reader_config,

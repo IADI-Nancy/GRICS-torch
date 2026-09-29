@@ -46,18 +46,17 @@ class GRICSPreparerAPI:
 
     Args:
         reconstruction_config: Path to the mandatory reconstruction TOML.
-        coil_sensitivity_config: Path to the mandatory CSM-method TOML.
         data_type: Explicit external real-data mode.
         overrides: Optional mapping of allowed run-specific overrides.
     """
 
     def __init__(
-        self, reconstruction_config: str | PathLike[str], coil_sensitivity_config: str | PathLike[str], *,
+        self, reconstruction_config: str | PathLike[str], *,
         data_type: str, overrides: Mapping[str, Any] | None = None,
     ) -> None:
         self.params = load_config(
             data_type=data_type, reconstruction_config=reconstruction_config,
-            coil_sensitivity_config=coil_sensitivity_config, overrides=overrides,
+            overrides=overrides,
         )
         if self.params.kspace_sampling_type != "from-data" or self.params.simulated_motion_type != "as-it-is":
             raise ValueError("GRICSPreparerAPI bins recorded metadata only; use DataLoader for simulated sampling or motion.")

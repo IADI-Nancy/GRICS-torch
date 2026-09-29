@@ -42,7 +42,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from pipelines._inputs import data_type_from_raw_data_file as classify_input, resolve_input_files
+from pipelines._inputs import (
+    data_type_from_raw_data_file as classify_input, resolve_input_files,
+    publish_preprocessed_cache,
+)
 from src.utils.ismrmrd_io import acquisition_header
 import torch
 
@@ -111,14 +114,17 @@ def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = N
 def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, output_root=OUTPUT_ROOT,
                     device=RUNTIME_DEVICE, reconstruction_config=RECONSTRUCTION_CONFIG,
                     postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
-                    save_reconstruction_logs=None, save_reconstruction_tensors=None) -> DataLoader:
+                    save_reconstruction_logs=None, save_reconstruction_tensors=None,
+                    prepared_output_file=None) -> DataLoader:
     """Load the acquisition once, without running the per-slice preprocessing."""
     data_type = data_type_from_raw_data_file(raw_data_file, saec_file)
     raw_input = data_type != "preprocessed-real"
+    if prepared_output_file is not None and raw_input:
+        overrides = dict(overrides or {})
+        overrides["cache_preprocessed_data"] = True
     params = load_config(
         data_type=data_type,
         reconstruction_config=REPO_ROOT / reconstruction_config,
-        coil_sensitivity_config=REPO_ROOT / "config/coil_sensitivity/odille_spline.toml",
         real_data_config=REPO_ROOT / "config/real_data/saec.toml" if raw_input else None,
         ismrmrd_reader_config=REPO_ROOT / "config/real_data/ismrmrd_reader.toml" if raw_input else None,
         overrides=reconstruction_overrides(
@@ -138,6 +144,9 @@ def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, outpu
     )
     data.postprocessing = postprocessing
     data.load_data()
+    if prepared_output_file is not None and raw_input:
+        publish_preprocessed_cache(data.realworld_h5_path, prepared_output_file)
+        print(f"[input] Saved prepared data: {prepared_output_file}", flush=True)
     return data
 
 
@@ -320,7 +329,7 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
                  reconstruction_config=RECONSTRUCTION_CONFIG,
                  postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
                  save_reconstruction_logs=None, save_reconstruction_tensors=None,
-                 return_tensors=True, export_dicom=False,
+                 return_tensors=True, prepared_output_file=None, export_dicom=False,
                  dicom_header_dir=None, dicom_series_number=1001) -> dict:
     """Reconstruct one acquisition using explicit settings and return its results.
 
@@ -340,7 +349,8 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
                            reconstruction_config=reconstruction_config,
                            postprocessing_config=postprocessing_config, overrides=overrides,
                            save_reconstruction_logs=save_reconstruction_logs,
-                           save_reconstruction_tensors=save_reconstruction_tensors)
+                           save_reconstruction_tensors=save_reconstruction_tensors,
+                           prepared_output_file=prepared_output_file)
     data.params._run_outputs.manifest['inputs'] = {
         'raw_data_file': str(raw_data_file.resolve()), 'saec_file': str(saec_file.resolve()) if saec_file is not None else None}
     indices = selected_slices(int(data.Nz), slice_start, slice_stop)

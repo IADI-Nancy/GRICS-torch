@@ -1,5 +1,8 @@
 """Shared selection and validation for preprocessed or raw acquisitions."""
 from pathlib import Path
+import os
+import shutil
+import tempfile
 
 import h5py
 
@@ -47,3 +50,22 @@ def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = N
         raise ValueError("saec_file is required for Siemens/ISMRMRD raw input.")
     require_existing_file(saec_file, "saec_file")
     return "siemens-saec" if suffix == ".dat" else "ismrmrd-saec"
+
+
+def publish_preprocessed_cache(cache_file, destination):
+    """Atomically publish a raw-preprocessing cache as a reusable input file."""
+    source = Path(cache_file)
+    destination = Path(destination).expanduser()
+    if not source.is_file():
+        raise FileNotFoundError(f"Generated preprocessing cache is unavailable: {source}")
+    if destination.exists():
+        raise FileExistsError(f"Refusing to overwrite existing prepared input: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False) as handle:
+        temporary = Path(handle.name)
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination

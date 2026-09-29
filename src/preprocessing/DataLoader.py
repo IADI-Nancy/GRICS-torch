@@ -77,6 +77,7 @@ class DataLoader:
         self.t_device = t_device
         self.filename = filename
         self.raw_data_preparer = None
+        self.realworld_h5_path = None
         self.rawdata_filenames = None
         self.siemens_filenames = None
         self.slice_idx = slice_idx
@@ -846,6 +847,7 @@ class DataLoader:
         data = preparer.read_data(
             cache_h5=self.params.cache_preprocessed_data, cache_root=self.params.cache_root,
             remove_temporary_data_after_run=self.params.remove_temporary_data_after_run)
+        self.realworld_h5_path = data.get("realworld_h5_path")
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
 
