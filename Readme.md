@@ -23,7 +23,17 @@ Please cite the GRICS paper if you use this code for your research work.
 ```
 ## Environment Setup
 
-A Dockerfile is provided in the `build/` folder. The built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
+A Dockerfile is provided in `build/`, and the built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. With Docker and NVIDIA GPU support available on the host, use `docker.sh` from the repository root to start and manage the container:
+
+```bash
+./docker.sh run                 # Create the container, or start it if it already exists
+./docker.sh exec-it             # Open an interactive shell as your host user
+./docker.sh exec-it python --version
+./docker.sh stop                # Stop the container
+./docker.sh rm                  # Remove the stopped container
+```
+
+The script mounts the **parent directory of this repository** at `/home/pyuser/wkdir` inside the container and starts in `/home/pyuser/wkdir/GRICS-torch` (or the repository's actual directory name). For example, if the checkout is `/home/user/wkdir/GRICS-torch`, it and sibling `data/` and project directories are available under `/home/pyuser/wkdir/`. Put data beside the checkout to access it without another mount. The script also mounts the host `~/.gitconfig`. By default it runs `ghcr.io/iadi-nancy/grics-torch:1.0.3` on GPU 0; set `IMAGE_NAME`, `IMAGE_VERSION`, or `EXTRA_MOUNTS` in the environment to change the image or add Docker mount arguments. Use `./docker.sh build` to build the image locally from `build/Dockerfile`. `./docker.sh run` prints a VS Code container configuration for connecting to the running container.
 
 ## Repository layout
 
@@ -53,24 +63,7 @@ Four demo notebooks cover simulated and real-data reconstruction. Simulations an
 - `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode
 - `config/postprocessing/nonrigid_2d_breast.toml`: reference-image normalization for the Siemens breast pipeline, loaded with `load_postprocessing_config(...)`
 
-Use `load_config(...)` with a `data_type` and a path to a `reconstruction_config`. The reconstruction TOML must set `coil_sensitivity_config` to `"espirit"` or `"odille-spline"`; the loader then reads the matching file from `config/coil_sensitivity/`. Select the source configuration with `shepp_logan_config` or `from_image_config` for synthetic data. Synthetic data also needs `sampling_config` and `motion_simulation_config`.
-
-For example, from the repository root:
-
-```python
-from src.runtime.runtime_config import load_config
-
-params = load_config(
-    data_type="shepp-logan",
-    reconstruction_config="config/reconstruction/rigid_2d.toml",
-    shepp_logan_config="config/synthetic_data/shepp_logan_2d.toml",
-    sampling_config="config/sampling_simulation/linear.toml",
-    motion_simulation_config="config/motion_simulation/rigid_2d.toml",
-    overrides={"runtime_device": "cpu"},
-)
-```
-
-For real data, omit `sampling_config` and `motion_simulation_config` to use recorded acquisition order (`from-data`) and motion (`as-it-is`). Raw ISMRMRD and Siemens inputs require `ismrmrd_reader_config`; SAEC and Polaris inputs also require their respective sensor config paths, described below. Use `overrides={...}` for run-specific settings. TOML files own their settings: unknown sections, misplaced keys, and unsupported overrides raise errors. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
+Use `load_config(...)` with a `data_type` and a path to a `reconstruction_config` (see demos for examples). Some configurations require additional settings (see below). Use `overrides={...}` for run-specific settings.
 
 ## Data Types
 
@@ -267,36 +260,20 @@ For real data with generated sampling, configured shot counts are preserved and 
 
 ### Run outputs
 
-Every notebook and the Siemens pipeline creates a timestamped directory under `output_root/workflow_label/`, configured in `config/general.toml` (`output_root="runs"` by default).
+Every notebook and Siemens pipeline creates a run directory under `output_root/workflow_label/`, configured in `config/general.toml` (`output_root="runs"` by default). Its name contains only the local date and time, including fractional seconds so simultaneous runs get distinct names. A run with one slice or one volume writes directly under that directory:
 
 ```text
-runs/<workflow_label>/<unique-run-id>/
+runs/<workflow_label>/<YYYY-MM-DD_HH-MM-SS-ffffff>/
 ├── manifest.json
 ├── config_resolved.json
-├── reconstructions/
-│   └── slice_001/                    # volume_001 for a 3D reconstruction
-│       ├── preprocessing/           # Sampling, input motion, ground truth,
-│       │                            # corrupted image, optional synchronization
-│       ├── results/
-│       │   ├── image_reconstructed.pt
-│       │   ├── image_reconstructed_native.pt
-│       │   ├── image_reconstructed.png
-│       │   ├── image_reconstructed_nex_001.png  # Multiple repetitions only
-│       │   ├── motion_parameters.pt
-│       │   └── ...                  # Final motion curves/maps
-│       ├── diagnostics/
-│       │   ├── level_01/            # Image and available nonrigid motion plots
-│       │   ├── level_02/
-│       │   ├── .../
-│       │   ├── residuals/           # Curves across resolution levels
-│       │   ├── consistency_checks/
-│       │   └── postprocessing/     # Reference tensors/figures, normalized image,
-│       │                            # image_postprocessed.pt and .png
-│       └── reconstruction.log
-└── exports/
-    └── dicom/                       # If requested in the pipeline
-        └── slice_001.dcm
+├── preprocessing/             # Sampling, input motion and optional debug outputs
+├── results/                   # Final image, motion tensors and previews
+├── diagnostics/               # Resolution-level and postprocessing plots
+├── reconstruction.log         # When text logging is enabled
+└── exports/dicom/             # When DICOM export is requested
 ```
+
+When a pipeline reconstructs multiple slices in one run, each slice's `preprocessing/`, `results/`, `diagnostics/` and `reconstruction.log` are placed under `slice_001/`, `slice_002/`, and so on at the run root. The manifest, resolved configuration and optional DICOM exports remain at the run root.
 
 In notebooks and direct solver runs, `image_reconstructed.pt` is the complex
 reconstruction before reference-image normalization and zero-filling, preserving
