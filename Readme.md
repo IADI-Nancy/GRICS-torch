@@ -39,7 +39,7 @@ Four demo notebooks cover simulated and real-data reconstruction. Simulations an
 ## Configuration
 
 - `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
-- `config/coil_sensitivity/*.toml`: one explicitly selected coil-sensitivity method and only that method's settings
+- `config/coil_sensitivity/*.toml`: settings for the coil-sensitivity method named by `coil_sensitivity_config` in the reconstruction TOML; loaded automatically
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
 - `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings (only if synthetic data is used)
 - `config/real_data/`: configurations for loading real MRI and physiological data
@@ -53,7 +53,24 @@ Four demo notebooks cover simulated and real-data reconstruction. Simulations an
 - `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode
 - `config/postprocessing/nonrigid_2d_breast.toml`: reference-image normalization for the Siemens breast pipeline, loaded with `load_postprocessing_config(...)`
 
-Use `load_config(...)` to load the config files. Always supply `reconstruction_config` and `coil_sensitivity_config`. Real data defaults to `from-data` sampling and `as-it-is` motion when those configuration files are omitted. Use `overrides={...}` for run-specific changes. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
+Use `load_config(...)` with a `data_type` and a path to a `reconstruction_config`. The reconstruction TOML must set `coil_sensitivity_config` to `"espirit"` or `"odille-spline"`; the loader then reads the matching file from `config/coil_sensitivity/`. Select the source configuration with `shepp_logan_config` or `from_image_config` for synthetic data. Synthetic data also needs `sampling_config` and `motion_simulation_config`.
+
+For example, from the repository root:
+
+```python
+from src.runtime.runtime_config import load_config
+
+params = load_config(
+    data_type="shepp-logan",
+    reconstruction_config="config/reconstruction/rigid_2d.toml",
+    shepp_logan_config="config/synthetic_data/shepp_logan_2d.toml",
+    sampling_config="config/sampling_simulation/linear.toml",
+    motion_simulation_config="config/motion_simulation/rigid_2d.toml",
+    overrides={"runtime_device": "cpu"},
+)
+```
+
+For real data, omit `sampling_config` and `motion_simulation_config` to use recorded acquisition order (`from-data`) and motion (`as-it-is`). Raw ISMRMRD and Siemens inputs require `ismrmrd_reader_config`; SAEC and Polaris inputs also require their respective sensor config paths, described below. Use `overrides={...}` for run-specific settings. TOML files own their settings: unknown sections, misplaced keys, and unsupported overrides raise errors. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
 
 ## Data Types
 
