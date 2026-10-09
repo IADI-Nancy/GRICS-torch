@@ -95,19 +95,8 @@ def build_sampling_per_line_global_states(ky_idx, nex_idx, kz_idx, *, device, Nx
     return sampling
 
 
-def compress_consecutive_rigid_states(
-    alpha,
-    ky_idx,
-    nex_idx,
-    *,
-    device,
-    Nx,
-    Ny,
-    Nz,
-    Nex,
-    centers=None,
-    kz_idx=None,
-):
+def compress_consecutive_rigid_states(alpha, ky_idx, nex_idx, *, device, Nx,
+    Ny, Nz, Nex, centers=None, kz_idx=None,):
     """
     Merge consecutive readouts that share the exact same rigid parameters.
     Plateau regions become one motion state; transition readouts stay separate.
@@ -135,16 +124,12 @@ def compress_consecutive_rigid_states(
     if kz_flat is not None:
         kz_flat = kz_flat.to(torch.int64)
 
-    binned_ky = [
-        [torch.empty(0, dtype=torch.int64, device=device) for _ in range(n_states)]
-        for _ in range(int(Nex))
-    ]
+    binned_ky = [[torch.empty(0, dtype=torch.int64, device=device) for _ in range(n_states)]
+        for _ in range(int(Nex))]
     binned_kz = None
     if kz_flat is not None:
-        binned_kz = [
-            [torch.empty(0, dtype=torch.int64, device=device) for _ in range(n_states)]
-            for _ in range(int(Nex))
-        ]
+        binned_kz = [[torch.empty(0, dtype=torch.int64, device=device) for _ in range(n_states)]
+            for _ in range(int(Nex))]
 
     for nex in range(int(Nex)):
         nex_mask = nex_flat == nex
@@ -156,14 +141,8 @@ def compress_consecutive_rigid_states(
 
     compressed_alpha = alpha[:, new_state]
     compressed_centers = None if centers is None else centers[:, new_state]
-    sampling_idx = Sampling.build_sampling_per_nex_per_motion(
-        binned_ky,
-        device,
-        Nx,
-        Ny,
-        Nz=Nz,
-        binned_kz_indices=binned_kz,
-    )
+    sampling_idx = Sampling.build_sampling_per_nex_per_motion(binned_ky, device,
+        Nx, Ny, Nz=Nz, binned_kz_indices=binned_kz,)
     return sampling_idx, compressed_alpha, compressed_centers
 
 

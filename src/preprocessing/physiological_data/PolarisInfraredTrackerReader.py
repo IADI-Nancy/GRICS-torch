@@ -35,10 +35,13 @@ class TrackingData:
 class PolarisInfraredTrackerReader:
     """Reader for the fixed-marker, single-tool layout exported by ToolBox."""
 
-    def __init__(self, channel_mode="all"):
+    def __init__(self, channel_mode="all", lowpass_cutoff_hz=None):
         if channel_mode not in {"all", "largest-amplitude"}:
             raise ValueError("polaris_channel_mode must be 'all' or 'largest-amplitude'.")
         self.channel_mode = channel_mode
+        if not isinstance(lowpass_cutoff_hz, (int, float)) or not np.isfinite(lowpass_cutoff_hz) or lowpass_cutoff_hz <= 0:
+            raise ValueError('polaris_lowpass_cutoff_hz must be a finite positive number.')
+        self.lowpass_cutoff_hz = float(lowpass_cutoff_hz)
         self.metadata = {}
 
     def read_channels(self, filename):
@@ -48,7 +51,7 @@ class PolarisInfraredTrackerReader:
         return [tracking.time_seconds] * 3, list(positions.T), None, "raise"
 
     def prepare_motion(self, interpolated):
-        """Select and normalize axes at full-sequence MRI times, before slice selection."""
+        """Select axes at full-sequence MRI times, before shared normalization."""
         peak_to_peak = np.ptp(interpolated, axis=0)
         # np.argmax resolves ties in X, Y, Z order.
         indices = ([int(np.argmax(peak_to_peak))]
@@ -58,16 +61,10 @@ class PolarisInfraredTrackerReader:
             'polaris_channels': [["Tx", "Ty", "Tz"][i] for i in indices],
             'polaris_peak_to_peak_xyz': peak_to_peak,
         }
-        motion = interpolated[:, indices]
-        motion = motion - motion.mean(axis=0)
-        scale = motion.std(axis=0).max()
-        if scale > 0:
-            motion = motion / scale
-        return motion
+        return interpolated[:, indices]
 
-    @staticmethod
-    def _lowpass(times, positions):
-        """Smooth position data with a 1.0 Hz, order-1 zero-phase filter."""
+    def _lowpass(self, times, positions):
+        """Smooth positions with the configured order-1 zero-phase low-pass filter."""
         times = np.asarray(times, dtype=np.float64)
         positions = np.asarray(positions, dtype=np.float64)
         if (times.ndim != 1 or times.size < 7
@@ -79,9 +76,11 @@ class PolarisInfraredTrackerReader:
             raise ValueError('Polaris timestamps must be strictly increasing.')
         # Match the sampling-rate convention used by the Marmot filter.
         sampling_rate = times.size / (times[-1] - times[0])
-        if sampling_rate <= 2 * 1.0:
-            raise ValueError('Polaris sampling rate must exceed twice the 1.0 Hz cutoff.')
-        b, a = butter(1, 1.0 / (sampling_rate / 2), btype='lowpass')
+        if sampling_rate <= 2 * self.lowpass_cutoff_hz:
+            raise ValueError(
+                f'Polaris sampling rate must exceed twice the configured low-pass cutoff '
+                f'({self.lowpass_cutoff_hz} Hz).')
+        b, a = butter(1, self.lowpass_cutoff_hz / (sampling_rate / 2), btype='lowpass')
         return filtfilt(b, a, positions, axis=0)
 
     @staticmethod

@@ -1,5 +1,5 @@
 [paths]
-# Each execution creates output_root/workflow_label/<unique-run-id>/.
+# Each execution creates output_root/workflow_label/<date-time>/.
 output_root = "runs"
 # Label grouping related runs under output_root; notebooks and pipelines override this with their demo/pipeline name.
 workflow_label = "reconstruction"
@@ -18,6 +18,8 @@ use_deterministic_algorithms = true
 # Preferred compute device: "gpu" or "cpu".
 runtime_device = "gpu"
 # Enable random seeding independently of deterministic algorithms.
+# When true, uses seed below (a non-negative integer).
+# Keep seed present even when false; the loader always requires it.
 seed_enabled = true
 # Random seed used when seed_enabled is true.
 seed = 1
@@ -28,16 +30,21 @@ jupyter_notebook_flag = false
 flip_for_display = false
 # Print inner conjugate-gradient solver diagnostics.
 verbose = true
-# Print JointReconstructor progress to console.
+# Print detailed JointReconstructor progress to console.
+# Start/finish messages are always printed, including in notebook mode.
 print_to_console = true
 # Release generated cache files at execution end; false retains them for reuse.
 remove_temporary_data_after_run = true
 # Optional reusable HDF5 preprocessing cache; avoids creating a second large file by default.
+# When true, writes the reusable preprocessing cache under cache_root.
+# cache_root remains required when false; "auto" is supported.
 cache_preprocessed_data = false
 
 
 [kspace_normalization]
 # Normalize k-space before optimization.
+# When true, uses kspace_norm_mode and positive kspace_norm_eps below.
+# Keep both settings present even when false; the loader always requires them.
 normalize_kspace = true
 # Normalization mode: "rms" or "max".
 kspace_norm_mode = "rms"

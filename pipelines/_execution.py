@@ -5,6 +5,7 @@ import time
 import torch
 
 from src.reconstruction.JointReconstructor import JointReconstructor
+from src.utils.ismrmrd_io import acquisition_header
 from src.runtime.output_layout import record_reconstruction
 
 
@@ -37,10 +38,19 @@ def timed_reconstruction(data):
     # Defer the execution step explicitly; preserve the configured output policy.
     synchronize(data.kspace.device)
     started = time.perf_counter()
+    voxel_spacing_mm = None
+    if data.params.regularization_scaling == "grics_cpp":
+        encoding = acquisition_header(data).encoding[0].encodedSpace
+        matrix, fov = encoding.matrixSize, encoding.fieldOfView_mm
+        axes = ("x", "y", "z") if data.params.data_dimension == "3D" else ("x", "y")
+        voxel_spacing_mm = tuple(float(getattr(fov, axis)) / int(getattr(matrix, axis))
+                                 for axis in axes)
     reconstructor = JointReconstructor(
         data.kspace, data.smaps, data.sampling_idx,
         motion_signal=data.motion_signal, params=data.params,
         kspace_scale=data.kspace_scale, motion_plot_context=data.motion_plot_context,
+        calibration_image_prior=getattr(data, 'grics_reference_image', None),
+        voxel_spacing_mm=voxel_spacing_mm,
     )
     image, motion = reconstructor.run(defer_tensor_export=True)
     synchronize(data.kspace.device)
@@ -55,21 +65,28 @@ def export_reconstruction(params, result):
                           if params.save_reconstruction_logs else None)
     result['output_dir'] = folder
     result['image_file'] = None
+    result['native_image_file'] = None
     result['motion_file'] = None
     if params.save_reconstruction_tensors:
         folder.mkdir(parents=True, exist_ok=True)
         result['image_file'] = folder / 'image_reconstructed.pt'
+        result['native_image_file'] = folder / 'image_reconstructed_native.pt'
         result['motion_file'] = folder / 'motion_parameters.pt'
         torch.save(result['image'], result['image_file'])
+        torch.save(result['native_image'], result['native_image_file'])
         torch.save(result['motion'], result['motion_file'])
-    image_axes = ['nex', 'x', 'y'] + (['z'] if result['image'].ndim == 4 else [])
+    image_axes = ['x', 'y'] + (['z'] if result['image'].ndim == 3 else [])
     motion_axes = (['component', 'motion_state'] if params.reconstruction_motion_type == 'rigid'
                    else ['component'] + image_axes[1:])
     if len(motion_axes) < result['motion'].ndim:
         motion_axes.append('sensor')
-    metadata = {key: value for key, value in result.items() if key not in {'image', 'motion'}}
+    metadata = {
+        key: value for key, value in result.items()
+        if key not in {'image', 'native_image', 'motion'}
+    }
     record_reconstruction(
         params, **metadata, status='complete', image_shape=list(result['image'].shape),
+        native_image_shape=list(result['native_image'].shape),
         tensor_export='pipeline' if params.save_reconstruction_tensors else 'disabled',
         motion_shape=list(result['motion'].shape), image_axes=image_axes, motion_axes=motion_axes,
         motion_grid='reconstruction', motion_type=params.reconstruction_motion_type,
@@ -88,6 +105,7 @@ def finish_run(data, results, timings, *, return_tensors, **metadata):
     if not return_tensors:
         for result in results:
             result.pop('image')
+            result.pop('native_image')
             result.pop('motion')
     return {'run_folder': Path(data.params.run_folder), 'timings': timings,
             'reconstructions': results}

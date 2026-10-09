@@ -23,7 +23,21 @@ Please cite the GRICS paper if you use this code for your research work.
 ```
 ## Environment Setup
 
-A Dockerfile is provided in the `build/` folder. The built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
+A Dockerfile is provided in `build/`, and the built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. This image contains NVIDIA GPU support (CUDA >= 12).
+To run the included examples your computer should have at least 16GB of VRAM and 64GB of RAM. NVIDIA GPU is not required but it will be way slower without it (please disable GPU var in docker.sh if you dont use it).
+
+You can use `docker.sh` from the repository to start and manage the container:
+```bash
+./docker.sh run                 # Create the container, or start it if it already exists
+./docker.sh exec-it             # Open an interactive shell as your host user
+./docker.sh exec-it python --version
+./docker.sh stop                # Stop the container
+./docker.sh rm                  # Remove the stopped container
+```
+
+By default, the script mounts the **parent directory of this repository** at `/home/pyuser/wkdir` inside the container so this repository will be in `/home/pyuser/wkdir/GRICS-torch` (or the repository's actual directory name). For example, if you checkout this repository in the parent folder of your data and your project directories, the will be available under `/home/pyuser/wkdir/`. The script also mounts the host `~/.gitconfig`. By default it runs on GPU 0; set `IMAGE_NAME`, `IMAGE_VERSION`, or `EXTRA_MOUNTS` in the environment to change the image or add Docker mount arguments. Use `./docker.sh build` to build the image locally from `build/Dockerfile`. 
+
+When you `./docker.sh run` it will print a VS Code container configuration for connecting to the running container.
 
 ## Repository layout
 
@@ -36,117 +50,10 @@ A Dockerfile is provided in the `build/` folder. The built image is available at
 
 Four demo notebooks cover simulated and real-data reconstruction. Simulations and some reconstruction steps use random initialization; `seed_enabled` and `seed` in `config/general.toml` control reproducibility. Results can vary with the seed and compute backend.
 
-## Siemens breast 3D low-resolution reconstruction
-
-`pipelines/siemens_breast_3d_lowres.py` reconstructs one complete 3D volume:
-
-```bash
-python pipelines/siemens_breast_3d_lowres.py /path/to/subject.dat /path/to/subject.saec
-# Already converted ISMRMRD input also accepts a SAEC file:
-python pipelines/siemens_breast_3d_lowres.py /path/to/subject.mrd /path/to/subject.saec
-# Preprocessed HDF5 includes its physiological data:
-python pipelines/siemens_breast_3d_lowres.py /path/to/subject.h5
-```
-
-Preprocessed input contains `kspace` shaped `[coils, repetitions, Nx, Ny, Nz]`
-and `motion_data`, `idx_ky`, `idx_kz`, and `idx_nex`. Supply one file per execution.
-Coil sensitivities are calculated from the acquisition with `odille-spline`,
-configured in `config/coil_sensitivity/odille_spline.toml`.
-
-Reconstruction settings, including 16 motion states, live in
-`config/reconstruction/nonrigid_3d_breast.toml`. The volume is reconstructed on
-its input grid. CLI options include `--device cpu`, `--output-root PATH`, and
-`--no-save-reconstruction-tensors`. The default device is GPU for 3D and CPU for T2.
-
-### Calling Siemens pipelines from Python
-
-Both modules expose `run_pipeline(...)`; `main(argv=None)` only adapts CLI
-arguments. Calls accept strings or paths and do not require changing module globals:
-
-```python
-from pipelines.siemens_breast_T2 import run_pipeline as reconstruct_2d
-from pipelines.siemens_breast_3d_lowres import run_pipeline as reconstruct_3d
-
-volume = reconstruct_3d(
-    "subject.h5", device="gpu", output_root="runs/evaluation_3d",
-    save_reconstruction_tensors=False,
-)
-image = volume["reconstructions"][0]["image"]
-motion = volume["reconstructions"][0]["motion"]
-solver_seconds = volume["timings"]["reconstruction_seconds"]
-
-slices = reconstruct_2d(
-    "subject.dat", "subject.saec", device="cpu", max_workers=4,
-    slice_start=0, slice_stop=8, output_root="runs/evaluation_2d",
-    save_reconstruction_tensors=False, export_dicom=False,
-)
-per_slice_seconds = [item["reconstruction_seconds"] for item in slices["reconstructions"]]
-```
-
-Both return a dictionary with `run_folder`, `timings`, and `reconstructions`.
-Each reconstruction includes CPU `image` and `motion` tensors, its solver time, a `log_file` path,
-and `output_dir`, `image_file`, and `motion_file` paths (file paths are `None`
-when saving is disabled). T2 results are ordered by `slice_idx`; `slice_stop`
-is exclusive. T2 images include configured reference normalization and
-zero-filling; motion maps retain their reconstruction grid. Set
-`return_tensors=False` to omit tensors from the returned dictionary.
-
-Both accept `reconstruction_config` and an `overrides` dictionary for validated
-configuration settings. T2 also accepts `postprocessing_config`,
-`dicom_header_dir`, and `dicom_series_number`. Numerical defaults remain in the
-TOML files. Pipelines disable plotting and intermediate tensor exports, and save
-each final image/motion tensor once after computation when `save_reconstruction_tensors=True`
-(the default). GRICS text logs are written during reconstruction, including
-configuration, CG status, GN residuals, motion-update diagnostics, and timings.
-They are controlled by `save_reconstruction_logs`, independently of
-`save_reconstruction_tensors`. Both flags default to `true` in `config/general.toml`.
-The pipeline keyword arguments accept `None` to inherit configuration/overrides
-or a boolean to override them. CLI options are
-`--[no-]save-reconstruction-logs` and `--[no-]save-reconstruction-tensors`. Run metadata and resolved
-configuration are always saved. T2's Python API exports DICOM only with `export_dicom=True`;
-the T2 CLI retains DICOM export by default (`--no-dicom` disables it).
-
-Both Siemens pipelines apply these runtime overrides to `general.toml`:
-
-- `save_debug_plots=false`, `verbose=false`, `print_to_console=false`,
-  `jupyter_notebook_flag=false`, and `flip_for_display=true` are enforced,
-  including when different values are supplied in `overrides`.
-- `use_deterministic_algorithms` defaults to `false` in pipelines. An explicit
-  value in `overrides` is honored; the value in `general.toml` is superseded.
-- The `device` and `output_root` pipeline arguments determine the runtime device
-  and output location, taking precedence over matching TOML or `overrides`
-  entries. Their defaults are defined at the top of each pipeline script.
-
-These pipeline conventions do not change notebook or direct-solver defaults.
-The common log and tensor flags retain the configurable behavior described above.
-
-`reconstruction_seconds` measures solver construction, optimization, and text
-logging using `perf_counter`, with CUDA synchronized before and after. This
-includes log formatting, diagnostic reductions, scalar synchronization, and
-file writes/close (normal filesystem caching, without forcing disk persistence). It excludes input
-loading, sensitivity estimation, motion binning, postprocessing, CPU transfers,
-and tensor/DICOM exports. Log-only motion norms are transferred together to
-avoid two separate GPU scalar synchronizations. Per-step times in the text log
-are host-clock diagnostics; the synchronized outer timer is the authoritative
-GPU reconstruction measurement. The 3D result reports preprocessing, transfer, and export times
-separately. T2 reports each slice's preprocessing/solver/postprocessing times,
-`reconstruction_seconds_sum` (the sum of solver times, not parallel wall time),
-and `compute_wall_seconds` (slice preparation, reconstruction, postprocessing,
-worker startup and transfers, excluding exports). `pipeline_seconds` includes
-loading and exports through the end of export; manifest `elapsed_s` also
-includes final metadata bookkeeping.
-
-T2 loads the source once and uses forked CPU workers with one PyTorch
-intra-op thread per worker. `max_workers=1` runs directly in the caller; GPU slice
-reconstruction uses that sequential path. All reconstructed slices remain in
-memory until computation finishes so tensor/DICOM exports cannot overlap another
-slice's timed reconstruction. Keep worker counts fixed when comparing timings.
-Repeated calls create distinct run directories.
-
 ## Configuration
 
 - `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
-- `config/coil_sensitivity/*.toml`: one explicitly selected coil-sensitivity method and only that method's settings
+- `config/coil_sensitivity/*.toml`: settings for the coil-sensitivity method named by `coil_sensitivity_config` in the reconstruction TOML; loaded automatically
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
 - `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings (only if synthetic data is used)
 - `config/real_data/`: configurations for loading real MRI and physiological data
@@ -160,7 +67,7 @@ Repeated calls create distinct run directories.
 - `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode
 - `config/postprocessing/nonrigid_2d_breast.toml`: reference-image normalization for the Siemens breast pipeline, loaded with `load_postprocessing_config(...)`
 
-Use `load_config(...)` to load the config files. Always supply `reconstruction_config` and `coil_sensitivity_config`. Real data defaults to `from-data` sampling and `as-it-is` motion when those configuration files are omitted. Use `overrides={...}` for run-specific changes. See the demos for complete configuration, runtime initialization, data loading, and reconstruction examples.
+Use `load_config(...)` with a `data_type` and a path to a `reconstruction_config` (see demos for examples). Some configurations require additional settings (see below). Use `overrides={...}` for run-specific settings.
 
 ## Data Types
 
@@ -231,41 +138,23 @@ Uses the corresponding MRI data format together with physiological data file in 
 
 SAEC processing depends on `rawdata_sensor_type`:
 
-- `BELT`: selects the belt track with the larger standard deviation, applies a first-order zero-phase Butterworth low-pass filter with a 1 Hz cutoff, and removes quadratic drift. The drift is fitted to a copy clipped to the mean plus or minus two standard deviations, then subtracted from the unclipped filtered signal. The returned single channel is not standardized.
-- `1MARMOT`: for every MARMOT sensor, each of the three accelerometer tracks is low-pass filtered at 0.3 Hz and then high-pass filtered at 0.03 Hz, using first-order zero-phase Butterworth filters. Tracks identified as displaced, constant, non-finite, or otherwise invalid are rejected. The valid track with the largest standard deviation is selected across all sensors and normalized by its standard deviation.
-- `ALL_MARMOTS` (also accepted as `ALL_MARMOTs`): applies the same 0.3/0.03 Hz filtering and displacement checks, selects the highest-variance valid track from each usable sensor, and returns one standard-deviation-normalized channel per usable sensor.
+- `BELT`: selects the belt track with the larger standard deviation, applies a first-order zero-phase Butterworth low-pass filter using `saec_belt_lowpass_cutoff_hz`, and removes quadratic drift. The drift is fitted to a copy clipped to the mean plus or minus two standard deviations, then subtracted from the unclipped filtered signal.
+- `1MARMOT`: for every MARMOT sensor, each accelerometer track is low-pass filtered using `saec_marmot_lowpass_cutoff_hz` and high-pass filtered using `saec_marmot_highpass_cutoff_hz`. Tracks identified as displaced, constant, non-finite, or otherwise invalid are rejected, then the valid track with the largest standard deviation is selected across all sensors.
+- `ALL_MARMOTS` (also accepted as `ALL_MARMOTs`): applies the same configured filtering and displacement checks and selects the highest-variance valid track from each usable sensor.
 
 Timestamped SAEC channels are aligned to the full MRI sequence before slice selection and interpolated onto MRI readout times. SAEC timestamps are referenced to the Siemens stop trigger. The filters are applied before this interpolation; readouts outside the SAEC recording use the nearest endpoint value.
 
 ### `ismrmrd-polaris` and `siemens-polaris`
 Uses the corresponding MRI data format together with a single-tool NDI ToolBox `.tsv` export from a Polaris Vega infrared camera tracker (`polaris_file`). Pass `polaris_config="config/real_data/polaris.toml"` and `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` to `load_config(...)`. Select the tracks and clock shift in `polaris.toml`. The final timestamp must correspond to the end of the MRI sequence; clock correction is applied after end alignment.
 
-Polaris reads the XYZ tool-position channels and applies a first-order zero-phase Butterworth low-pass filter with a 1 Hz cutoff to each axis. The sampling rate is estimated from the recording duration; at least seven samples are required, and the rate must exceed twice the cutoff. The filtered signals are then linearly interpolated onto full-sequence MRI readout times. With `polaris_channel_mode = "all"`, the Tx, Ty, and Tz channels are retained. With `"largest-amplitude"`, only the axis with the largest peak-to-peak range is retained (ties are resolved in Tx, Ty, Tz order). Each retained channel is centered by subtracting its mean, then all retained channels are divided by their largest standard deviation, if nonzero. Channel selection, centering, and scaling are computed at full-sequence MRI readout times, before slice selection.
+Polaris reads the XYZ tool-position channels and applies a first-order zero-phase Butterworth low-pass filter using `polaris_lowpass_cutoff_hz`. The sampling rate is estimated from the recording duration; at least seven samples are required, and the rate must exceed twice the cutoff. The filtered signals are then interpolated onto full-sequence MRI readout times. With `polaris_channel_mode = "all"`, Tx, Ty, and Tz are retained. With `"largest-amplitude"`, only the axis with the largest peak-to-peak range is retained (ties are resolved in Tx, Ty, Tz order). Shared per-channel normalization follows selection.
 
 ### Post-processing and synchronization
 Text inputs automatically load `config/real_data/physio_text.toml`; array inputs load `config/real_data/physio_array.toml`. Each file owns its clock-shift value independently. To use another sensor configuration, pass `physio_config="path/to/physio_text.toml"` to `load_config(...)`. The clock setting belongs to the sensor configuration, not `ismrmrd_reader.toml`.
 
-Generic `physio_text` and `physio_array` inputs are not filtered, centered, or normalized. Their channels are preserved in sensor/track order after timestamp alignment and interpolation. If all timestamps are `-1`, values are treated as already synchronized and must contain one sample for every full-acquisition MRI readout; interpolation is skipped and clock correction must be zero.
+Generic `physio_text` and `physio_array` inputs are not filtered. Their channels are preserved in sensor/track order through timestamp alignment and interpolation, then standardized by the shared per-channel normalization. If all timestamps are `-1`, values are treated as already synchronized and must contain one sample for every full-acquisition MRI readout; interpolation is skipped and clock correction must be zero.
 
 Physiological clock correction (Polaris, `physio_text`, `physio_array`): set `physio_clock_drift_seconds` in `config/real_data/polaris.toml` for Polaris, `config/real_data/physio_text.toml` for text inputs, or `config/real_data/physio_array.toml` for array inputs (default `0.0`), or pass `overrides={"physio_clock_drift_seconds": -0.25}`. Positive shifts samples later; negative shifts earlier, after sequence-end alignment. Already-synchronized (`-1`) inputs reject any nonzero clock correction. Missing coverage at either edge is extrapolated with $\hat{x}[n] = c + \sum_{k=1}^{p} a_k x[n-k]$, fitted per channel (up to 20 lags over the nearest 10 seconds; reversed history at the start). Any required extension greater than 1 second raises an error. SAEC is unchanged.
-
-### Vienna T2 all-slice pipeline
-
-From the repository root, using the demo E data:
-
-```bash
-python pipelines/vienna_T2.py \
-  ../data/GRICS-torch/Vienna/raw_data/meas_MID01133_FID01857_AX_T2_TSE_HR_2NEX_SAT_MOTION.dat \
-  ../data/GRICS-torch/Vienna/motion/R1.tsv
-```
-
-Uses Polaris/nonrigid settings and reconstructs every slice in parallel on CPU, with one worker per slice by default. Use `--max-workers` only to cap concurrency if desired. ISMRMRD `.h5`/`.mrd` inputs are also accepted. The positive sharpness index from the article branch is computed on each slice's magnitude of the repetition mean, before zero-filling; **larger is better**. Clock fitting maximizes the mean across all slices using finite-difference gradient descent on its negative, with backtracking and fixed per-slice seeds. MRI data and filtered tracking traces are loaded once.
-
-**Clock optimization is enabled by default** (`--clock-optimization`). Add `--no-clock-optimization` to skip the search and use `physio_clock_drift_seconds` from `config/real_data/polaris.toml` (default `0.0`), or the value supplied with `--initial-correction`. For example, append `--no-clock-optimization --initial-correction 0.2` to reconstruct at a fixed +0.2-second shift. Final reconstructions and three-way comparison images are still generated. `--reuse-clock-run` also disables optimization and uses the saved correction.
-
-The initial shift comes from `physio_clock_drift_seconds`, or `--initial-correction`. Search defaults are `--clock-bounds -1 1`, `--difference-step 0.05`, `--learning-rate 0.1`, `--max-step 0.2`, `--clock-tolerance 0.001`, and `--max-iterations 8` (times in seconds). Bounds are restricted further when needed to respect the one-second extrapolation limit. This is a local search; motion binning can make the objective uneven. Each evaluation reconstructs all slices, so optimization can be expensive.
-
-Results go to `runs/vienna_T2/<timestamp>/`: `optimization/history.json` contains every trial and per-slice score, `optimization/result.json` records the best correction, and `sharpness.json` contains final scores. Every trial also saves reconstructed tensors and PNG previews in `optimization/evaluation_XXX/slice_YYY/results/` (`image_reconstructed.pt` and `image_reconstructed.png`), so the same slice can be compared across corrections without overwriting earlier images. The best tested correction is reconstructed again with full outputs under `reconstructions/` and one DICOM series under `exports/dicom/`. Optional `--dicom-header-dir` and `--dicom-series-number` work as in the breast pipeline. The resolved config records the chosen correction; source TOMLs are not rewritten. To skip clock optimization, add `--reuse-clock-run latest` (latest saved result under the output root), or `--reuse-clock-run runs/vienna_T2/<timestamp>`. This creates a new run using the saved best correction and reconstructs the optimized and zero-clock images for comparison. PNG previews and comparison panels use `flip_for_display=true` by default, matching the breast pipeline; use `--no-flip-for-display` to disable this. Complex tensors and DICOM geometry are unchanged. The reusable metric is `src/utils/sharpness_index.py`. The pipeline also reconstructs every slice with zero clock correction under `baselines/zero_clock/`. `comparisons/slice_YYY/comparison.png` shows no motion correction (coil-combined inverse FFT), motion correction with zero clock shift, and motion correction with the optimized shift, using a shared intensity window. Each comparison folder includes all three complex images in `images.pt` and their sharpness scores in `scores.json`.
 
 ## Sampling Modes (synthetic acquisition)
 
@@ -347,6 +236,13 @@ For corruption, simulation uses one state per acquired readout (`Ny * Nz * Nex` 
 
 ## Motion Binning and Reconstruction States
 
+Physiological signals from real acquisitions are standardized after reader-specific processing and synchronization, before slice grouping and motion binning.
+Each sensor is normalized independently as `(signal - mean) / std`, using the
+population standard deviation (`sqrt(mean((signal - mean)**2))`, denominator N).
+Statistics cover every MRI readout in the full acquisition, before slice selection and motion binning. This gives each sensor zero mean and unit
+variance over the acquisition. Constant sensors and non-finite samples raise
+an error. Simulated signals are unaffected.
+
 After loading or simulation, motion signals are grouped into reconstruction states using `motion_binning_mode` from the reconstruction configuration:
 
 - `"kmeans"`: clusters the motion-channel values with k-means.
@@ -368,43 +264,29 @@ For real data with generated sampling, configured shot counts are preserved and 
 
 ### Run outputs
 
-Every notebook and the Siemens pipeline creates a timestamped directory under `output_root/workflow_label/`, configured in `config/general.toml` (`output_root="runs"` by default).
+Every notebook and Siemens pipeline creates a run directory under `output_root/workflow_label/`, configured in `config/general.toml` (`output_root="runs"` by default). Its name contains only the local date and time, including fractional seconds so simultaneous runs get distinct names. A run with one slice or one volume writes directly under that directory:
 
 ```text
-runs/<workflow_label>/<unique-run-id>/
+runs/<workflow_label>/<YYYY-MM-DD_HH-MM-SS-ffffff>/
 ├── manifest.json
 ├── config_resolved.json
-├── reconstructions/
-│   └── slice_001/                    # volume_001 for a 3D reconstruction
-│       ├── preprocessing/           # Sampling, input motion, ground truth,
-│       │                            # corrupted image, optional synchronization
-│       ├── results/
-│       │   ├── image_reconstructed.pt
-│       │   ├── image_reconstructed.png
-│       │   ├── image_reconstructed_nex_001.png  # Multiple repetitions only
-│       │   ├── motion_parameters.pt
-│       │   └── ...                  # Final motion curves/maps
-│       ├── diagnostics/
-│       │   ├── level_01/            # Image and available nonrigid motion plots
-│       │   ├── level_02/
-│       │   ├── .../
-│       │   ├── residuals/           # Curves across resolution levels
-│       │   ├── consistency_checks/
-│       │   └── postprocessing/     # Reference tensors/figures, normalized image,
-│       │                            # image_postprocessed.pt and .png
-│       └── reconstruction.log
-└── exports/
-    └── dicom/                       # If requested in the pipeline
-        └── slice_001.dcm
+├── preprocessing/             # Sampling, input motion and optional debug outputs
+├── results/                   # Final image, motion tensors and previews
+├── diagnostics/               # Resolution-level and postprocessing plots
+├── reconstruction.log         # When text logging is enabled
+└── exports/dicom/             # When DICOM export is requested
 ```
+
+When a pipeline reconstructs multiple slices in one run, each slice's `preprocessing/`, `results/`, `diagnostics/` and `reconstruction.log` are placed under `slice_001/`, `slice_002/`, and so on at the run root. The manifest, resolved configuration and optional DICOM exports remain at the run root.
 
 In notebooks and direct solver runs, `image_reconstructed.pt` is the complex
 reconstruction before reference-image normalization and zero-filling, preserving
 the repetition dimension. Its PNG shows the magnitude of the repetition mean;
 individual repetition previews are also saved when multiple repetitions exist.
-The callable Siemens pipelines instead save only the final image and motion
-tensors and GRICS text logs, with no preview or intermediate tensors. T2's final image
-includes configured reference-image normalization and zero-filling. DICOM export
+The callable Siemens pipelines save both `image_reconstructed_native.pt`, captured
+immediately after GRICS, and the final `image_reconstructed.pt`, plus motion and
+GRICS text logs. T2's final image includes configured reference-image normalization
+and zero-filling; its native image includes neither operation. DICOM export
 uses the magnitude of the repetition mean with DICOM intensity scaling. Motion
 maps retain the reconstruction grid.
 
@@ -418,7 +300,7 @@ save_debug_plots = true
 ```
 
 - `save_reconstruction_logs`: write `reconstruction.log`, independently of tensors and plots.
-- `save_reconstruction_tensors`: save the final image and motion `.pt` files, independently of logs and plots.
+- `save_reconstruction_tensors`: save the native and final images and motion `.pt` files, independently of logs and plots.
 - `save_debug_plots`: save preprocessing, per-level, residual, and final preview/motion figures, independently of logs and tensors.
 
 All three flags can be set through `load_config(overrides={...})` in notebooks

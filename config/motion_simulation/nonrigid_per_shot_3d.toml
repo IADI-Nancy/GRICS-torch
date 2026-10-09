@@ -3,8 +3,14 @@ include = "common/nonrigid_common.toml"
 # Dimensionality required by this motion simulation file.
 motion_simulation_config_dimension = "3D"
 # One independently sampled non-rigid state per acquisition shot.
+# Requires motion_simulation_config_dimension matching the input data and the
+# shared parameters supplied by include above; change the included file when changing models.
+# Additionally requires nonrigid_discrete_s_scale; omit nonrigid_motion_amplitude,
+# nonrigid_resp_cycles_min and nonrigid_resp_cycles_max.
 simulated_motion_type = "non-rigid-per-shot"
 # Run the simulated non-rigid reconstruction consistency check.
+# Required for non-rigid simulation even when false; omit for rigid or "as-it-is" motion.
+# Enabling this check requires no additional config parameters.
 check_simulated_motion_consistency = true
 # Gaussian scale for the discrete non-rigid temporal coefficient s.
 nonrigid_discrete_s_scale = 4.0

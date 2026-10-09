@@ -3,19 +3,25 @@
 
 def configure_motion_states_per_resolution_level(params, motion_signal):
     """Return validated motion-state counts, one per resolution level."""
-    full_states = int(params.N_motion_states)
-    schedule = params.N_motion_states_per_level
-    if schedule == "full":
-        schedule = [full_states] * len(params.ResolutionLevels)
-    motion_states_per_level = [int(value) for value in schedule]
-    if len(motion_states_per_level) != len(params.ResolutionLevels):
+    full_states = params.N_motion_states
+    schedule = getattr(params, "_motion_states_per_level", None)
+    if schedule is None:
+        if type(full_states) is int:
+            schedule = [full_states] * len(params.ResolutionLevels)
+        elif isinstance(full_states, (list, tuple)):
+            schedule = full_states
+            full_states = max(schedule, default=0)
+        else:
+            raise ValueError("N_motion_states must be a positive integer or a list of positive integers.")
+    if len(schedule) != len(params.ResolutionLevels):
         raise ValueError(
-            "N_motion_states_per_level must have one entry per ResolutionLevels entry."
+            f"N_motion_states has {len(schedule)} entries; ResolutionLevels has {len(params.ResolutionLevels)}."
         )
-    if any(value < 1 or value > full_states for value in motion_states_per_level):
-        raise ValueError(
-            f"N_motion_states_per_level values must be between 1 and {full_states}."
-        )
+    if any(type(value) is not int or value < 1 for value in schedule):
+        raise ValueError("N_motion_states entries must be positive integers.")
+    if any(value > full_states for value in schedule):
+        raise ValueError("N_motion_states entries cannot exceed the full motion-state count.")
+    motion_states_per_level = list(schedule)
     if int(motion_signal.shape[0]) != full_states:
         raise ValueError(f"motion_signal has {motion_signal.shape[0]} states; expected {full_states}.")
     if params.reconstruction_motion_type == "rigid" and any(
@@ -27,8 +33,12 @@ def configure_motion_states_per_resolution_level(params, motion_signal):
 
 def _parse_gn_iterations_per_level(params, res_levels):
     gn_cfg = params.GN_iterations_per_level
-    if not isinstance(gn_cfg, list) or len(gn_cfg) != len(res_levels):
-        raise ValueError("GN_iterations_per_level must have one positive integer per ResolutionLevels entry.")
+    if type(gn_cfg) is int:
+        gn_cfg = [gn_cfg] * len(res_levels)
+    if not isinstance(gn_cfg, (list, tuple)):
+        raise ValueError("GN_iterations_per_level must be a positive integer or a list of positive integers.")
+    if len(gn_cfg) != len(res_levels):
+        raise ValueError(f"GN_iterations_per_level has {len(gn_cfg)} entries; ResolutionLevels has {len(res_levels)}.")
     if any(type(value) is not int or value < 1 for value in gn_cfg):
         raise ValueError("GN_iterations_per_level entries must be positive integers.")
     return list(gn_cfg)

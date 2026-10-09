@@ -14,6 +14,7 @@ from src.preprocessing.ISMRMRDReader import ISMRMRDReader
 from src.preprocessing.physiological_data.SAECReader import SAECReader
 from src.preprocessing.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
 from src.preprocessing.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
+from src.preprocessing.physiological_data.normalization import normalize_physiological_motion_input
 
 
 class RawDataPreparer:
@@ -28,7 +29,9 @@ class RawDataPreparer:
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_format,
                  sensor_type, device, print_raw_calibration_lines, polaris_channel_mode,
-                 physio_clock_drift_seconds=0.0):
+                 physio_clock_drift_seconds=0.0, polaris_lowpass_cutoff_hz=None,
+                 saec_belt_lowpass_cutoff_hz=None, saec_marmot_lowpass_cutoff_hz=None,
+                 saec_marmot_highpass_cutoff_hz=None):
         if physiological_format not in {"SAEC", "PolarisInfraredTracker", "physio_text", "physio_array"}:
             raise ValueError("Unsupported physiological format.")
         # Readers own format-specific processing; the logging flag affects only raw calibration messages.
@@ -38,12 +41,20 @@ class RawDataPreparer:
             raise ValueError("Clock correction is supported only for Polaris, text and array physiology.")
         self.physio_clock_drift_seconds = float(physio_clock_drift_seconds)
         self.polaris_channel_mode = polaris_channel_mode
+        self.polaris_lowpass_cutoff_hz = polaris_lowpass_cutoff_hz
+        self.saec_belt_lowpass_cutoff_hz = saec_belt_lowpass_cutoff_hz
+        self.saec_marmot_lowpass_cutoff_hz = saec_marmot_lowpass_cutoff_hz
+        self.saec_marmot_highpass_cutoff_hz = saec_marmot_highpass_cutoff_hz
         if physiological_format in {"physio_text", "physio_array"}:
             self.physiological_reader = PreprocessedPhysioReader(physiological_format)
         elif physiological_format == "PolarisInfraredTracker":
-            self.physiological_reader = PolarisInfraredTrackerReader(channel_mode=polaris_channel_mode)
+            self.physiological_reader = PolarisInfraredTrackerReader(
+                channel_mode=polaris_channel_mode, lowpass_cutoff_hz=polaris_lowpass_cutoff_hz)
         else:
-            self.physiological_reader = SAECReader(sensor_type=sensor_type)
+            self.physiological_reader = SAECReader(
+                sensor_type=sensor_type, belt_lowpass_cutoff_hz=saec_belt_lowpass_cutoff_hz,
+                marmot_lowpass_cutoff_hz=saec_marmot_lowpass_cutoff_hz,
+                marmot_highpass_cutoff_hz=saec_marmot_highpass_cutoff_hz)
         self.reader = ISMRMRDReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
         self.physiological_file = physiological_file
         self.physiological_format = physiological_format
@@ -208,6 +219,9 @@ class RawDataPreparer:
             "slice_indices": raw["slice_indices"].detach().cpu().numpy(),
         }
         motion = self.physiological_reader.prepare_motion(interpolated)
+        # All reader-specific filtering and channel selection is complete; normalize
+        # each synchronized channel over the full MRI acquisition before reshaping.
+        motion, _, _ = normalize_physiological_motion_input(motion)
         motion, ky, kz, nex = self._reshape_data_slicewise(
             torch.as_tensor(motion, device=self.device), raw["slice_indices"],
             raw["idx_ky"], raw["idx_kz"], raw["idx_nex"],
@@ -289,7 +303,11 @@ class RawDataPreparer:
             key = cache_key([self.reader.ismrmrd_file, *physiology_files],
                             {'implementation': implementation, 'format': self.physiological_format,
                              'sensor': self.sensor_type, 'polaris_mode': self.polaris_channel_mode,
-                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds})
+                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds,
+                             'polaris_lowpass_cutoff_hz': self.polaris_lowpass_cutoff_hz,
+                             'saec_belt_lowpass_cutoff_hz': self.saec_belt_lowpass_cutoff_hz,
+                             'saec_marmot_lowpass_cutoff_hz': self.saec_marmot_lowpass_cutoff_hz,
+                             'saec_marmot_highpass_cutoff_hz': self.saec_marmot_highpass_cutoff_hz})
             def build(path):
                 arrays = self._prepare_data()
                 with h5py.File(path, 'w') as handle:

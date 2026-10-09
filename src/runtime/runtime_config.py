@@ -55,20 +55,26 @@ _RUNTIME_KEYS = {
     'seed', 'seed_enabled',
 }
 _NORMALIZATION_KEYS = {'normalize_kspace', 'kspace_norm_mode', 'kspace_norm_eps'}
-_REAL_DATA_KEYS = {'rawdata_sensor_type'}
+_REAL_DATA_KEYS = {
+    'rawdata_sensor_type', 'saec_belt_lowpass_cutoff_hz',
+    'saec_marmot_lowpass_cutoff_hz', 'saec_marmot_highpass_cutoff_hz',
+}
 _ISMRMRD_READER_KEYS = {'print_raw_calibration_lines'}
 _PHYSIO_CLOCK_KEYS = {'physio_clock_drift_seconds'}
-_POLARIS_KEYS = {'polaris_channel_mode'}
+_POLARIS_KEYS = {'polaris_channel_mode', 'polaris_lowpass_cutoff_hz'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
-    'N_motion_states_per_level', 'motion_binning_mode', 'motion_quantization_bins',
+    'coil_sensitivity_config',
+    'motion_binning_mode', 'motion_quantization_bins',
     'ResolutionLevels', 'GN_iterations_per_level',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
+    'use_calibration_weighted_image', 'regularization_scaling', 'motion_preconditioner',
+    'motion_gradient_boundary',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -93,7 +99,7 @@ _FILE_SCHEMAS = {
     'coil_sensitivity': {'coil_sensitivity': _CSM_KEYS},
 }
 _OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
-                  _RECONSTRUCTION_KEYS | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
+                  (_RECONSTRUCTION_KEYS - {'coil_sensitivity_config'}) | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
                   _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
 _BOOL_KEYS = {
     'save_debug_plots', 'check_simulated_motion_consistency', 'use_deterministic_algorithms',
@@ -101,6 +107,7 @@ _BOOL_KEYS = {
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
+    'use_calibration_weighted_image', 'motion_preconditioner',
 }
 
 
@@ -201,9 +208,48 @@ def _validate_general(cfg):
 
 
 def _validate_real_data(cfg):
-    _require(cfg, _REAL_DATA_KEYS, 'real-data')
-    if not isinstance(cfg['rawdata_sensor_type'], str) or not cfg['rawdata_sensor_type']:
-        raise ValueError('rawdata_sensor_type must be a nonempty string.')
+    """Validate reader, sensor, and clock settings, including misplaced overrides."""
+    data_type = cfg['data_type']
+    saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
+    ismrmrd_reader_data = data_type in ISMRMRD_READER_DATA_TYPES
+    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
+    generic_physio_data = data_type in {
+        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
+        for kind in ('physio_text', 'physio_array')
+    }
+    if saec_data:
+        _require(cfg, _REAL_DATA_KEYS, 'real-data')
+        if not isinstance(cfg['rawdata_sensor_type'], str) or not cfg['rawdata_sensor_type']:
+            raise ValueError('rawdata_sensor_type must be a nonempty string.')
+        for key in ('saec_belt_lowpass_cutoff_hz', 'saec_marmot_lowpass_cutoff_hz',
+                    'saec_marmot_highpass_cutoff_hz'):
+            _number(cfg[key], key, positive=True)
+    elif cfg.keys() & _REAL_DATA_KEYS:
+        raise ValueError(f'Real-data settings incompatible with {data_type}: {sorted(cfg.keys() & _REAL_DATA_KEYS)}.')
+    if ismrmrd_reader_data:
+        _require(cfg, _ISMRMRD_READER_KEYS, 'ISMRMRD-reader')
+        if type(cfg['print_raw_calibration_lines']) is not bool:
+            raise ValueError('print_raw_calibration_lines must be a boolean.')
+    elif cfg.keys() & _ISMRMRD_READER_KEYS:
+        raise ValueError(f'ISMRMRD-reader settings incompatible with {data_type}: {sorted(cfg.keys() & _ISMRMRD_READER_KEYS)}.')
+    if polaris_data:
+        _require(cfg, _POLARIS_KEYS, 'Polaris')
+        _choice(cfg['polaris_channel_mode'], 'polaris_channel_mode', {'all', 'largest-amplitude'})
+        _number(cfg['polaris_lowpass_cutoff_hz'], 'polaris_lowpass_cutoff_hz', positive=True)
+    elif cfg.keys() & _POLARIS_KEYS:
+        raise ValueError(f'Polaris settings incompatible with {data_type}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
+    if polaris_data or generic_physio_data:
+        _require(cfg, _PHYSIO_CLOCK_KEYS, 'physiological sensor')
+        cfg['physio_clock_drift_seconds'] = float(_number(
+            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
+    elif saec_data:
+        # SAEC uses its Siemens stop trigger; retain zero for the shared preparer.
+        shift = _number(cfg.get('physio_clock_drift_seconds', 0.0), 'physio_clock_drift_seconds')
+        if shift != 0:
+            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
+        cfg['physio_clock_drift_seconds'] = 0.0
+    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
+        raise ValueError(f'Physiological clock settings incompatible with {data_type}.')
 
 
 def _validate_csm(cfg):
@@ -362,6 +408,8 @@ def _validate_motion(cfg):
 
 def _validate_reconstruction(cfg):
     required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
+    if cfg.get('reconstruction_motion_type') == 'rigid':
+        required.remove('motion_preconditioner')
     _require(cfg, required, 'reconstruction')
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _require(cfg, {'motion_quantization_bins'}, 'kspace-energy motion binning')
@@ -372,6 +420,17 @@ def _validate_reconstruction(cfg):
     elif 'cg_reg_scale_num_probes' in cfg:
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
+    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
+    if cfg['reconstruction_motion_type'] == 'rigid':
+        if 'motion_preconditioner' in cfg:
+            raise ValueError('motion_preconditioner is only valid for non-rigid reconstruction.')
+    elif type(cfg['motion_preconditioner']) is not bool:
+        raise ValueError('motion_preconditioner must be a boolean.')
+    _choice(cfg['motion_gradient_boundary'], 'motion_gradient_boundary', {'zero', 'one_sided'})
+    if type(cfg['use_calibration_weighted_image']) is not bool:
+        raise ValueError('use_calibration_weighted_image must be a boolean.')
+    if cfg['use_calibration_weighted_image'] and cfg['coil_sensitivity_method'] != 'odille-spline':
+        raise ValueError('Calibration-weighted images require odille-spline coil sensitivities.')
     levels = cfg['ResolutionLevels']
     if not isinstance(levels, list) or not levels:
         raise ValueError('ResolutionLevels must be a nonempty list.')
@@ -380,9 +439,11 @@ def _validate_reconstruction(cfg):
     if any(a >= b for a, b in zip(levels, levels[1:])) or levels[-1] != 1:
         raise ValueError('ResolutionLevels must increase strictly and end at 1.0.')
     iterations = cfg['GN_iterations_per_level']
-    if not isinstance(iterations, list) or len(iterations) != len(levels):
-        raise ValueError('GN_iterations_per_level must contain one positive integer per resolution level.')
-    for value in iterations:
+    if isinstance(iterations, list) and len(iterations) != len(levels):
+        raise ValueError(f'GN_iterations_per_level has {len(iterations)} entries; ResolutionLevels has {len(levels)}.')
+    if not isinstance(iterations, (int, list)) or type(iterations) is bool:
+        raise ValueError('GN_iterations_per_level must be a positive integer or a list of positive integers.')
+    for value in iterations if isinstance(iterations, list) else [iterations]:
         _integer(value, 'GN_iterations_per_level entry')
     for key in ('max_iter_recon', 'max_iter_motion', 'cg_true_residual_interval'):
         _integer(cfg[key], key)
@@ -401,28 +462,32 @@ def _validate_reconstruction(cfg):
             values = [values]
         for value in values:
             _number(value, key, minimum=0)
+    if cfg['reconstruction_motion_type'] == 'non-rigid' and cfg['motion_preconditioner'] and cfg['lambda_m'] == 0:
+        raise ValueError('motion_preconditioner=true requires lambda_m > 0.')
     _choice(cfg['motion_binning_mode'], 'motion_binning_mode', {'kmeans', 'kspace_energy'})
     if cfg['motion_binning_mode'] == 'kspace_energy':
         _integer(cfg['motion_quantization_bins'], 'motion_quantization_bins', 2)
-    states = _integer(cfg['N_motion_states'], 'N_motion_states')
+    configured_states = cfg['N_motion_states']
+    if isinstance(configured_states, list):
+        if len(configured_states) != len(levels):
+            raise ValueError(f'N_motion_states has {len(configured_states)} entries; ResolutionLevels has {len(levels)}.')
+        states_per_level = [_integer(value, 'N_motion_states entry') for value in configured_states]
+    else:
+        states = _integer(configured_states, 'N_motion_states')
+        states_per_level = [states] * len(levels)
     per_shot = cfg['simulated_motion_type'].endswith('-per-shot')
+    if per_shot and isinstance(configured_states, list):
+        raise ValueError('N_motion_states must be a scalar for per-shot simulation because the shot count determines the number of states.')
     if per_shot and 'Nshots' in cfg:
-        cfg['N_motion_states'] = cfg['Nshots']
-        if states != cfg['N_motion_states']:
-            print(f"[config] Per-shot simulation: N_motion_states changed from {states} to {cfg['N_motion_states']} (shot count).", flush=True)
-    schedule = cfg['N_motion_states_per_level']
-    if schedule == 'full':
-        return
-    if not isinstance(schedule, list) or len(schedule) != len(levels):
-        raise ValueError('N_motion_states_per_level must be "full" or one integer per resolution level.')
-    for value in schedule:
-        _integer(value, 'N_motion_states_per_level entry')
-        if per_shot and cfg['kspace_sampling_type'] == 'from-data':
-            raise ValueError('Use N_motion_states_per_level="full" when shot counts come from data.')
-        if value > cfg['N_motion_states']:
-            raise ValueError('N_motion_states_per_level cannot exceed N_motion_states.')
-        if cfg['reconstruction_motion_type'] == 'rigid' and value != cfg['N_motion_states']:
-            raise ValueError('Per-level motion-state reduction requires non-rigid reconstruction.')
+        shot_count = cfg['Nshots']
+        if configured_states != shot_count:
+            print(f"[config] Per-shot simulation: N_motion_states changed from {configured_states} to {shot_count} (shot count).", flush=True)
+        states_per_level = [shot_count] * len(levels)
+    full_states = max(states_per_level)
+    if cfg['reconstruction_motion_type'] == 'rigid' and any(value != full_states for value in states_per_level):
+        raise ValueError('Per-level motion-state reduction requires non-rigid reconstruction.')
+    cfg['N_motion_states'] = full_states
+    cfg['_motion_states_per_level'] = states_per_level
 
 
 def _apply_notebook_logging(cfg, overrides):
@@ -445,20 +510,10 @@ def load_postprocessing_config(path, *, overrides=None):
     return SimpleNamespace(**cfg)
 
 
-def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
-                shepp_logan_config=None, from_image_config=None, real_data_config=None,
-                ismrmrd_reader_config=None, polaris_config=None, physio_config=None, sampling_config=None,
-                motion_simulation_config=None, overrides=None):
-    _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
-    root = Path(__file__).resolve().parents[2] / 'config'
-    cfg = _load_toml_flat(root / 'general.toml', 'general')
-    cfg['data_type'] = data_type
-    cfg.update(_load_toml_flat(reconstruction_config, 'reconstruction'))
-    cfg.update(_load_toml_flat(coil_sensitivity_config, 'coil_sensitivity'))
-    if shepp_logan_config is not None and data_type != 'shepp-logan':
-        raise ValueError('shepp_logan_config is only valid for shepp-logan data.')
-    if from_image_config is not None and data_type != 'from_image':
-        raise ValueError('from_image_config is only valid for from_image data.')
+def _load_real_data_config(root, data_type, *, real_data_config,
+                           ismrmrd_reader_config, polaris_config, physio_config):
+    """Load the reader and sensor files selected from config/real_data."""
+    cfg = {}
     saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
     ismrmrd_reader_data = data_type in ISMRMRD_READER_DATA_TYPES
     if real_data_config is not None and not saec_data:
@@ -489,68 +544,114 @@ def load_config(*, data_type, reconstruction_config, coil_sensitivity_config,
     if generic_physio_data:
         cfg.update(_load_toml_flat(
             physio_config if physio_config is not None else root / 'real_data' / f"{data_type.split('-', 1)[1]}.toml", 'physio'))
+    return cfg
+
+
+def _load_synthetic_data_config(data_type, *, shepp_logan_config, from_image_config):
+    """Load the selected source from config/synthetic_data."""
+    cfg = {}
     if data_type in SYNTHETIC_DATA_TYPES:
         path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
         if path is None:
             raise ValueError(f'{data_type} requires its source configuration file.')
         cfg.update(_load_toml_flat(path, data_type))
+    return cfg
+
+
+def _load_source_config(root, data_type, *, shepp_logan_config, from_image_config,
+                        real_data_config, ismrmrd_reader_config, polaris_config, physio_config):
+    """Select source files and reject configuration paths for other data types."""
+    if shepp_logan_config is not None and data_type != 'shepp-logan':
+        raise ValueError('shepp_logan_config is only valid for shepp-logan data.')
+    if from_image_config is not None and data_type != 'from_image':
+        raise ValueError('from_image_config is only valid for from_image data.')
+    cfg = _load_real_data_config(
+        root, data_type, real_data_config=real_data_config,
+        ismrmrd_reader_config=ismrmrd_reader_config,
+        polaris_config=polaris_config, physio_config=physio_config)
+    cfg.update(_load_synthetic_data_config(
+        data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config))
+    return cfg
+
+
+def _load_sampling_simulation_config(root, data_type, sampling_config, overrides):
+    """Use recorded sampling by default for real data."""
+    cfg = {}
     if sampling_config is not None:
         cfg.update(_load_toml_flat(sampling_config, 'sampling'))
     elif data_type in REAL_DATA_TYPES and (overrides or {}).get('kspace_sampling_type', 'from-data') == 'from-data':
         cfg.update(_load_toml_flat(root / 'sampling_simulation/from_data.toml', 'sampling'))
+    return cfg
+
+
+def _load_motion_simulation_config(root, data_type, motion_simulation_config):
+    """Keep recorded motion by default for real data."""
+    cfg = {}
     if motion_simulation_config is not None:
         cfg.update(_load_toml_flat(motion_simulation_config, 'motion'))
     elif data_type in REAL_DATA_TYPES:
         cfg.update(_load_toml_flat(root / 'motion_simulation/as_is.toml', 'motion'))
-    _apply_overrides(cfg, overrides, _OVERRIDE_KEYS)
-    _require(cfg, {'kspace_sampling_type'}, 'sampling')
+    return cfg
+
+
+def _validate_synthetic_data_settings(cfg):
+    """Reject synthetic source settings belonging to a different data type."""
+    data_type = cfg['data_type']
     source_only = (_SHEPP_KEYS | _IMAGE_KEYS) - {'data_dimension'}
     permitted_source = _SHEPP_KEYS if data_type == 'shepp-logan' else _IMAGE_KEYS if data_type == 'from_image' else set()
     misplaced = (cfg.keys() & source_only) - permitted_source
     if misplaced:
         raise ValueError(f'Source settings incompatible with {data_type}: {sorted(misplaced)}.')
+
+
+def _validate_known_source_size(cfg):
+    """Check dependent limits when source dimensions are known before loading data."""
+    if cfg['data_type'] != 'shepp-logan':
+        return
+    spatial = [cfg['N_SheppLogan'], cfg['N_SheppLogan']]
+    if cfg['data_dimension'] == '3D':
+        spatial.append(cfg['Nz_SheppLogan'])
+    params = SimpleNamespace(**cfg)
+    validate_reconstruction_size(params, spatial)
+    validate_calibration_size(params, spatial, has_reference=False)
+    readouts = validate_sampling_size(params, cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
+    validate_motion_readout_count(params, readouts)
+
+
+def load_config(*, data_type, reconstruction_config,
+                shepp_logan_config=None, from_image_config=None, real_data_config=None,
+                ismrmrd_reader_config=None, polaris_config=None, physio_config=None, sampling_config=None,
+                motion_simulation_config=None, overrides=None):
+    """Load file-owned settings, apply overrides, then validate dependent sections."""
+    _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
+    root = Path(__file__).resolve().parents[2] / 'config'
+    cfg = _load_toml_flat(root / 'general.toml', 'general')
+    cfg['data_type'] = data_type
+    cfg.update(_load_toml_flat(reconstruction_config, 'reconstruction'))
+    _require(cfg, {'coil_sensitivity_config'}, 'reconstruction')
+    csm_method = cfg['coil_sensitivity_config']
+    csm_files = {'espirit': 'espirit.toml', 'odille-spline': 'odille_spline.toml'}
+    if not isinstance(csm_method, str) or csm_method not in csm_files:
+        raise ValueError('coil_sensitivity_config must be espirit or odille-spline.')
+    cfg.update(_load_toml_flat(root / 'coil_sensitivity' / csm_files[csm_method], 'coil_sensitivity'))
+    cfg.update(_load_source_config(
+        root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
+        real_data_config=real_data_config, ismrmrd_reader_config=ismrmrd_reader_config,
+        polaris_config=polaris_config, physio_config=physio_config))
+    cfg.update(_load_sampling_simulation_config(root, data_type, sampling_config, overrides))
+    cfg.update(_load_motion_simulation_config(root, data_type, motion_simulation_config))
+
+    _apply_overrides(cfg, overrides, _OVERRIDE_KEYS)
+    _require(cfg, {'kspace_sampling_type'}, 'sampling')
+    _validate_synthetic_data_settings(cfg)
     _validate_general(cfg)
-    if saec_data:
-        _validate_real_data(cfg)
-    elif cfg.keys() & _REAL_DATA_KEYS:
-        raise ValueError(f'Real-data settings incompatible with {data_type}: {sorted(cfg.keys() & _REAL_DATA_KEYS)}.')
-    if ismrmrd_reader_data:
-        _require(cfg, _ISMRMRD_READER_KEYS, 'ISMRMRD-reader')
-        if type(cfg['print_raw_calibration_lines']) is not bool:
-            raise ValueError('print_raw_calibration_lines must be a boolean.')
-    elif cfg.keys() & _ISMRMRD_READER_KEYS:
-        raise ValueError(f'ISMRMRD-reader settings incompatible with {data_type}: {sorted(cfg.keys() & _ISMRMRD_READER_KEYS)}.')
-    if polaris_data:
-        _require(cfg, _POLARIS_KEYS, 'Polaris')
-        _choice(cfg['polaris_channel_mode'], 'polaris_channel_mode', {'all', 'largest-amplitude'})
-    elif cfg.keys() & _POLARIS_KEYS:
-        raise ValueError(f'Polaris settings incompatible with {data_type}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
-    if polaris_data or generic_physio_data:
-        _require(cfg, _PHYSIO_CLOCK_KEYS, 'physiological sensor')
-        cfg['physio_clock_drift_seconds'] = float(_number(
-            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
-    elif saec_data:
-        # SAEC uses its Siemens stop trigger; retain zero for the shared preparer.
-        shift = _number(cfg.get('physio_clock_drift_seconds', 0.0), 'physio_clock_drift_seconds')
-        if shift != 0:
-            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
-        cfg['physio_clock_drift_seconds'] = 0.0
-    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
-        raise ValueError(f'Physiological clock settings incompatible with {data_type}.')
+    _validate_real_data(cfg)
     _validate_csm(cfg)
     _validate_source(cfg)
     _validate_sampling(cfg)
     _validate_motion(cfg)
     _validate_reconstruction(cfg)
-    if data_type == 'shepp-logan':
-        spatial = [cfg['N_SheppLogan'], cfg['N_SheppLogan']]
-        if cfg['data_dimension'] == '3D':
-            spatial.append(cfg['Nz_SheppLogan'])
-        params = SimpleNamespace(**cfg)
-        validate_reconstruction_size(params, spatial)
-        validate_calibration_size(params, spatial, has_reference=False)
-        readouts = validate_sampling_size(params, cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
-        validate_motion_readout_count(params, readouts)
+    _validate_known_source_size(cfg)
     _apply_notebook_logging(cfg, overrides)
     return SimpleNamespace(**cfg)
 

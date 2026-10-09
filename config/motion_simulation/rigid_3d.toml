@@ -3,6 +3,9 @@ include = "common/rigid_3d_common.toml"
 # Dimensionality required by this motion simulation file.
 motion_simulation_config_dimension = "3D"
 # Smooth rigid-motion events over the acquisition.
+# Requires motion_simulation_config_dimension matching the input data and the
+# shared parameters supplied by include above; change the included file when changing models.
+# Additionally requires num_motion_events and motion_tau; omit both for "rigid-per-shot".
 simulated_motion_type = "rigid-realistic"
 # Number of smooth motion events across the acquisition.
 num_motion_events = 3

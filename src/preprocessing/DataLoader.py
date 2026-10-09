@@ -77,12 +77,12 @@ class DataLoader:
         self.t_device = t_device
         self.filename = filename
         self.raw_data_preparer = None
+        self.realworld_h5_path = None
         self.rawdata_filenames = None
         self.siemens_filenames = None
         self.slice_idx = slice_idx
         if hasattr(params, 'run_folder'):
-            unit = 'volume_001' if params.data_dimension == '3D' else f'slice_{(slice_idx or 0) + 1:03d}'
-            bind_output_paths(params, Path(params.run_folder) / 'reconstructions' / unit)
+            bind_output_paths(params, Path(params.run_folder))
         self.motion_plot_context = None
         self._motion_curve_for_binning = None
         self._motion_plot_kwargs = {}
@@ -141,8 +141,7 @@ class DataLoader:
         self._source_data_loaded = True
         return self
 
-    def run_slice_pipeline(self, slice_idx=None, *, output_folder=None):
-        """Prepare a slice, optionally routing all outputs to a caller-owned folder."""
+    def run_slice_pipeline(self, slice_idx=None):
         if not self._source_data_loaded:
             raise RuntimeError("DataLoader.run_slice_pipeline() requires load_data() to be called first.")
         if self._slice_pipeline_has_run:
@@ -160,9 +159,7 @@ class DataLoader:
                     "slice_idx must be specified explicitly."
                 )
         if slice_idx is not None:
-            self._select_loaded_slice(slice_idx, output_folder=output_folder)
-        elif output_folder is not None:
-            bind_output_paths(self.params, output_folder)
+            self._select_loaded_slice(slice_idx)
         if self.params.data_dimension == "2D" and int(self.Nz) != 1:
             raise ValueError(
                 f"DataLoader.run_slice_pipeline() requires exactly one 2D slice, "
@@ -237,8 +234,12 @@ class DataLoader:
             self.kspace, reference_kspace=self.reference_kspace,
         )
         self.grics_reference_image = getattr(calculator, "grics_reference_image", None)
-        img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1))
-        self.image_ground_truth = torch.sum(img_cplx * self.smaps.unsqueeze(1).conj(), dim=0).to(self.t_device)
+        averaged_kspace = torch.mean(self.kspace, dim=1)
+        img_cplx = ifftnc(averaged_kspace, dims=(-3, -2, -1))
+        image_ground_truth = torch.sum(img_cplx * self.smaps.conj(), dim=0)
+        if self.params.data_dimension == "2D":
+            image_ground_truth = image_ground_truth.squeeze(-1)
+        self.image_ground_truth = image_ground_truth.to(self.t_device)
         del img_cplx
 
     def _prepare_motion_simulator_inputs(self):
@@ -404,7 +405,6 @@ class DataLoader:
         self.kspace = self.kspace / self.kspace_scale
         if self.reference_kspace is not None:
             self.reference_kspace = self.reference_kspace / self.kspace_scale
-        print(f"[DataLoader] k-space normalized ({self.params.kspace_norm_mode}), "f"scale={self.kspace_scale:.6e}")
 
     def _save_initial_data(self):
         folder = self.params.initial_data_folder
@@ -415,10 +415,10 @@ class DataLoader:
         flip_for_display = self.params.flip_for_display
 
         if (self._has_simulated_motion() and hasattr(self, "image_ground_truth") and self.image_ground_truth is not None):
-            show_and_save_image(self.image_ground_truth[0], "image_ground_truth", folder,
+            show_and_save_image(self.image_ground_truth, "image_ground_truth", folder,
                 flip_for_display=flip_for_display, jupyter_display=False)
         if hasattr(self, "image_no_moco") and self.image_no_moco is not None:
-            show_and_save_image(self.image_no_moco[0], "image_corrupted", folder,
+            show_and_save_image(self.image_no_moco, "image_corrupted", folder,
                 flip_for_display=flip_for_display, jupyter_display=False)
 
         if (hasattr(self, "alpha_maps_true") and self.alpha_maps_true is not None
@@ -426,7 +426,7 @@ class DataLoader:
             and self.alpha_maps_true.shape[0] >= 2):
 
             scale = (self.motion_plot_context or {}).get("alpha_visual_scale", None)
-            save_nonrigid_alpha_plots(self.alpha_maps_true[..., 0], self.image_ground_truth[0],
+            save_nonrigid_alpha_plots(self.alpha_maps_true[..., 0], self.image_ground_truth,
                 "simulated_input", folder, flip_vertical=flip_for_display,
                 abs_max_x=None if scale is None else scale.get("alpha_abs_max_x"),
                 abs_max_y=None if scale is None else scale.get("alpha_abs_max_y"),
@@ -641,6 +641,7 @@ class DataLoader:
             # From-data per-shot simulation uses one state per recorded readout.
             requested_states = self.params.N_motion_states
             self.params.N_motion_states = ky_idx.numel()
+            self.params._motion_states_per_level = [self.params.N_motion_states] * len(self.params.ResolutionLevels)
             if requested_states != self.params.N_motion_states:
                 print(f"[config] Per-shot simulation: N_motion_states changed from {requested_states} to {self.params.N_motion_states} (recorded readout count).", flush=True)
         self._motion_curve_for_binning = (motion_data if self.params.simulated_motion_type == "as-it-is" else None)
@@ -768,7 +769,7 @@ class DataLoader:
         kz_all = self._source_idx_kz.reshape(-1)
         self._configure_realworld_motion_inputs(self._source_motion_data, kz_all=kz_all)
 
-    def _select_loaded_slice(self, slice_idx, *, output_folder=None):
+    def _select_loaded_slice(self, slice_idx):
         if self.params.data_dimension == "3D":
             raise ValueError("slice_idx must not be provided when data_dimension='3D'.")
         if self._source_kspace is None:
@@ -787,8 +788,9 @@ class DataLoader:
 
         self.slice_idx = slice_idx
         if hasattr(self.params, 'run_folder'):
-            folder = (Path(output_folder) if output_folder is not None else
-                      Path(self.params.run_folder) / 'reconstructions' / f'slice_{slice_idx + 1:03d}')
+            folder = Path(self.params.run_folder)
+            if getattr(self.params, '_output_unit_count', 1) > 1:
+                folder /= f'slice_{slice_idx + 1:03d}'
             bind_output_paths(self.params, folder)
             record_reconstruction(self.params, inputs=self.filename, source_slice_index=slice_idx)
         self.kspace = self._source_kspace[..., slice_idx:slice_idx + 1]
@@ -827,6 +829,14 @@ class DataLoader:
             physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
             polaris_channel_mode=(self.params.polaris_channel_mode
                                   if self.params.data_type.endswith("-polaris") else None),
+            polaris_lowpass_cutoff_hz=(self.params.polaris_lowpass_cutoff_hz
+                                       if self.params.data_type.endswith("-polaris") else None),
+            saec_belt_lowpass_cutoff_hz=(self.params.saec_belt_lowpass_cutoff_hz
+                                         if self.params.data_type.endswith("-saec") else None),
+            saec_marmot_lowpass_cutoff_hz=(self.params.saec_marmot_lowpass_cutoff_hz
+                                            if self.params.data_type.endswith("-saec") else None),
+            saec_marmot_highpass_cutoff_hz=(self.params.saec_marmot_highpass_cutoff_hz
+                                             if self.params.data_type.endswith("-saec") else None),
             physiological_format={
                 "polaris": "PolarisInfraredTracker", "saec": "SAEC",
                 "physio_text": "physio_text", "physio_array": "physio_array",
@@ -840,6 +850,7 @@ class DataLoader:
         data = preparer.read_data(
             cache_h5=self.params.cache_preprocessed_data, cache_root=self.params.cache_root,
             remove_temporary_data_after_run=self.params.remove_temporary_data_after_run)
+        self.realworld_h5_path = data.get("realworld_h5_path")
         self._ingest_realworld_arrays(data, slice_idx=slice_idx)
 
 
@@ -901,9 +912,9 @@ class DataLoader:
             )
             img_vec = solver._solve_cg(b.flatten(), x0=x0.flatten(), max_iter=80, tol=1e-6)
             if self.Nz > 1:
-                img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny, self.Nz)
+                img_back = img_vec.reshape(self.Nx, self.Ny, self.Nz)
             else:
-                img_back = img_vec.reshape(self.params.Nex, self.Nx, self.Ny)
+                img_back = img_vec.reshape(self.Nx, self.Ny)
 
             if tuple(img_back.shape) == tuple(self.image_ground_truth.shape):
                 num = torch.linalg.norm((img_back - self.image_ground_truth).flatten())
@@ -913,7 +924,7 @@ class DataLoader:
             # Running the check and saving its recovered image are independent options.
             if self.params.save_debug_plots:
                 show_and_save_image(
-                    img_back[0], "gn_input_consistency_recovered_image", str(Path(self.params.debug_folder) / "consistency_checks"),
+                    img_back, "gn_input_consistency_recovered_image", str(Path(self.params.debug_folder) / "consistency_checks"),
                     flip_for_display=self.params.flip_for_display,
                 )
 

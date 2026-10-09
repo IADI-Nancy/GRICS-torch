@@ -38,6 +38,7 @@ import torch
 from pipelines.siemens_breast_T2 import grics_zero_fill_shapes, zero_fill_loaded_reconstruction
 from src.preprocessing.DataLoader import DataLoader
 from src.preprocessing.RawDataPreparer import RawDataPreparer
+from src.preprocessing.physiological_data.normalization import normalize_physiological_motion_input
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import bind_output_paths, managed_execution, record_reconstruction, write_json
 from src.runtime.runtime_config import load_config
@@ -195,6 +196,7 @@ def apply_clock_correction(data, original_sync, initial_correction, correction):
         bounds='autoregression', physio_clock_drift_seconds=correction)
     preparer = data.raw_data_preparer
     motion = preparer.physiological_reader.prepare_motion(aligned)
+    motion, _, _ = normalize_physiological_motion_input(motion)
     slices = original_sync['slice_indices']
     # Match RawDataPreparer's per-slice acquisition ordering before binning.
     motion = np.stack([motion[slices == index] for index in range(int(data.Nz))])
@@ -221,9 +223,11 @@ def reconstruct_slice(slice_idx):
     data.params.save_reconstruction_logs = True
     data.params.save_reconstruction_tensors = True
     folder = EVALUATION_FOLDER / f'slice_{slice_idx + 1:03d}'
+    data.params.run_folder = str(folder)
+    data.params._output_unit_count = 1
     bind_output_paths(data.params, folder)
     started = time.perf_counter()
-    data.run_slice_pipeline(slice_idx=slice_idx, output_folder=folder)
+    data.run_slice_pipeline(slice_idx=slice_idx)
     reconstructor = JointReconstructor(data.kspace, data.smaps, data.sampling_idx,
         motion_signal=data.motion_signal, params=data.params, kspace_scale=data.kspace_scale,
         motion_plot_context=data.motion_plot_context)
@@ -232,15 +236,13 @@ def reconstruct_slice(slice_idx):
     results_folder = Path(data.params.results_folder)
     results_folder.mkdir(parents=True, exist_ok=True)
     torch.save(image.detach().cpu(), results_folder / 'image_reconstructed.pt')
-    show_and_save_image(image.mean(dim=0), 'image_reconstructed', str(results_folder),
+    show_and_save_image(image, 'image_reconstructed', str(results_folder),
                         flip_for_display=getattr(data.params, 'flip_for_display', False))
     uncorrected = data.image_no_moco.detach().cpu() * data.kspace_scale
-    if uncorrected.ndim == 4 and uncorrected.shape[-1] == 1:
-        uncorrected = uncorrected[..., 0]
     torch.save(uncorrected, results_folder / 'image_no_motion_correction.pt')
-    # Native reconstruction grid, magnitude of complex repetition mean, without
+    # Native reconstruction grid, magnitude of the shared image, without
     # breast-specific reference normalization or display interpolation.
-    score = float(sharpness_index(image.mean(dim=0).abs()).item())
+    score = float(sharpness_index(image.abs()).item())
     if not math.isfinite(score):
         raise ValueError(f'Nonfinite sharpness for slice {slice_idx + 1}.')
     result = dict(slice_idx=slice_idx, slice_number=slice_idx + 1, sharpness_index=score,
@@ -249,12 +251,12 @@ def reconstruct_slice(slice_idx):
     if FINAL_EVALUATION:
         target, encoded = LOADED_DATA.zero_fill_shapes
         exported = zero_fill_loaded_reconstruction(image, target, encoded)
-        dicom_path = Path(data.params.run_folder) / 'exports/dicom' / f'slice_{slice_idx + 1:03d}.dcm'
+        dicom_path = Path(LOADED_DATA.params.run_folder) / 'exports/dicom' / f'slice_{slice_idx + 1:03d}.dcm'
         write_reconstruction_dicom(exported, dicom_path, raw_data=LOADED_DATA,
             slice_index=slice_idx, series_description='GRICS Vienna T2 RESEARCH ONLY',
             images_in_acquisition=int(LOADED_DATA.Nz), series_number=LOADED_DATA.export_series_number,
             reference_dicom_path=LOADED_DATA.export_reference, **LOADED_DATA.export_uids)
-        result['dicom_file'] = str(dicom_path.relative_to(data.params.run_folder))
+        result['dicom_file'] = str(dicom_path.relative_to(LOADED_DATA.params.run_folder))
     record_reconstruction(data.params, status='complete', **result)
     return result
 
@@ -299,11 +301,11 @@ def save_comparisons(root, nslices, correction, *, flip_for_display=False,
         folder = root / 'comparisons' / slice_name
         folder.mkdir(parents=True, exist_ok=True)
         torch.save(images, folder / 'images.pt')
-        magnitudes = [image.mean(dim=0).abs().numpy() for image in images.values()]
+        magnitudes = [image.abs().numpy() for image in images.values()]
         # One common display window for all three images of this slice.
         vmax = float(np.percentile(np.stack(magnitudes), 99))
         vmax = max(vmax, np.finfo(float).eps)
-        scores = {key: float(sharpness_index(image.mean(dim=0).abs()))
+        scores = {key: float(sharpness_index(image.abs()))
                   for key, image in images.items()}
         titles = ['No motion correction', 'Motion correction, clock = 0 s',
                   f'Motion correction, clock = {correction:+.4f} s']
@@ -342,7 +344,7 @@ def main(argv=None):
         clock_optimization_enabled=args.clock_optimization,
         optimization_settings=optimizer_options(args, bounds) if args.clock_optimization else None,
         objective='maximize mean per-slice sharpness index (minimize its negative)',
-        sharpness_representation='magnitude of repetition mean on native grid; article pmode=3',
+        sharpness_representation='magnitude of shared image on native grid; article pmode=3',
         max_workers=min(args.max_workers, int(data.Nz)) if args.max_workers is not None else int(data.Nz))
     outputs.flush()
     trials = []

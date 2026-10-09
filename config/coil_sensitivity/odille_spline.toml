@@ -1,5 +1,8 @@
 [coil_sensitivity]
 # Estimate sensitivity maps with the Odille spline method.
+# "odille-spline" requires spline_magnitude_smoothing, spline_phase_smoothing and coil_sensitivity_eps.
+# Omit espirit_calibration_width, espirit_kernel_width and espirit_max_iter.
+# Switch the whole coil-sensitivity config when changing methods.
 coil_sensitivity_method = "odille-spline"
 # Smoothing weight for coil-magnitude maps.
 spline_magnitude_smoothing = 1000.0

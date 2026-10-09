@@ -2,5 +2,9 @@
 # Use all tracked tool axes, or only the axis with the largest amplitude.
 polaris_channel_mode = "all"
 
+# Zero-phase Butterworth low-pass cutoff in Hz. It must be below the tracking
+# sampling Nyquist frequency; validation occurs when the recording is read.
+polaris_lowpass_cutoff_hz = 1.0
+
 # Timestamp shift after sequence-end alignment, in seconds; positive moves later.
 physio_clock_drift_seconds = 0.0

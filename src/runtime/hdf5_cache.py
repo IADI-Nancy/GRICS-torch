@@ -10,6 +10,7 @@ def write_tree(group, values):
         if isinstance(value, dict):
             node = group.create_group(name)
             node.attrs['kind'] = 'dict'
+            # Keep original dictionary keys; HDF5 node names must be strings.
             node.attrs['keys'] = json.dumps(list(value))
             write_tree(node, value)
         elif isinstance(value, (list, tuple)):
@@ -23,6 +24,7 @@ def write_tree(group, values):
             group.create_dataset(name, data=value, dtype=h5py.string_dtype('utf-8'))
         else:
             if hasattr(value, 'detach'):
+                # Store tensor values as CPU arrays without the computation graph.
                 value = value.detach().cpu().numpy()
             group.create_dataset(name, data=value)
 
@@ -36,12 +38,14 @@ def read_tree(group):
             if kind == 'none':
                 value = None
             elif kind == 'list':
+                # Restore numeric order; both lists and tuples are loaded as lists.
                 value = [content[str(i)] for i in range(len(content))]
             else:
                 value = {key: content[str(key)] for key in json.loads(node.attrs['keys'])}
         else:
             value = node.asstr()[()] if h5py.check_string_dtype(node.dtype) else node[()]
             if isinstance(value, np.generic):
+                # Convert NumPy scalars to ordinary Python values.
                 value = value.item()
         result[name] = value
     return result

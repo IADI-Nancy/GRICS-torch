@@ -1,4 +1,6 @@
 [motion]
 # Use the physiological trace belonging to the original real-data acquisition.
 # Requires from-data sampling; reordered acquisitions require simulated motion.
+# Omit synthetic motion parameters, motion_simulation_config_dimension and
+# check_simulated_motion_consistency; the loader rejects them for "as-it-is".
 simulated_motion_type = "as-it-is"

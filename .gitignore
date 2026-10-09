@@ -3,7 +3,6 @@
 *.pt
 __pycache__/
 
-tests/artifacts/
 bart-*
 .env
 .jupyter_local/
@@ -12,10 +11,12 @@ bart-*
 latex/
 .conda-latex/
 tests/*
-!tests/test_physio_clock_correction.py
-!tests/test_vienna_clock_optimization.py
+!tests/run_real_2d_subject.py
+!tests/run_real_3d_subject.py
+
 data/*
 !data/demo_motion-free_breast_image.png
+
 demos_data/*.h5
 runs/
 *.orig
