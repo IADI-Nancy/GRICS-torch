@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """All-slice Vienna T2/Polaris reconstruction with sharpness-based clock fitting.
 
-python pipelines/vienna_T2.py \\
-  ../data/GRICS-torch/Vienna/raw_data/meas_MID01133_FID01857_AX_T2_TSE_HR_2NEX_SAT_MOTION.dat \\
+python pipelines/vienna_T2.py \
+  ../data/GRICS-torch/Vienna/raw_data/meas_MID01133_FID01857_AX_T2_TSE_HR_2NEX_SAT_MOTION.dat \
   ../data/GRICS-torch/Vienna/motion/R1.tsv
 """
 
@@ -162,7 +162,6 @@ def load_all_slices(args):
     params = load_config(
         data_type='siemens-polaris' if args.raw_data_file.suffix.lower() == '.dat' else 'ismrmrd-polaris',
         reconstruction_config=args.reconstruction_config,
-        coil_sensitivity_config=REPO_ROOT / 'config/coil_sensitivity/odille_spline.toml',
         ismrmrd_reader_config=args.reader_config,
         polaris_config=REPO_ROOT / 'config/real_data/polaris.toml', overrides=overrides)
     if params.reconstruction_dimension != '2D':
