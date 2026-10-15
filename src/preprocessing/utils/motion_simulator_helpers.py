@@ -1,7 +1,9 @@
+"""Configuration, sampling, and trajectory helpers used by MotionSimulator."""
+
 import torch
 import numpy as np
 
-from src.preprocessing.Sampling import Sampling
+from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 
 
 def require_motion_param(params, name):
@@ -141,7 +143,7 @@ def compress_consecutive_rigid_states(alpha, ky_idx, nex_idx, *, device, Nx,
 
     compressed_alpha = alpha[:, new_state]
     compressed_centers = None if centers is None else centers[:, new_state]
-    sampling_idx = Sampling.build_sampling_per_nex_per_motion(binned_ky, device,
+    sampling_idx = MotionSamplingPreparer.build_sampling_per_nex_per_motion(binned_ky, device,
         Nx, Ny, Nz=Nz, binned_kz_indices=binned_kz,)
     return sampling_idx, compressed_alpha, compressed_centers
 

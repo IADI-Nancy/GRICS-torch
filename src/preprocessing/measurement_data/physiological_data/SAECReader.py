@@ -19,6 +19,20 @@ ready for further analysis or integration with MRI data.
 
 class SAECReader:
 
+    supports_clock_correction = False
+    already_synchronized = False
+
+    @property
+    def cache_parameters(self):
+        return {"format": "SAEC", "sensor_type": self.sensor_type,
+                "belt_lowpass_cutoff_hz": self.belt_lowpass_cutoff_hz,
+                "marmot_lowpass_cutoff_hz": self.marmot_lowpass_cutoff_hz,
+                "marmot_highpass_cutoff_hz": self.marmot_highpass_cutoff_hz}
+
+    @staticmethod
+    def source_files(filename):
+        return [filename]
+
     def __init__(self, sensor_type="BELT", *, belt_lowpass_cutoff_hz,
                  marmot_lowpass_cutoff_hz, marmot_highpass_cutoff_hz):
         self.sensor_type = sensor_type

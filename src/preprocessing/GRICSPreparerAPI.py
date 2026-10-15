@@ -1,6 +1,7 @@
 """High-level preparation of motion-binned GRICS acquisition metadata."""
 
 import copy
+from numbers import Integral
 from os import PathLike
 from types import SimpleNamespace
 
@@ -11,13 +12,19 @@ from typing import Any, Mapping
 
 import torch
 
-from src.preprocessing.MotionBinner import MotionBinner
-from src.preprocessing.Sampling import Sampling
+from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
 
 
 TensorLike = torch.Tensor | np.ndarray | list | tuple
+
+
+def _readout_indices(values: TensorLike, name: str, device: torch.device) -> torch.Tensor:
+    indices = torch.as_tensor(values, device=device)
+    if indices.dtype not in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64):
+        raise ValueError(f"{name} must contain integer indices.")
+    return indices.to(torch.int64).reshape(-1)
 
 
 @dataclass(frozen=True)
@@ -59,7 +66,7 @@ class GRICSPreparerAPI:
             overrides=overrides,
         )
         if self.params.kspace_sampling_type != "from-data" or self.params.simulated_motion_type != "as-it-is":
-            raise ValueError("GRICSPreparerAPI bins recorded metadata only; use DataLoader for simulated sampling or motion.")
+            raise ValueError("GRICSPreparerAPI bins recorded metadata only; use DataPreparer for simulated sampling or motion.")
         self.sp_device, self.device = initialize_runtime(self.params)
 
     def prepare_acquisition(
@@ -94,17 +101,33 @@ class GRICSPreparerAPI:
         motion = torch.as_tensor(motion_data, device=self.device)
         if motion.ndim == 1:
             motion = motion.unsqueeze(-1)
-        ky = torch.as_tensor(ky_indices, device=self.device, dtype=torch.int64).reshape(-1)
-        nex = torch.as_tensor(nex_indices, device=self.device, dtype=torch.int64).reshape(-1)
-        kz = None if kz_indices is None else torch.as_tensor(
-            kz_indices, device=self.device, dtype=torch.int64,
-        ).reshape(-1)
+        if motion.ndim != 2:
+            raise ValueError("motion_data must have shape [Nreadout] or [Nreadout, Nsensor].")
+        if torch.is_complex(motion) or motion.dtype == torch.bool:
+            raise ValueError("motion_data must contain real numeric values.")
+        if not torch.is_floating_point(motion):
+            motion = motion.to(torch.get_default_dtype())
+        if not torch.isfinite(motion).all():
+            raise ValueError("motion_data must contain finite values.")
+        ky = _readout_indices(ky_indices, "ky_indices", self.device)
+        nex = _readout_indices(nex_indices, "nex_indices", self.device)
+        kz = None if kz_indices is None else _readout_indices(kz_indices, "kz_indices", self.device)
+        if any(isinstance(size, bool) or not isinstance(size, Integral) or size < 1 for size in (Nx, Ny, Nz)):
+            raise ValueError("Nx, Ny, and Nz must be positive integers.")
         if ky.numel() == 0:
             raise ValueError("At least one readout is required.")
         if motion.shape[0] != ky.numel() or nex.numel() != ky.numel():
             raise ValueError("motion_data, ky_indices, and nex_indices must describe the same readouts.")
         if kz is not None and kz.numel() != ky.numel():
             raise ValueError("kz_indices must describe the same readouts as ky_indices.")
+        if torch.any((ky < 0) | (ky >= Ny)):
+            raise ValueError("ky_indices must lie in [0, Ny).")
+        if torch.any(nex < 0):
+            raise ValueError("nex_indices must be nonnegative.")
+        if Nz > 1 and kz is None:
+            raise ValueError("kz_indices are required when Nz > 1.")
+        if kz is not None and torch.any((kz < 0) | (kz >= Nz)):
+            raise ValueError("kz_indices must lie in [0, Nz).")
 
         params = copy.copy(self.params)
         params.Nex = int(nex.max().item()) + 1
@@ -123,28 +146,12 @@ class GRICSPreparerAPI:
                 torch.manual_seed(seed)
                 if self.device.type == "cuda":
                     torch.cuda.manual_seed_all(seed)
-            _, _, motion_signal, labels, chronological_ky, chronological_kz, chronological_nex = (
-                MotionBinner.bin_motion(
-                    motion, ky, kz, nex, self.device, params,
-                    y_limits=y_limits, return_debug_data=True, kspace=kspace,
-                )
-            )
-
-        sampling_indices = {}
-        for name, selection in masks.items():
-            binned_ky = [[
-                ky[(nex == excitation) & (labels == state) & selection]
-                for state in range(params.N_motion_states)
-            ] for excitation in range(params.Nex)]
-            binned_kz = None if kz is None else [[
-                kz[(nex == excitation) & (labels == state) & selection]
-                for state in range(params.N_motion_states)
-            ] for excitation in range(params.Nex)]
-            sampling_indices[name] = Sampling.build_sampling_per_nex_per_motion(
-                binned_ky, self.device, Nx, Ny, Nz=Nz, binned_kz_indices=binned_kz,
+            prepared = MotionSamplingPreparer.prepare(
+                motion, ky, kz, nex, self.device, params, Nx, Ny, Nz=Nz,
+                kspace=kspace, sampling_masks=masks, y_limits=y_limits,
             )
 
         return PreparedGRICSAcquisition(
-            params, motion_signal, labels, sampling_indices,
-            chronological_ky, chronological_kz, chronological_nex,
+            params, prepared.motion_signal, prepared.motion_labels, prepared.sampling_indices,
+            prepared.chronological_ky, prepared.chronological_kz, prepared.chronological_nex,
         )

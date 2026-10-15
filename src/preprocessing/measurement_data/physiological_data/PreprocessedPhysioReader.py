@@ -4,6 +4,15 @@ import numpy as np
 
 
 class PreprocessedPhysioReader:
+    supports_clock_correction = True
+
+    @property
+    def cache_parameters(self):
+        return {"format": self.data_format}
+
+    def source_files(self, files):
+        return list(files) if self.data_format == "physio_array" else [files]
+
     def __init__(self, data_format):
         if data_format not in {'physio_text', 'physio_array'}:
             raise ValueError(f'Unsupported generic physiological format: {data_format!r}.')
@@ -100,7 +109,7 @@ class PreprocessedPhysioReader:
                     raise ValueError(f'Channel {index}: at least two strictly increasing timestamps are required.')
         self.metadata = {'physio_channels': [list(pair) for pair in pairs],
                          'already_synchronized': self.already_synchronized}
-        return times, values, None, 'raise'
+        return times, values, None, 'autoregression'
 
     @staticmethod
     def prepare_motion(interpolated):

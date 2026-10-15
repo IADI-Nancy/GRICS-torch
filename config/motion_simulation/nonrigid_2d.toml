@@ -8,10 +8,6 @@ motion_simulation_config_dimension = "2D"
 # Additionally requires nonrigid_motion_amplitude, nonrigid_resp_cycles_min and
 # nonrigid_resp_cycles_max; omit nonrigid_discrete_s_scale.
 simulated_motion_type = "non-rigid-realistic"
-# Run the simulated non-rigid reconstruction consistency check.
-# Required for non-rigid simulation even when false; omit for rigid or "as-it-is" motion.
-# Enabling this check requires no additional config parameters.
-check_simulated_motion_consistency = true
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 2.0
 # Inclusive range of random respiratory cycles over the full acquisition.

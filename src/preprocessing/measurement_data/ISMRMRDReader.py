@@ -31,6 +31,11 @@ def _is_parallel_calibration(acq):
     )
 
 class ISMRMRDReader:
+    """Decode one ISMRMRD acquisition into MRI tensors and acquisition metadata.
+
+    This reader handles ISMRMRD-specific mapping and readout oversampling removal.
+    It does not synchronize physiological signals or select reconstruction slices.
+    """
 
     def __init__(self, ismrmrd_file, device="cpu", print_raw_calibration_lines=False):
         self.ismrmrd_file = ismrmrd_file
@@ -238,18 +243,21 @@ class ISMRMRDReader:
 
 
     def read_data(self):
-        """Read MRI arrays and full-sequence times, without physiological processing.
+        """Read decoded MRI tensors and full-sequence acquisition metadata.
 
-        K-space is returned before readout oversampling removal. Acquisition
-        mapping and timestamps follow the existing scanner-reading implementation.
+        Readout oversampling is removed from imaging and reference k-space.
+        Physiological processing and slice selection are handled downstream.
         """
         (kspace, times, slices, ky, kz, nex, nex_source, nex_values,
          geometry) = self._extract_mri_data()
+        kspace = self._remove_oversampling(kspace)
+        reference_kspace = (None if self.reference_kspace is None
+                            else self._remove_oversampling(self.reference_kspace))
         return {
             "ismrmrd_header": self.ismrmrd_header,
             "kspace": kspace, "time_seconds": times, "slice_indices": slices,
             "idx_ky": ky, "idx_kz": kz, "idx_nex": nex,
             "nex_source": nex_source, "nex_values": nex_values,
-            "slice_geometry": geometry, "reference_kspace": self.reference_kspace,
+            "slice_geometry": geometry, "reference_kspace": reference_kspace,
             "uses_kz_as_volume_axis": self._raw_uses_kz_as_volume_axis,
         }

@@ -82,7 +82,7 @@ _SHEPP_KEYS = {'data_dimension', 'N_SheppLogan', 'Ncoils_SheppLogan', 'Nz_SheppL
                'SheppLoganFillFraction'}
 _IMAGE_KEYS = {'data_dimension', 'Ncoils_input', 'image_resize_factor'}
 _RIGID_GEOMETRY_KEYS = {'FoVxy_mm', 'FoVz_mm'}
-_MOTION_KEYS = {'motion_simulation_config_dimension', 'simulated_motion_type', 'check_simulated_motion_consistency'} | _RIGID_GEOMETRY_KEYS | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
+_MOTION_KEYS = {'motion_simulation_config_dimension', 'simulated_motion_type'} | _RIGID_GEOMETRY_KEYS | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
 _FILE_SCHEMAS = {
     'general': {'paths': _PATH_KEYS, 'runtime': _RUNTIME_KEYS,
                 'kspace_normalization': _NORMALIZATION_KEYS},
@@ -102,7 +102,7 @@ _OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS 
                   (_RECONSTRUCTION_KEYS - {'coil_sensitivity_config'}) | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
                   _MOTION_KEYS | _REAL_DATA_KEYS | _ISMRMRD_READER_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
 _BOOL_KEYS = {
-    'save_debug_plots', 'check_simulated_motion_consistency', 'use_deterministic_algorithms',
+    'save_debug_plots', 'use_deterministic_algorithms',
     'print_raw_calibration_lines', 'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
     'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
     'update_motion_on_final_iteration', 'gn_early_stopping',
@@ -356,8 +356,8 @@ def _validate_motion(cfg):
     if mode == 'as-it-is':
         if cfg['data_type'] not in REAL_DATA_TYPES or cfg['kspace_sampling_type'] != 'from-data':
             raise ValueError('as-it-is motion requires real data with from-data sampling; reordered data requires simulated motion.')
-        if supplied or 'motion_simulation_config_dimension' in cfg or 'check_simulated_motion_consistency' in cfg:
-            raise ValueError('as-it-is motion cannot have synthetic motion parameters or simulation diagnostics.')
+        if supplied or 'motion_simulation_config_dimension' in cfg:
+            raise ValueError('as-it-is motion cannot have synthetic motion parameters.')
         return
     _require(cfg, {'motion_simulation_config_dimension'}, 'motion')
     _choice(cfg['motion_simulation_config_dimension'], 'motion_simulation_config_dimension', {'2D', '3D'})
@@ -375,10 +375,7 @@ def _validate_motion(cfg):
     else:
         common = _NONRIGID_MOTION_KEYS - {'nonrigid_discrete_s_scale', 'nonrigid_motion_amplitude', 'nonrigid_resp_cycles_min', 'nonrigid_resp_cycles_max'}
         required = common | ({'nonrigid_discrete_s_scale'} if mode.endswith('-per-shot') else {'nonrigid_motion_amplitude', 'nonrigid_resp_cycles_min', 'nonrigid_resp_cycles_max'})
-        required |= {'check_simulated_motion_consistency'}
     irrelevant = supplied - required
-    if rigid and 'check_simulated_motion_consistency' in cfg:
-        raise ValueError('check_simulated_motion_consistency is only valid for non-rigid simulation.')
     if not rigid and cfg.keys() & _RIGID_GEOMETRY_KEYS:
         raise ValueError(f'Rigid-motion geometry is incompatible with {mode}: {sorted(cfg.keys() & _RIGID_GEOMETRY_KEYS)}.')
     if irrelevant:
@@ -392,9 +389,7 @@ def _validate_motion(cfg):
             else:
                 _number(cfg[key], key, minimum=None if key.startswith('max_center_') else 0)
     else:
-        if type(cfg['check_simulated_motion_consistency']) is not bool:
-            raise ValueError('check_simulated_motion_consistency must be a boolean.')
-        for key in required - {'check_simulated_motion_consistency'}:
+        for key in required:
             _number(cfg[key], key, minimum=-1 if key == 'nonrigid_diaphragm_level' else 0)
         for key in ('nonrigid_lateral_sigma_lr', 'nonrigid_lateral_sigma_ap', 'nonrigid_diaphragm_sharpness'):
             _number(cfg[key], key, positive=True)

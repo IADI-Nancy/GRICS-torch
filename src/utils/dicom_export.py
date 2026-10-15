@@ -32,7 +32,7 @@ def write_reconstruction_dicom(
     Write a single-frame DICOM file for a reconstructed MR image.
 
     Patient, study, scanner, sequence, and geometry fields are copied from the
-    raw-data ISMRMRD header when available. ``raw_data`` may be a DataLoader
+    raw-data ISMRMRD header when available. ``raw_data`` may be a DataPreparer
     instance produced by this repository; otherwise pass ``ismrmrd_file``.
 
     ``image`` must be a NumPy array or Torch tensor with shape ``[Nx, Ny]``.
@@ -91,7 +91,7 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
         raise ValueError('Volume DICOM export requires [Nx, Ny, Nz] with Nz > 1.')
     header = acquisition_header(raw_data)
     enc = header.encoding[0]
-    slab_geometries = getattr(raw_data, '_source_slice_geometry', None)
+    slab_geometries = getattr(raw_data, '_input_slice_geometry', None)
     if not slab_geometries:
         raise ValueError('3D DICOM export requires raw slab geometry; none was loaded. '
                          'Use raw input or preprocessed HDF5 containing slice_geometry and ismrmrd_header.')
@@ -117,7 +117,7 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     }
     # Keep the loaded source unmodified and reuse the existing 2D export path.
     volume_source = SimpleNamespace(ismrmrd_header=ismrmrd.xsd.ToXML(header),
-                                    _source_slice_geometry=geometries)
+                                    _input_slice_geometry=geometries)
     uids = {key: generate_uid() for key in
             ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
     paths = []
@@ -429,7 +429,7 @@ def _copy_geometry_fields(
 
 
 def _set_instance_number(ds: Any, raw_data: Any | None, geometry: Any, slice_index: int | None) -> None:
-    geometry_by_slice = getattr(raw_data, "_source_slice_geometry", None) if raw_data is not None else None
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None) if raw_data is not None else None
     current_location = _slice_location_from_geometry(geometry)
     if geometry_by_slice and current_location is not None:
         locations = []
@@ -460,7 +460,7 @@ def _set_slice_geometry_fields(ds: Any, header: Any, fov: Any, raw_data: Any | N
             patient_position = str(raw_patient_position).split(".")[-1]
     _set_if_present(ds, "PatientPosition", patient_position)
 
-    geometry_by_slice = getattr(raw_data, "_source_slice_geometry", None) if raw_data is not None else None
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None) if raw_data is not None else None
     spacing = _slice_spacing_from_geometry(geometry_by_slice)
     if spacing is not None:
         ds.SpacingBetweenSlices = float(spacing)
@@ -499,7 +499,7 @@ def _require_slice_geometry(raw_data: Any | None, slice_index: int | None) -> An
         raise ValueError("DICOM export requires raw_data with Siemens slice geometry.")
     if slice_index is None:
         raise ValueError("DICOM export requires slice_index so slice geometry can be selected.")
-    geometry_by_slice = getattr(raw_data, "_source_slice_geometry", None)
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None)
     if not geometry_by_slice:
         raise ValueError("DICOM export requires raw slice geometry; none was loaded from the raw data.")
     geometry = geometry_by_slice.get(int(slice_index))

@@ -1,64 +1,39 @@
-"""Prepare MRI and physiological recordings together, outside their readers."""
+"""Synchronize complete MRI acquisitions with physiological recordings."""
 
 import h5py
 import hashlib
 import json
-import warnings
 from pathlib import Path
 from src.runtime.data_cache import acquire_cached, cache_key
 from src.runtime.hdf5_cache import write_tree, read_tree
 import numpy as np
 import torch
 
-from src.preprocessing.ISMRMRDReader import ISMRMRDReader
-from src.preprocessing.physiological_data.SAECReader import SAECReader
-from src.preprocessing.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
-from src.preprocessing.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
-from src.preprocessing.physiological_data.normalization import normalize_physiological_motion_input
+from src.preprocessing.measurement_data.ISMRMRDReader import ISMRMRDReader
+from src.preprocessing.measurement_data.physiological_data.normalization import normalize_physiological_motion_input
 
 
 class RawDataPreparer:
-    """Coordinate reading, synchronization, slice grouping, and optional shared H5 caching.
+    """Prepare a complete MRI acquisition with synchronized physiological data.
 
-    polaris_channel_mode="all" uses tool Tx/Ty/Tz. "largest-amplitude" uses
-    the axis with greatest peak-to-peak range at full-sequence MRI readout times,
-    measured after low-pass filtering and before normalization. The caller selects the mode explicitly.
-    Timestamped physiological formats use the same synchronizer before slice selection.
-    ISMRMRDReader is responsible only for MRI acquisition reading and mapping.
+    This class delegates MRI decoding to ISMRMRDReader and sensor-data loading
+    and filtering to the provided physiological reader. RawDataPreparer then
+    aligns the sensor signals with the MRI timestamps, normalizes them, groups
+    motion and sampling data by slice, and optionally caches the complete result.
+    The separate InputDataLoader class selects a slice for reconstruction.
     """
 
-    def __init__(self, ismrmrd_file, physiological_file, *, physiological_format,
-                 sensor_type, device, print_raw_calibration_lines, polaris_channel_mode,
-                 physio_clock_drift_seconds=0.0, polaris_lowpass_cutoff_hz=None,
-                 saec_belt_lowpass_cutoff_hz=None, saec_marmot_lowpass_cutoff_hz=None,
-                 saec_marmot_highpass_cutoff_hz=None):
-        if physiological_format not in {"SAEC", "PolarisInfraredTracker", "physio_text", "physio_array"}:
-            raise ValueError("Unsupported physiological format.")
+    def __init__(self, ismrmrd_file, physiological_file, *, physiological_reader,
+                 device, print_raw_calibration_lines, physio_clock_drift_seconds=0.0):
         # Readers own format-specific processing; the logging flag affects only raw calibration messages.
         if isinstance(physio_clock_drift_seconds, bool) or not isinstance(physio_clock_drift_seconds, (int, float)) or not np.isfinite(physio_clock_drift_seconds):
             raise ValueError("physio_clock_drift_seconds must be a finite number.")
-        if physiological_format == "SAEC" and physio_clock_drift_seconds != 0:
-            raise ValueError("Clock correction is supported only for Polaris, text and array physiology.")
+        if not physiological_reader.supports_clock_correction and physio_clock_drift_seconds != 0:
+            raise ValueError("The selected physiological reader does not support clock correction.")
         self.physio_clock_drift_seconds = float(physio_clock_drift_seconds)
-        self.polaris_channel_mode = polaris_channel_mode
-        self.polaris_lowpass_cutoff_hz = polaris_lowpass_cutoff_hz
-        self.saec_belt_lowpass_cutoff_hz = saec_belt_lowpass_cutoff_hz
-        self.saec_marmot_lowpass_cutoff_hz = saec_marmot_lowpass_cutoff_hz
-        self.saec_marmot_highpass_cutoff_hz = saec_marmot_highpass_cutoff_hz
-        if physiological_format in {"physio_text", "physio_array"}:
-            self.physiological_reader = PreprocessedPhysioReader(physiological_format)
-        elif physiological_format == "PolarisInfraredTracker":
-            self.physiological_reader = PolarisInfraredTrackerReader(
-                channel_mode=polaris_channel_mode, lowpass_cutoff_hz=polaris_lowpass_cutoff_hz)
-        else:
-            self.physiological_reader = SAECReader(
-                sensor_type=sensor_type, belt_lowpass_cutoff_hz=saec_belt_lowpass_cutoff_hz,
-                marmot_lowpass_cutoff_hz=saec_marmot_lowpass_cutoff_hz,
-                marmot_highpass_cutoff_hz=saec_marmot_highpass_cutoff_hz)
+        self.physiological_reader = physiological_reader
         self.reader = ISMRMRDReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
         self.physiological_file = physiological_file
-        self.physiological_format = physiological_format
-        self.sensor_type = sensor_type
         self.device = device
         self.synchronization = None
 
@@ -195,7 +170,7 @@ class RawDataPreparer:
         raw = self.reader.read_data()
         times, values, end, bounds = self._physiological_channels()
         acquisition_times = raw["time_seconds"].detach().cpu().numpy()
-        if getattr(self.physiological_reader, 'already_synchronized', False):
+        if self.physiological_reader.already_synchronized:
             if self.physio_clock_drift_seconds != 0:
                 raise ValueError('physio_clock_drift_seconds must be zero for already-synchronized '
                                  'physiological data (all timestamps are -1).')
@@ -207,7 +182,7 @@ class RawDataPreparer:
         else:
             interpolated = self._synchronize_to_sequence_end(
                 times, values, acquisition_times, source_sequence_end=end,
-                bounds=bounds if self.physiological_format == "SAEC" else "autoregression",
+                bounds=bounds,
                 physio_clock_drift_seconds=self.physio_clock_drift_seconds)
             aligned_times = [t - (t[-1] if end is None else end) + self.physio_clock_drift_seconds
                              for t in times]
@@ -228,7 +203,7 @@ class RawDataPreparer:
             group_by_z_index=not raw["uses_kz_as_volume_axis"])
         self._uses_kz_as_volume_axis = raw["uses_kz_as_volume_axis"]
         data = {
-            "kspace": self.reader._remove_oversampling(raw["kspace"]).detach().cpu().numpy(),
+            "kspace": raw["kspace"].detach().cpu().numpy(),
             "motion_data": motion.detach().cpu().numpy(),
             "idx_ky": ky.detach().cpu().numpy(), "idx_kz": kz.detach().cpu().numpy(),
             "idx_nex": nex.detach().cpu().numpy(), "nex_source": raw["nex_source"],
@@ -237,8 +212,7 @@ class RawDataPreparer:
             "ismrmrd_header": raw["ismrmrd_header"],
         }
         if raw["reference_kspace"] is not None:
-            data["reference_kspace"] = self.reader._remove_oversampling(
-                raw["reference_kspace"]).detach().cpu().numpy()
+            data["reference_kspace"] = raw["reference_kspace"].detach().cpu().numpy()
         return data
 
     def _reshape_data_slicewise(self, respiratory_data_interpolated, z_indices,
@@ -275,39 +249,25 @@ class RawDataPreparer:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    def read_data(self, output_h5_file=None, slice_idx=None, *, cache_h5=False,
-                  cache_root=None, remove_temporary_data_after_run=True):
-        """Return reconstruction-ready arrays, optionally selecting a slice/caching H5.
+    def read_data(self, *, cache_h5=False, cache_root=None, remove_temporary_data_after_run=True):
+        """Return the complete synchronized acquisition, optionally using the shared cache.
 
         ``ismrmrd_header`` contains the complete original XML header as text;
         Cached H5 files store it as a separate scalar UTF-8 dataset of the same name.
-        The shared cache always contains all slices; selection happens after reading it.
-        Synchronization always uses the complete sequence before slice selection.
         ``self.synchronization`` retains the full aligned traces for display.
         """
-        if output_h5_file is not None:
-            warnings.warn('output_h5_file now requests a shared cache entry; use cache_h5=True and '
-                          'cache_root=... instead. The supplied filename is not written.',
-                          DeprecationWarning, stacklevel=2)
-            cache_h5 = True
         cached_path = None
         if cache_h5:
             source_dir = Path(__file__).parent
             implementation = hashlib.sha256(b''.join(path.read_bytes() for path in sorted(
                 [Path(__file__), source_dir / 'ISMRMRDReader.py',
                  *source_dir.joinpath('physiological_data').glob('*.py'),
-                 Path(__file__).parents[1] / 'runtime' / 'hdf5_cache.py']))).hexdigest()
-            physiology_files = (list(self.physiological_file)
-                                if self.physiological_format == 'physio_array'
-                                else [self.physiological_file])
+                 Path(__file__).parents[2] / 'runtime' / 'hdf5_cache.py']))).hexdigest()
+            physiology_files = self.physiological_reader.source_files(self.physiological_file)
             key = cache_key([self.reader.ismrmrd_file, *physiology_files],
-                            {'implementation': implementation, 'format': self.physiological_format,
-                             'sensor': self.sensor_type, 'polaris_mode': self.polaris_channel_mode,
-                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds,
-                             'polaris_lowpass_cutoff_hz': self.polaris_lowpass_cutoff_hz,
-                             'saec_belt_lowpass_cutoff_hz': self.saec_belt_lowpass_cutoff_hz,
-                             'saec_marmot_lowpass_cutoff_hz': self.saec_marmot_lowpass_cutoff_hz,
-                             'saec_marmot_highpass_cutoff_hz': self.saec_marmot_highpass_cutoff_hz})
+                            {'implementation': implementation,
+                             'physiological_reader': self.physiological_reader.cache_parameters,
+                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds})
             def build(path):
                 arrays = self._prepare_data()
                 with h5py.File(path, 'w') as handle:
@@ -330,26 +290,6 @@ class RawDataPreparer:
             self._uses_kz_as_volume_axis = metadata['uses_kz_as_volume_axis']
         else:
             data = self._prepare_data()
-
-        if slice_idx is not None:
-            if self._uses_kz_as_volume_axis:
-                raise ValueError("Slice selection requires a 2D multi-slice acquisition.")
-            n_slices = int(data["kspace"].shape[-1])
-            if slice_idx < 0 or slice_idx >= n_slices:
-                raise ValueError(
-                    f"slice_idx={slice_idx} is out of range for {n_slices} slices."
-                )
-            data = {
-                **data,
-                "kspace": data["kspace"][..., [slice_idx]],
-                "motion_data": data["motion_data"][[slice_idx], :],
-                "idx_ky": data["idx_ky"][[slice_idx], :],
-                "idx_kz": data["idx_kz"][[slice_idx], :],
-                "idx_nex": data["idx_nex"][[slice_idx], :],
-                "slice_geometry": {0: data["slice_geometry"][slice_idx]},
-            }
-            if "reference_kspace" in data:
-                data["reference_kspace"] = data["reference_kspace"][..., [slice_idx]]
 
         if cached_path is not None:
             data['realworld_h5_path'] = cached_path

@@ -7,7 +7,7 @@ class EncodingOperator:
     MRI encoding of one shared image into all acquisition repetitions.
 
     SamplingIndices describes complete readout lines, assigned to disjoint
-    motion states within each repetition, as produced by Sampling.
+    motion states within each repetition, as produced by MotionSamplingPreparer.
     Forward encoding uses the same image for every repetition; the adjoint
     sums their contributions without averaging. Nex counts acquisitions,
     while the reconstructed image has only spatial axes.

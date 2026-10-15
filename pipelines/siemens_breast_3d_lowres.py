@@ -33,7 +33,7 @@ from pipelines._inputs import (
     publish_preprocessed_cache,
 )
 
-from src.preprocessing.DataLoader import DataLoader
+from src.preprocessing.DataPreparer import DataPreparer
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
 from src.runtime.output_layout import managed_execution
@@ -74,7 +74,7 @@ def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
                 output_root=OUTPUT_ROOT, device=RUNTIME_DEVICE,
                 reconstruction_config=RECONSTRUCTION_CONFIG, overrides=None,
                     save_reconstruction_logs=None, save_reconstruction_tensors=None,
-                prepared_output_file=None) -> DataLoader:
+                prepared_output_file=None) -> DataPreparer:
     """Load one acquisition and estimate coil maps with the Odille spline method."""
     data_type = data_type_from_raw_data_file(raw_data_file, saec_file)
     raw_input = data_type != "preprocessed-real"
@@ -96,18 +96,17 @@ def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
         "saec_file": str(saec_file.resolve()) if saec_file is not None else None,
     }
     params._run_outputs.flush()
-    data = DataLoader(
+    data = DataPreparer(
         params=params, t_device=t_device, sp_device=sp_device,
         filename=(str(raw_data_file), str(saec_file)) if raw_input else str(raw_data_file),
-        run_pipeline=False,
     )
-    data.load_data()
+    data.load_input_data()
     if prepared_output_file is not None and raw_input:
-        publish_preprocessed_cache(data.realworld_h5_path, prepared_output_file)
+        publish_preprocessed_cache(data.input_loader.realworld_h5_path, prepared_output_file)
         print(f"[input] Saved prepared data: {prepared_output_file}", flush=True)
-    if int(data.Nz) <= 1:
+    if int(data.input_loader.Nz) <= 1:
         raise ValueError("The 3D pipeline requires more than one encoded partition.")
-    data.run_slice_pipeline()
+    data.prepare_reconstructor_inputs()
     return data
 
 

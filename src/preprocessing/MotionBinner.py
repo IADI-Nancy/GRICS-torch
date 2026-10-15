@@ -1,7 +1,5 @@
 import torch
 
-from src.utils.plotting import save_clustered_motion_plots
-
 
 class ConstantPhysiologicalSignalError(ValueError):
     """Raised when physiological samples contain no usable motion variation."""
@@ -119,13 +117,11 @@ class MotionBinner:
         raise TypeError(f"{name} must be a tensor or list of tensors, got {type(values)!r}.")
 
     @staticmethod
-    def bin_motion(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params,
-        tx=None, ty=None, phi=None, tz=None, rx=None, ry=None, rz=None,
-        y_limits=None, return_debug_data=False, kspace=None):
+    def assign_states(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params, kspace=None):
+        """Assign one motion state to each chronological readout."""
 
         motion_curve = motion_curve.to(t_device)
         Nbins = params.N_motion_states
-        Nex = params.Nex
         if motion_curve.ndim != 2:
             raise ValueError("motion_curve must have shape [Nreadout, Nsensor].")
         motion_features = motion_curve
@@ -161,30 +157,4 @@ class MotionBinner:
                 "Supported modes are 'kmeans' and 'kspace_energy'."
             )
 
-        # ---- Allocate output: [Nex][Nbins] ----
-        binned_ky_indices = [[torch.empty(0, dtype=ky_idx.dtype, device=t_device) for _ in range(Nbins)]
-            for _ in range(Nex)]
-        binned_kz_indices = None
-        if kz_idx is not None:
-            binned_kz_indices = [[torch.empty(0, dtype=kz_idx.dtype, device=t_device) for _ in range(Nbins)]
-                for _ in range(Nex)]
-
-        # ---- Fill bins ----
-        for nex in range(Nex):
-            nex_mask = nex_idx == nex
-
-            for b in range(Nbins):
-                mask = nex_mask & (labels == b)
-                binned_ky_indices[nex][b] = ky_idx[mask]
-                if binned_kz_indices is not None:
-                    binned_kz_indices[nex][b] = kz_idx[mask]
-
-        # save_debug_plots controls diagnostic plots of the input motion bins.
-        if params.save_debug_plots:
-            save_clustered_motion_plots(motion_curve=motion_curve, labels=labels, ky_idx=ky_idx, nex_idx=nex_idx, kz_idx=kz_idx,
-                nbins=Nbins, output_folder=params.initial_data_folder, resolution_levels=params.ResolutionLevels,
-                tx=tx, ty=ty, phi=phi, tz=tz, rx=rx, ry=ry, rz=rz, data_type=params.data_type, y_limits=y_limits)
-
-        if return_debug_data:
-            return (binned_ky_indices, binned_kz_indices, centers, labels, ky_idx, kz_idx, nex_idx)
-        return binned_ky_indices, binned_kz_indices, centers
+        return labels, centers, ky_idx, kz_idx, nex_idx

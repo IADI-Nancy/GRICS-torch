@@ -35,6 +35,18 @@ class TrackingData:
 class PolarisInfraredTrackerReader:
     """Reader for the fixed-marker, single-tool layout exported by ToolBox."""
 
+    supports_clock_correction = True
+    already_synchronized = False
+
+    @property
+    def cache_parameters(self):
+        return {"format": "PolarisInfraredTracker", "channel_mode": self.channel_mode,
+                "lowpass_cutoff_hz": self.lowpass_cutoff_hz}
+
+    @staticmethod
+    def source_files(filename):
+        return [filename]
+
     def __init__(self, channel_mode="all", lowpass_cutoff_hz=None):
         if channel_mode not in {"all", "largest-amplitude"}:
             raise ValueError("polaris_channel_mode must be 'all' or 'largest-amplitude'.")
@@ -48,7 +60,7 @@ class PolarisInfraredTrackerReader:
         """Return filtered XYZ channels and end-alignment settings for MRI preparation."""
         tracking = self.read(filename)
         positions = self._lowpass(tracking.time_seconds, tracking.tool_positions)
-        return [tracking.time_seconds] * 3, list(positions.T), None, "raise"
+        return [tracking.time_seconds] * 3, list(positions.T), None, "autoregression"
 
     def prepare_motion(self, interpolated):
         """Select axes at full-sequence MRI times, before shared normalization."""

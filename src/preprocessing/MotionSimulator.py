@@ -4,7 +4,7 @@ import torch
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
 from src.preprocessing.SamplingSimulator import SamplingSimulator
-from src.preprocessing.Sampling import Sampling
+from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 from src.utils.fftnc import ifftnc # normalised ifft for n dimensions
 from src.utils.plotting import (
     save_motion_debug_plots, save_nonrigid_alpha_plots,
@@ -12,7 +12,7 @@ from src.utils.plotting import (
 from src.utils.nonrigid_display import (
     flip_nonrigid_alpha_for_display,
 )
-from src.preprocessing.motion_simulator_utils.motion_simulator_utils import (
+from src.preprocessing.utils.motion_simulator_helpers import (
     build_event_transition_curve,
     build_navigator_from_motion_matrix,
     build_rigid_rotation_centers,
@@ -325,7 +325,7 @@ class MotionSimulator:
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = Sampling.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout) # ← for debugging only, ignore output
+        self.sampling_idx = MotionSamplingPreparer.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout) # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
@@ -438,7 +438,7 @@ class MotionSimulator:
         kz_readout_layout = None
         if self.kz_per_motion_state is not None:
             kz_readout_layout = globalize_per_shot_readout_layout(self.kz_per_motion_state, device=self.t_device)
-        self.sampling_idx = Sampling.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout)
+        self.sampling_idx = MotionSamplingPreparer.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout)
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
         # One unique motion state per total shot across the acquisition.

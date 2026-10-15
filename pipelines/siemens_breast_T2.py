@@ -49,7 +49,8 @@ from pipelines._inputs import (
 from src.utils.ismrmrd_io import acquisition_header
 import torch
 
-from src.preprocessing.DataLoader import DataLoader
+from src.preprocessing.DataPreparer import DataPreparer
+from src.preprocessing.InputDataLoader import InputDataLoader
 from src.runtime.runtime_config import load_config, load_postprocessing_config
 from src.runtime.runtime_setup import initialize_runtime
 from src.runtime.output_layout import managed_execution, bind_output_paths, public_config
@@ -61,7 +62,7 @@ from pipelines._execution import (
 )
 
 
-# With the fork start method, workers inherit this read-only source dataset
+# With the fork start method, workers inherit this read-only input dataset
 # without serializing and copying the complete acquisition for every slice.
 LOADED_DATA = None
 
@@ -115,7 +116,7 @@ def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, outpu
                     device=RUNTIME_DEVICE, reconstruction_config=RECONSTRUCTION_CONFIG,
                     postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
                     save_reconstruction_logs=None, save_reconstruction_tensors=None,
-                    prepared_output_file=None) -> DataLoader:
+                    prepared_output_file=None) -> DataPreparer:
     """Load the acquisition once, without running the per-slice preprocessing."""
     data_type = data_type_from_raw_data_file(raw_data_file, saec_file)
     raw_input = data_type != "preprocessed-real"
@@ -135,17 +136,16 @@ def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, outpu
     if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
         raise ValueError("Reference-image normalization requires coil_sensitivity_method='odille-spline'.")
     sp_device, t_device = initialize_runtime(params)
-    data = DataLoader(
+    data = DataPreparer(
         params=params,
         t_device=t_device,
         sp_device=sp_device,
         filename=(str(raw_data_file), str(saec_file)) if raw_input else str(raw_data_file),
-        run_pipeline=False,
     )
     data.postprocessing = postprocessing
-    data.load_data()
+    data.load_input_data()
     if prepared_output_file is not None and raw_input:
-        publish_preprocessed_cache(data.realworld_h5_path, prepared_output_file)
+        publish_preprocessed_cache(data.input_loader.realworld_h5_path, prepared_output_file)
         print(f"[input] Saved prepared data: {prepared_output_file}", flush=True)
     return data
 
@@ -158,7 +158,7 @@ def selected_slices(nslices: int, start=0, stop=None) -> list[int]:
     return list(range(start, stop))
 
 
-def grics_reference_image_for_normalization(data: DataLoader, image: torch.Tensor) -> torch.Tensor:
+def grics_reference_image_for_normalization(data: DataPreparer, image: torch.Tensor) -> torch.Tensor:
     reference_image = getattr(data, "grics_reference_image", None)
     if reference_image is None:
         raise ValueError(
@@ -192,19 +192,19 @@ def normalize_reconstruction_by_grics_reference(
     return image / reference_magnitude, reference_magnitude
 
 
-def reconstruct_slice(slice_idx: int, source=None) -> dict:
+def reconstruct_slice(slice_idx: int, input_data=None) -> dict:
     """Compute one slice in memory. Exports happen after all workers finish."""
-    source = source if source is not None else LOADED_DATA
-    if source is None:
-        raise RuntimeError("Source data is not initialized.")
-    data = copy.copy(source)
-    data.params = copy.copy(source.params)
+    input_data = input_data if input_data is not None else LOADED_DATA
+    if input_data is None:
+        raise RuntimeError("Input data is not initialized.")
+    data = copy.copy(input_data)
+    data.params = copy.copy(input_data.params)
     folder = Path(data.params.run_folder)
     if getattr(data.params, '_output_unit_count', 1) > 1:
         folder /= f'slice_{slice_idx + 1:03d}'
     bind_output_paths(data.params, folder)
     started = time.perf_counter()
-    data.run_slice_pipeline(slice_idx=slice_idx)
+    data.prepare_reconstructor_inputs(slice_idx=slice_idx)
     synchronize(data.kspace.device)
     preprocessing_seconds = time.perf_counter() - started
     image, motion, reconstruction_seconds = timed_reconstruction(data)
@@ -213,7 +213,7 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     if data.postprocessing.normalize_image_by_grics_reference:
         reference_image = grics_reference_image_for_normalization(data, image)
         image, _ = normalize_reconstruction_by_grics_reference(image, reference_image)
-    target_shape, encoded_shape = source.zero_fill_shapes
+    target_shape, encoded_shape = input_data.zero_fill_shapes
     image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
     synchronize(image.device)
     postprocessing_seconds = time.perf_counter() - started
@@ -231,9 +231,9 @@ def reconstruct_slice(slice_idx: int, source=None) -> dict:
     }
 
 
-def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple[int, int]]:
+def grics_zero_fill_shapes(input_data: InputDataLoader) -> tuple[tuple[int, int], tuple[int, int]]:
     """Read encoded and reconstruction matrix sizes from the ISMRMRD header."""
-    header = acquisition_header(raw_data)
+    header = acquisition_header(input_data)
 
     enc = header.encoding[0]
     recon = enc.reconSpace.matrixSize
@@ -258,15 +258,15 @@ def grics_zero_fill_shapes(raw_data: DataLoader) -> tuple[tuple[int, int], tuple
     elif target_y > encoded_y:
         target_y //= 2
 
-    target_shape = (int(raw_data.Nx), target_y)
-    encoded_shape = (int(raw_data.Nx), encoded_y)
+    target_shape = (int(input_data.Nx), target_y)
+    encoded_shape = (int(input_data.Nx), encoded_y)
     if any(size <= 0 for size in (*target_shape, *encoded_shape)):
         raise ValueError(
             f"GRICS zero-fill sizes must be positive: target_shape={target_shape}, encoded_shape={encoded_shape}."
         )
-    if int(raw_data.Ny) > encoded_y:
+    if int(input_data.Ny) > encoded_y:
         raise ValueError(
-            f"Loaded phase-encode size {raw_data.Ny} exceeds ISMRMRD encoded matrix y {encoded_y}."
+            f"Loaded phase-encode size {input_data.Ny} exceeds ISMRMRD encoded matrix y {encoded_y}."
         )
     if any(target > encoded for target, encoded in zip(target_shape, encoded_shape)):
         raise ValueError(
@@ -289,9 +289,9 @@ def zero_fill_loaded_reconstruction(
     )
 
 
-def _initialize_worker(source):
+def _initialize_worker(input_data):
     global LOADED_DATA
-    LOADED_DATA = source
+    LOADED_DATA = input_data
     torch.set_num_threads(1)
     # Inter-op thread count can only be set once in a process; callers may have
     # already used PyTorch before forking. Intra-op limiting is still effective.
@@ -301,21 +301,21 @@ def _initialize_worker(source):
         pass
 
 
-def reconstruct_slices_in_parallel(source, slice_indices, max_workers=None):
+def reconstruct_slices_in_parallel(input_data, slice_indices, max_workers=None):
     if not slice_indices:
         raise ValueError("At least one slice must be selected for reconstruction.")
     if max_workers is not None and (isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers < 1):
         raise ValueError("max_workers must be a positive integer or None.")
-    if source.params.runtime_device == 'gpu':
+    if input_data.params.runtime_device == 'gpu':
         if max_workers not in (None, 1):
             raise ValueError("GPU slice reconstruction requires max_workers=1.")
         max_workers = 1
     workers = min(max_workers or (os.cpu_count() or 1), len(slice_indices))
     if workers == 1:
-        results = [reconstruct_slice(index, source) for index in slice_indices]
+        results = [reconstruct_slice(index, input_data) for index in slice_indices]
     else:
         with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('fork'),
-                                 initializer=_initialize_worker, initargs=(source,)) as executor:
+                                 initializer=_initialize_worker, initargs=(input_data,)) as executor:
             futures = [executor.submit(reconstruct_slice, index) for index in slice_indices]
             results = [future.result() for future in as_completed(futures)]
     results.sort(key=lambda item: item['slice_idx'])
@@ -356,10 +356,10 @@ def run_pipeline(raw_data_file=None, saec_file=None, *, preprocessed_file=None, 
                            prepared_output_file=prepared_output_file)
     data.params._run_outputs.manifest['inputs'] = {
         'raw_data_file': str(raw_data_file.resolve()), 'saec_file': str(saec_file.resolve()) if saec_file is not None else None}
-    indices = selected_slices(int(data.Nz), slice_start, slice_stop)
+    indices = selected_slices(int(data.input_loader.Nz), slice_start, slice_stop)
     data.params._output_unit_count = len(indices)
-    data.zero_fill_shapes = grics_zero_fill_shapes(data)
-    synchronize(data.kspace.device)
+    data.zero_fill_shapes = grics_zero_fill_shapes(data.input_loader)
+    synchronize(data.input_loader.kspace.device)
     load_seconds = time.perf_counter() - started
     compute_started = time.perf_counter()
     results, workers = reconstruct_slices_in_parallel(data, indices, max_workers)
