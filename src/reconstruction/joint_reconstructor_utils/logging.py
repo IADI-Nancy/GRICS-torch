@@ -19,7 +19,8 @@ def _format_cg_info(cg_info):
     return (
         f"flag = {cg_info.get('flag', -1)}, "
         f"relres = {cg_info.get('relres', float('nan')):.6e}, "
-        f"iter = {cg_info.get('iterations', 0)}"
+        f"iter = {cg_info.get('iterations', 0)}, "
+        f"selected_iter = {cg_info['selected_iteration']}"
     )
 
 def _console(params, message):

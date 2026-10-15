@@ -299,8 +299,7 @@ class JointReconstructor:
             if self.params.motion_preconditioner and torch.count_nonzero(b).item():
                 solver.preconditioner = self._build_pseudo_gauss_seidel_motion_preconditioner(J, solver, Data_res)
             mot_pert_vec = solver.cg(
-                b.flatten(), x0=x0.flatten(), max_iter=max_iterations,
-                tol=self.params.tol_motion, return_last_iterate=self.params.motion_preconditioner)
+                b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         else:
             # Rigid motion uses a magnitude penalty on the increment itself:
             # (J^H J + mu I) dm = J^H residual.

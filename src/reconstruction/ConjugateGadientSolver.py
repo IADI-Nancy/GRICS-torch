@@ -144,10 +144,13 @@ class ConjugateGradientSolver:
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
-    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False,
-           return_last_iterate=False):
+    def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False):
         """
         Solve _A(x) = b using Conjugate Gradient.
+
+        Return the final iterate on verified convergence; otherwise return the
+        lowest-residual candidate among the initial guess, residual refreshes,
+        and final iterate. Candidate residuals are evaluated directly as b - A(x).
 
         Parameters:
             b        : RHS vector, shape (NxNy,)
@@ -156,8 +159,6 @@ class ConjugateGradientSolver:
             tol      : tolerance
             differentiable : preserve autograd through CG when True. The default
                              False retains the validated inference behavior.
-            return_last_iterate : return the final PCG iterate instead of the
-                                  iterate with the lowest recorded residual.
         """
         context = nullcontext() if differentiable else torch.no_grad()
         with context:
@@ -196,8 +197,6 @@ class ConjugateGradientSolver:
                 stagnation_countdown_steps = max(1, min(n // 50, 5, max(n - max_iter, 1)))
             else:
                 stagnation_countdown_steps = max(1, int(self.stagnation_countdown_steps))
-            best_x = x.clone()
-            best_rel = torch.linalg.norm(r) / b_norm
             iters_done = 0
             res_norm = torch.linalg.norm(r)
             rel_res = (res_norm / b_norm).item()
@@ -205,8 +204,11 @@ class ConjugateGradientSolver:
             relres_history = [float(rel_res)]
             converged = bool(res_norm <= tolb)
             stop_reason = "initial_tolerance"
+            best_x = x.clone()
+            best_res_norm = res_norm
+            best_iteration = 0
 
-            for it in range(max_iter):
+            for it in range(0 if converged else max_iter):
                 Ap = self._A(p)
                 iters_done = it + 1
 
@@ -250,14 +252,15 @@ class ConjugateGradientSolver:
                     # a fresh one; this does not reset x or the search direction.
                     r = b - self._A(x)
                     res_norm = torch.linalg.norm(r)
+                    if res_norm < best_res_norm:
+                        best_x = x.clone()
+                        best_res_norm = res_norm
+                        best_iteration = iters_done
                 rel_res = (res_norm / b_norm).item()
                 # History uses the direct residual on refresh steps and the
                 # recursive residual on other steps.
                 residual_norm_history.append(float(res_norm.item()))
                 relres_history.append(float(rel_res))
-                if rel_res < best_rel:
-                    best_rel = rel_res
-                    best_x = x.clone()
                 if self.verbose:
                     print(
                         f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
@@ -303,21 +306,29 @@ class ConjugateGradientSolver:
             elif stop_reason == "initial_tolerance":
                 stop_reason = "max_iter"
 
+            # Verify the final candidate even when stopping between refreshes
+            # or on breakdown. Selection always uses the unpreconditioned system.
+            res_norm = torch.linalg.norm(b - self._A(x))
+            final_rel_res = float((res_norm / b_norm).item())
+            converged = bool(res_norm <= tolb)
+            if converged or res_norm < best_res_norm:
+                best_x = x
+                best_res_norm = res_norm
+                best_iteration = iters_done
+
             self.last_info = {
                 "flag": 0 if converged else 1,
                 "iterations": int(iters_done),
-                "relres": float(rel_res),
-                "residual_norm": float(res_norm.item()),
+                "selected_iteration": int(best_iteration),
+                "relres": float((best_res_norm / b_norm).item()),
+                "residual_norm": float(best_res_norm.item()),
+                "final_relres": final_rel_res,
                 "residual_norm_history": residual_norm_history,
                 "relres_history": relres_history,
                 "stop_reason": stop_reason,
             }
 
-            # Image solves retain the lowest recorded residual. Preconditioned
-            # motion solves can request the final iterate so their update stays
-            # consistent with the final Krylov state. last_info describes the
-            # final attempted iteration in either case.
-            return x if return_last_iterate else best_x
+            return best_x
         
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG
