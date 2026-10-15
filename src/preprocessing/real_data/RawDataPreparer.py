@@ -5,9 +5,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.preprocessing.measurement_data.ISMRMRDReader import ISMRMRDReader
-from src.preprocessing.measurement_data.real_data_io import read_preprocessed_cache, write_preprocessed_cache
-from src.preprocessing.measurement_data.physiological_data.normalization import normalize_physiological_motion_input
+from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
+from src.preprocessing.real_data.real_data_io import read_preprocessed_cache, write_preprocessed_cache
+from src.preprocessing.real_data.physiological_data.normalization import normalize_physiological_motion_input
 
 
 class RawDataPreparer:

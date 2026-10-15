@@ -4,6 +4,7 @@ from typing import Mapping
 import torch
 
 from src.preprocessing.MotionBinner import MotionBinner
+from src.preprocessing.utils.sampling import flatten_index_list, flatten_sampling_coordinates
 from src.utils.plotting import save_clustered_motion_plots
 
 
@@ -48,37 +49,22 @@ class MotionSamplingPreparer:
                     sampling[nex][motion_state] = torch.empty(0, dtype=torch.int64, device=device)
                     continue
 
-                if Nz > 1:
-                    kz = binned_kz_indices[nex][motion_state].to(device=device, dtype=torch.int64).reshape(-1)
-                    if ky.numel() != kz.numel():
-                        raise ValueError("Paired ky and kz bins must contain the same number of readouts.")
-                    # The reconstruction tensor is flattened in [kx, ky, kz] order.
-                    indices = ((ky[:, None] + Ny * kx[None, :]) * Nz + kz[:, None]).reshape(-1)
-                else:
-                    indices = (ky[:, None] + Ny * kx[None, :]).reshape(-1)
-
-                sampling[nex][motion_state] = indices
+                kz = binned_kz_indices[nex][motion_state] if Nz > 1 else None
+                sampling[nex][motion_state] = flatten_sampling_coordinates(ky, kx, Ny, Nz, kz)
 
         return sampling
 
     @staticmethod
-    def _flatten_indices(values):
-        if values is None:
-            return None
-        if torch.is_tensor(values):
-            return values.reshape(-1)
-        return torch.cat([value.reshape(-1) for value in values], dim=0)
-
-    @staticmethod
     def _group_by_labels(ky, kz, nex, labels, selection, nex_count, state_count):
-        binned_ky = [[
-            ky[(nex == repetition) & (labels == state) & selection]
-            for state in range(state_count)
-        ] for repetition in range(nex_count)]
-        binned_kz = None if kz is None else [[
-            kz[(nex == repetition) & (labels == state) & selection]
-            for state in range(state_count)
-        ] for repetition in range(nex_count)]
+        binned_ky = [[] for _ in range(nex_count)]
+        binned_kz = None if kz is None else [[] for _ in range(nex_count)]
+        for repetition in range(nex_count):
+            selected = (nex == repetition) & selection
+            for state in range(state_count):
+                mask = selected & (labels == state)
+                binned_ky[repetition].append(ky[mask])
+                if kz is not None:
+                    binned_kz[repetition].append(kz[mask])
         return binned_ky, binned_kz
 
     @staticmethod
@@ -91,9 +77,9 @@ class MotionSamplingPreparer:
         its repetition. Named masks require motion labels and are used by the
         external GRICS API.
         """
-        ky = MotionSamplingPreparer._flatten_indices(ky_idx)
-        kz = MotionSamplingPreparer._flatten_indices(kz_idx)
-        nex = MotionSamplingPreparer._flatten_indices(nex_idx)
+        ky = flatten_index_list(ky_idx)
+        kz = flatten_index_list(kz_idx)
+        nex = flatten_index_list(nex_idx)
         if motion_curve is None:
             if sampling_masks is not None:
                 raise ValueError("Named sampling masks require a motion curve.")
@@ -106,7 +92,7 @@ class MotionSamplingPreparer:
             motion_signal = None
             labels = None
         else:
-            labels, motion_signal, ky, kz, nex = MotionBinner.assign_states(
+            labels, motion_signal = MotionBinner.assign_states(
                 motion_curve, ky, kz, nex, device, params, kspace=kspace,
             )
             all_readouts = torch.ones(ky.numel(), dtype=torch.bool, device=device)

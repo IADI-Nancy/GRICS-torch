@@ -7,13 +7,13 @@ import torch
 
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.SyntheticDataGenerator import SyntheticDataGenerator
-from src.preprocessing.measurement_data.ISMRMRDReader import ISMRMRDReader
-from src.preprocessing.measurement_data.RawDataCache import RawDataCache
-from src.preprocessing.measurement_data.RawDataPreparer import RawDataPreparer
-from src.preprocessing.measurement_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
-from src.preprocessing.measurement_data.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
-from src.preprocessing.measurement_data.physiological_data.SAECReader import SAECReader
-from src.preprocessing.measurement_data.real_data_io import convert_siemens_to_ismrmrd, read_preprocessed_data
+from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
+from src.preprocessing.real_data.RawDataCache import RawDataCache
+from src.preprocessing.real_data.RawDataPreparer import RawDataPreparer
+from src.preprocessing.real_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
+from src.preprocessing.real_data.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
+from src.preprocessing.real_data.physiological_data.SAECReader import SAECReader
+from src.preprocessing.real_data.real_data_io import convert_siemens_to_ismrmrd, read_preprocessed_data
 from src.runtime.output_layout import bind_output_paths, record_reconstruction, register_execution_cleanup
 from src.runtime.runtime_config import REAL_DATA_TYPES, ISMRMRD_READER_DATA_TYPES, validate_sampling_size
 

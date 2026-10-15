@@ -1,9 +1,9 @@
-# Preprocessing architecture
+# Input data loading architecture
 
-The preprocessing pipeline turns synthetic, preprocessed, ISMRMRD, or Siemens
-input into one reconstruction-ready 2D slice or 3D volume. The classes are split
-by processing stage so that file-format handling, acquisition preparation, slice
-selection, and reconstruction preparation each have one owner.
+The input data loading path handles synthetic, preprocessed, ISMRMRD, or Siemens
+sources before reconstruction. The classes are split by processing stage so that
+file-format handling, acquisition preparation, slice selection, and final data
+preparation each have one owner.
 
 ## Data flow
 
@@ -20,12 +20,11 @@ flowchart TD
     ImageFile[Input image file] --> Generator[SyntheticDataGenerator]
     Phantom[Shepp-Logan parameters] --> Generator
     Generator --> Loader
-    Loader --> Prepared[DataPreparer]
-    Prepared --> Reconstruction[Reconstructor inputs]
+    Loader --> Preparer[DataPreparer]
 
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef inputFile fill:#fef3c7,stroke:#d97706,color:#451a03
-    class MRD,PhysReader,Raw,Loader,Generator,Prepared pythonClass
+    class MRD,PhysReader,Raw,Loader,Generator,Preparer pythonClass
     class Siemens,ISMRMRD,Physiology,Preprocessed,ImageFile inputFile
 ```
 

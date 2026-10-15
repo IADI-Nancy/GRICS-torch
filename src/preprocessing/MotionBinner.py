@@ -45,30 +45,25 @@ def _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx):
     if kspace is None:
         raise ValueError("kspace must be provided for kspace_energy motion binning.")
     values = torch.as_tensor(kspace)
+    if values.ndim not in (4, 5):
+        raise ValueError("kspace_energy motion binning expects k-space shaped "
+                         "[coil, Nex, kx, ky] or [coil, Nex, kx, ky, kz].")
     if values.ndim == 4:  # [coil, Nex, kx, ky]
-        energy = values.abs().square().sum(dim=(0, 2))
-        if torch.any(nex_idx < 0) or torch.any(nex_idx >= energy.shape[0]):
-            raise ValueError("nex_idx is outside the k-space repetition dimension.")
-        if torch.any(ky_idx < 0) or torch.any(ky_idx >= energy.shape[1]):
-            raise ValueError("ky_idx is outside the k-space phase dimension.")
-        return energy[nex_idx.long(), ky_idx.long()]
-    if values.ndim == 5:  # [coil, Nex, kx, ky, kz/slice]
-        energy = values.abs().square().sum(dim=(0, 2))
-        if kz_idx is None:
-            if energy.shape[2] != 1:
-                raise ValueError("kz_idx is required for multi-partition k-space.")
-            kz_idx = torch.zeros_like(ky_idx)
-        if torch.any(nex_idx < 0) or torch.any(nex_idx >= energy.shape[0]):
-            raise ValueError("nex_idx is outside the k-space repetition dimension.")
-        if torch.any(ky_idx < 0) or torch.any(ky_idx >= energy.shape[1]):
-            raise ValueError("ky_idx is outside the k-space phase dimension.")
-        if torch.any(kz_idx < 0) or torch.any(kz_idx >= energy.shape[2]):
-            raise ValueError("kz_idx is outside the k-space partition dimension.")
-        return energy[nex_idx.long(), ky_idx.long(), kz_idx.long()]
-    raise ValueError(
-        "kspace_energy motion binning expects k-space shaped "
-        "[coil, Nex, kx, ky] or [coil, Nex, kx, ky, kz]."
-    )
+        values = values.unsqueeze(-1)
+        kz_idx = None  # 2D input has no partition index, as in the original path.
+    energy = values.abs().square().sum(dim=(0, 2))
+    if kz_idx is None:
+        if energy.shape[2] != 1:
+            raise ValueError("kz_idx is required for multi-partition k-space.")
+        kz_idx = torch.zeros_like(ky_idx)
+    for indices, size, name, dimension in (
+        (nex_idx, energy.shape[0], "nex_idx", "repetition"),
+        (ky_idx, energy.shape[1], "ky_idx", "phase"),
+        (kz_idx, energy.shape[2], "kz_idx", "partition"),
+    ):
+        if torch.any(indices < 0) or torch.any(indices >= size):
+            raise ValueError(f"{name} is outside the k-space {dimension} dimension.")
+    return energy[nex_idx.long(), ky_idx.long(), kz_idx.long()]
 
 
 def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
@@ -110,16 +105,8 @@ def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
 
 class MotionBinner:
     @staticmethod
-    def _flatten_index_tensor(values, name):
-        if torch.is_tensor(values):
-            return values.reshape(-1)
-        if isinstance(values, list):
-            return torch.cat([value.reshape(-1) for value in values], dim=0)
-        raise TypeError(f"{name} must be a tensor or list of tensors, got {type(values)!r}.")
-
-    @staticmethod
     def assign_states(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params, kspace=None):
-        """Assign one motion state to each chronological readout."""
+        """Return labels and centers for readouts with already-flat index tensors."""
 
         motion_curve = motion_curve.to(t_device)
         Nbins = params.N_motion_states
@@ -141,10 +128,6 @@ class MotionBinner:
                 f"({num_motion_samples})."
             )
 
-        ky_idx = MotionBinner._flatten_index_tensor(ky_idx, "ky_idx")
-        kz_idx = None if kz_idx is None else MotionBinner._flatten_index_tensor(kz_idx, "kz_idx")
-        nex_idx = MotionBinner._flatten_index_tensor(nex_idx, "nex_idx")
-
         binning_mode = str(params.motion_binning_mode).strip().lower()
         if binning_mode == "kmeans":
             labels, centers = _kmeans_torch(motion_features, Nbins)
@@ -158,4 +141,4 @@ class MotionBinner:
                 "Supported modes are 'kmeans' and 'kspace_energy'."
             )
 
-        return labels, centers, ky_idx, kz_idx, nex_idx
+        return labels, centers

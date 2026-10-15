@@ -4,6 +4,7 @@ import torch
 import numpy as np
 
 from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
+from src.preprocessing.utils.sampling import flatten_index_list, flatten_sampling_coordinates
 
 
 def require_motion_param(params, name):
@@ -47,14 +48,6 @@ def translation_limits_px(params, Nx, Ny, Nz):
     }
 
 
-def flatten_index_list(values):
-    if values is None:
-        return None
-    if torch.is_tensor(values):
-        return values.reshape(-1)
-    return torch.cat([v.reshape(-1) for v in values], dim=0)
-
-
 def num_motion_readouts(ky_idx):
     ky_flat = flatten_index_list(ky_idx)
     if ky_flat is None:
@@ -79,20 +72,13 @@ def build_sampling_per_line_global_states(ky_idx, nex_idx, kz_idx, *, device, Nx
         for _ in range(int(Nex))
     ]
     kx = torch.arange(Nx, device=device, dtype=torch.int64)
-    kz = torch.arange(Nz, device=device, dtype=torch.int64) if Nz > 1 else None
 
     for state in range(ny_total):
         nex = int(nex_flat[state].item())
         ky = ky_flat[state].reshape(1)
-        samp_xy = ky[:, None] + Ny * kx[None, :]
-        if Nz > 1 and kz_flat is not None:
-            kz_state = kz_flat[state].reshape(1)
-            samp = (samp_xy * Nz + kz_state[:, None]).reshape(-1)
-        elif Nz > 1:
-            samp = (samp_xy[:, :, None] * Nz + kz[None, None, :]).reshape(-1)
-        else:
-            samp = samp_xy.reshape(-1)
-        sampling[nex][state] = samp
+        kz_state = kz_flat[state].reshape(1) if Nz > 1 and kz_flat is not None else None
+        sampling[nex][state] = flatten_sampling_coordinates(
+            ky, kx, Ny, Nz, kz_state, expand_kz=Nz > 1 and kz_flat is None)
 
     return sampling
 

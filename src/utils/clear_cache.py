@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 import tomllib
-from src.preprocessing.measurement_data.RawDataCache import RawDataCache
+from src.preprocessing.real_data.RawDataCache import RawDataCache
 
 
 def main():

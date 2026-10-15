@@ -118,7 +118,7 @@ cache through a temporary file and atomically moves it to the requested path. It
 does not overwrite an existing destination.
 
 The detailed loader and preparation responsibilities are described in
-[Preprocessing architecture](preprocessing.md). Configuration selection and
+[Input data loading architecture](input_data_loading.md). Configuration selection and
 override rules are described in [Configuration architecture](configuration.md).
 
 ## Shared reconstruction execution
