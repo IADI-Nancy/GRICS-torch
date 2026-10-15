@@ -42,7 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from pipelines._inputs import (
+from pipelines.utils.inputs import (
     data_type_from_raw_data_file, resolve_input_files,
     publish_preprocessed_cache,
 )
@@ -56,7 +56,7 @@ from src.runtime.runtime_setup import initialize_runtime
 from src.runtime.output_layout import managed_execution, bind_output_paths, public_config
 from src.utils.dicom_export import write_reconstruction_dicom
 from src.utils.zero_fill import zero_fill_grics_image_to_shape
-from pipelines._execution import (
+from pipelines.utils.execution import (
     reconstruction_overrides, timed_reconstruction, synchronize,
     export_reconstruction, finish_run,
 )
