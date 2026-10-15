@@ -13,6 +13,7 @@ import time
 import uuid
 
 _ACTIVE_RUNS = ContextVar('grics_runs', default=None)
+_EXECUTION_CLEANUPS = ContextVar('grics_execution_cleanups', default=None)
 
 
 def write_json(path, value):
@@ -36,6 +37,12 @@ def bind_output_paths(params, folder):
 
 def public_config(params):
     return {key: value for key, value in vars(params).items() if not key.startswith('_')}
+
+
+def register_execution_cleanup(cleanup):
+    cleanups = _EXECUTION_CLEANUPS.get()
+    if cleanups is not None:
+        cleanups.append(cleanup)
 
 
 class RunOutputs:
@@ -108,23 +115,26 @@ class RunOutputs:
 
 @contextmanager
 def execution_scope():
-    """Finalize manifests and release cache leases even on exceptions/interrupts."""
-    from src.runtime.data_cache import lease_scope
+    """Finalize manifests and registered resources even on exceptions/interrupts."""
     runs = []
-    token = _ACTIVE_RUNS.set(runs)
+    cleanups = []
+    runs_token = _ACTIVE_RUNS.set(runs)
+    cleanups_token = _EXECUTION_CLEANUPS.set(cleanups)
     try:
-        with lease_scope():
-            try:
-                yield
-            except BaseException as exc:
-                for run in runs:
-                    run.close('failed', exc)
-                raise
-            else:
-                for run in runs:
-                    run.close()
+        try:
+            yield
+        except BaseException as exc:
+            for run in runs:
+                run.close('failed', exc)
+            raise
+        else:
+            for run in runs:
+                run.close()
     finally:
-        _ACTIVE_RUNS.reset(token)
+        for cleanup in reversed(cleanups):
+            cleanup()
+        _EXECUTION_CLEANUPS.reset(cleanups_token)
+        _ACTIVE_RUNS.reset(runs_token)
 
 
 def managed_execution(function):

@@ -8,12 +8,13 @@ import torch
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.SyntheticDataGenerator import SyntheticDataGenerator
 from src.preprocessing.measurement_data.ISMRMRDReader import ISMRMRDReader
+from src.preprocessing.measurement_data.RawDataCache import RawDataCache
 from src.preprocessing.measurement_data.RawDataPreparer import RawDataPreparer
 from src.preprocessing.measurement_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
 from src.preprocessing.measurement_data.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
 from src.preprocessing.measurement_data.physiological_data.SAECReader import SAECReader
 from src.preprocessing.measurement_data.real_data_io import convert_siemens_to_ismrmrd, read_preprocessed_data
-from src.runtime.output_layout import bind_output_paths, record_reconstruction
+from src.runtime.output_layout import bind_output_paths, record_reconstruction, register_execution_cleanup
 from src.runtime.runtime_config import REAL_DATA_TYPES, ISMRMRD_READER_DATA_TYPES, validate_sampling_size
 
 
@@ -28,6 +29,9 @@ class InputDataLoader:
 
     def __init__(self, params, t_device=None, filename=None, slice_idx=None):
         self.params = params
+        self.raw_data_cache = RawDataCache(
+            params.cache_root, remove_on_release=params.remove_temporary_data_after_run)
+        register_execution_cleanup(self.raw_data_cache.close)
         self._one_motion_state_per_readout = (params.simulated_motion_type.endswith("-per-shot")
                                              and params.kspace_sampling_type == "from-data")
         self.t_device = t_device
@@ -200,7 +204,7 @@ class InputDataLoader:
         return paths[0], physiology
 
     def _convert_siemens_to_ismrmrd(self, path_to_siemens):
-        return convert_siemens_to_ismrmrd(path_to_siemens, self.params)
+        return convert_siemens_to_ismrmrd(path_to_siemens, self.raw_data_cache)
 
     def _initialize_realworld_data(self, data, slice_idx=None):
         is_3d = self.params.data_dimension == "3D"
@@ -333,9 +337,8 @@ class InputDataLoader:
             physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
             device="cpu", print_raw_calibration_lines=self.params.print_raw_calibration_lines)
         self.raw_data_preparer = preparer
-        data = preparer.read_data(
-            cache_h5=self.params.cache_preprocessed_data, cache_root=self.params.cache_root,
-            remove_temporary_data_after_run=self.params.remove_temporary_data_after_run)
+        cache = self.raw_data_cache if self.params.cache_preprocessed_data else None
+        data = preparer.read_data(cache=cache)
         # Convert the complete prepared acquisition into the loader's tensor representation.
         self.realworld_h5_path = data.get("realworld_h5_path")
         self._initialize_realworld_data(data, slice_idx=slice_idx)

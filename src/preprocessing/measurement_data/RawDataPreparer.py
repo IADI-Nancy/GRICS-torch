@@ -1,15 +1,12 @@
 """Synchronize complete MRI acquisitions with physiological recordings."""
 
-import h5py
 import hashlib
-import json
 from pathlib import Path
-from src.runtime.data_cache import acquire_cached, cache_key
-from src.runtime.hdf5_cache import write_tree, read_tree
 import numpy as np
 import torch
 
 from src.preprocessing.measurement_data.ISMRMRDReader import ISMRMRDReader
+from src.preprocessing.measurement_data.real_data_io import read_preprocessed_cache, write_preprocessed_cache
 from src.preprocessing.measurement_data.physiological_data.normalization import normalize_physiological_motion_input
 
 
@@ -249,7 +246,7 @@ class RawDataPreparer:
         return motion_data, line_idx_y, line_idx_z, line_idx_nex
 
 
-    def read_data(self, *, cache_h5=False, cache_root=None, remove_temporary_data_after_run=True):
+    def read_data(self, *, cache=None):
         """Return the complete synchronized acquisition, optionally using the shared cache.
 
         ``ismrmrd_header`` contains the complete original XML header as text;
@@ -257,34 +254,26 @@ class RawDataPreparer:
         ``self.synchronization`` retains the full aligned traces for display.
         """
         cached_path = None
-        if cache_h5:
+        if cache is not None:
             source_dir = Path(__file__).parent
             implementation = hashlib.sha256(b''.join(path.read_bytes() for path in sorted(
                 [Path(__file__), source_dir / 'ISMRMRDReader.py',
                  *source_dir.joinpath('physiological_data').glob('*.py'),
-                 Path(__file__).parents[2] / 'runtime' / 'hdf5_cache.py']))).hexdigest()
+                 source_dir / 'real_data_io.py']))).hexdigest()
             physiology_files = self.physiological_reader.source_files(self.physiological_file)
-            key = cache_key([self.reader.ismrmrd_file, *physiology_files],
+            key = cache.key([self.reader.ismrmrd_file, *physiology_files],
                             {'implementation': implementation,
                              'physiological_reader': self.physiological_reader.cache_parameters,
                              'physio_clock_drift_seconds': self.physio_clock_drift_seconds})
             def build(path):
                 arrays = self._prepare_data()
-                with h5py.File(path, 'w') as handle:
-                    write_tree(handle, arrays)
-                    metadata = handle.create_group('_cache')
-                    metadata.attrs['kind'] = 'dict'
-                    entries = {'synchronization': self.synchronization,
-                               'physiological_metadata': self.physiological_reader.metadata,
-                               'uses_kz_as_volume_axis': self._uses_kz_as_volume_axis}
-                    metadata.attrs['keys'] = json.dumps(list(entries))
-                    write_tree(metadata, entries)
-            lease = acquire_cached(cache_root, 'preprocessed', key, '.h5', build,
-                                   remove=remove_temporary_data_after_run)
+                metadata = {'synchronization': self.synchronization,
+                            'physiological_metadata': self.physiological_reader.metadata,
+                            'uses_kz_as_volume_axis': self._uses_kz_as_volume_axis}
+                write_preprocessed_cache(path, arrays, metadata)
+            lease = cache.acquire_preprocessed(key, build)
             cached_path = str(lease.path)
-            with h5py.File(lease.path, 'r') as handle:
-                data = read_tree(handle)
-            metadata = data.pop('_cache')
+            data, metadata = read_preprocessed_cache(lease.path)
             self.synchronization = metadata['synchronization']
             self.physiological_reader.metadata = metadata['physiological_metadata']
             self._uses_kz_as_volume_axis = metadata['uses_kz_as_volume_axis']
