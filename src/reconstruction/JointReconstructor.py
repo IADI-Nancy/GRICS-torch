@@ -484,24 +484,21 @@ class JointReconstructor:
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss-Newton joint reconstruction
     # ----------------------------------------------------------------------
-    def run(self, *, defer_tensor_export: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
+    def run(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``(image, motion)`` from the configured multi-resolution run.
 
-        defer_tensor_export leaves enabled tensor exports to the caller without
-        changing configuration. Logs, metadata and plots retain their normal behavior.
+        Call ``write_reconstruction`` after any postprocessing to save final tensors.
+        Call ``finish_run()`` at the end of the interval to include in the run log.
+        Solver logs, metadata and final image/motion plots are produced during this run.
 
         The shared image is ``[Nx, Ny, (Nz)]``. Motion is ``[Nalpha, Nm]`` for
         rigid or ``[Nalpha, Nx, Ny, (Nz), Ns]`` for non-rigid reconstruction.
         """
-        if type(defer_tensor_export) is not bool:
-            raise ValueError('defer_tensor_export must be a boolean.')
         resolution_levels = self.params.ResolutionLevels
         iterations_per_level = _parse_gn_iterations_per_level(self.params, resolution_levels)
         gn_early_stopping = bool(self.params.gn_early_stopping)
         update_final_motion = bool(self.params.update_motion_on_final_iteration)
         logger = JointReconstructionLogger(self.params, iterations_per_level, self.motion_plot_context)
-        if defer_tensor_export and self.params.save_reconstruction_tensors:
-            logger.append("Tensor export: deferred to caller; save_reconstruction_tensors remains enabled.")
         logger.start_run()
         previous = None
         final_best_image = None
@@ -545,9 +542,14 @@ class JointReconstructor:
             final_motion = final_best_motion if final_best_motion is not None else previous["MotionModel"]
 
         image_unscaled = final_image * self.kspace_scale
-        logger.save_final_outputs(image_unscaled, final_motion, defer_tensor_export=defer_tensor_export)
-        logger.run_finished()
+        logger.finish_reconstruction(image_unscaled, final_motion)
+        self._run_logger = logger
         return image_unscaled, final_motion
+
+    def finish_run(self):
+        """Log elapsed time and write residual plots after the caller's chosen output step."""
+        self._run_logger.run_finished()
+        del self._run_logger
 
     # ----------------------------------------------------------------------
     # External integration API

@@ -43,7 +43,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pipelines._inputs import (
-    data_type_from_raw_data_file as classify_input, resolve_input_files,
+    data_type_from_raw_data_file, resolve_input_files,
     publish_preprocessed_cache,
 )
 from src.utils.ismrmrd_io import acquisition_header
@@ -106,10 +106,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument('--save-reconstruction-logs', action=argparse.BooleanOptionalAction, default=None)
     return parser.parse_args(argv)
 
-
-
-def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = None) -> str:
-    return classify_input(raw_data_file, saec_file, dimension="2D")
 
 
 def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, output_root=OUTPUT_ROOT,

@@ -29,7 +29,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pipelines._inputs import (
-    data_type_from_raw_data_file as classify_input, resolve_input_files,
+    data_type_from_raw_data_file, resolve_input_files,
     publish_preprocessed_cache,
 )
 
@@ -64,10 +64,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument('--dicom-series-number', type=int, default=1001)
     parser.add_argument('--no-dicom', action='store_true', help='Skip DICOM export.')
     return parser.parse_args(argv)
-
-
-def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = None) -> str:
-    return classify_input(raw_data_file, saec_file, dimension="3D")
 
 
 def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,

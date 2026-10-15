@@ -1,4 +1,4 @@
-"""Solver timing including text logs, with deferred tensor and DICOM exports."""
+"""Pipeline timing, configuration, and final output coordination."""
 from pathlib import Path
 import time
 
@@ -6,7 +6,7 @@ import torch
 
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.utils.ismrmrd_io import acquisition_header
-from src.runtime.output_layout import record_reconstruction
+from src.runtime.output_layout import write_reconstruction
 
 
 def reconstruction_overrides(output_root, device, overrides=None, *,
@@ -34,8 +34,6 @@ def synchronize(device):
 
 def timed_reconstruction(data):
     """Time construction, optimization and text logs; exclude tensor/DICOM export."""
-    # The pipeline exports final tensors after postprocessing/all workers finish.
-    # Defer the execution step explicitly; preserve the configured output policy.
     synchronize(data.kspace.device)
     started = time.perf_counter()
     voxel_spacing_mm = None
@@ -52,7 +50,8 @@ def timed_reconstruction(data):
         calibration_image_prior=getattr(data, 'grics_reference_image', None),
         voxel_spacing_mm=voxel_spacing_mm,
     )
-    image, motion = reconstructor.run(defer_tensor_export=True)
+    image, motion = reconstructor.run()
+    reconstructor.finish_run()
     synchronize(data.kspace.device)
     elapsed = time.perf_counter() - started
     return image, motion, elapsed
@@ -60,37 +59,14 @@ def timed_reconstruction(data):
 
 def export_reconstruction(params, result):
     """Write each final tensor once, after all reconstructions have finished."""
-    folder = Path(params.results_folder)
     result['log_file'] = (Path(params.logs_folder) / 'reconstruction.log'
                           if params.save_reconstruction_logs else None)
-    result['output_dir'] = folder
-    result['image_file'] = None
-    result['native_image_file'] = None
-    result['motion_file'] = None
-    if params.save_reconstruction_tensors:
-        folder.mkdir(parents=True, exist_ok=True)
-        result['image_file'] = folder / 'image_reconstructed.pt'
-        result['native_image_file'] = folder / 'image_reconstructed_native.pt'
-        result['motion_file'] = folder / 'motion_parameters.pt'
-        torch.save(result['image'], result['image_file'])
-        torch.save(result['native_image'], result['native_image_file'])
-        torch.save(result['motion'], result['motion_file'])
-    image_axes = ['x', 'y'] + (['z'] if result['image'].ndim == 3 else [])
-    motion_axes = (['component', 'motion_state'] if params.reconstruction_motion_type == 'rigid'
-                   else ['component'] + image_axes[1:])
-    if len(motion_axes) < result['motion'].ndim:
-        motion_axes.append('sensor')
-    metadata = {
-        key: value for key, value in result.items()
-        if key not in {'image', 'native_image', 'motion'}
-    }
-    record_reconstruction(
-        params, **metadata, status='complete', image_shape=list(result['image'].shape),
-        native_image_shape=list(result['native_image'].shape),
-        tensor_export='pipeline' if params.save_reconstruction_tensors else 'disabled',
-        motion_shape=list(result['motion'].shape), image_axes=image_axes, motion_axes=motion_axes,
-        motion_grid='reconstruction', motion_type=params.reconstruction_motion_type,
-    )
+    metadata = {key: value for key, value in result.items()
+                if key not in {'image', 'native_image', 'motion', 'image_stage'}}
+    paths = write_reconstruction(
+        params, result['image'], result['motion'], native_image=result['native_image'],
+        image_stage=result['image_stage'], record_paths=True, status='complete', tensor_export='pipeline', **metadata)
+    result.update(paths)
 
 
 def finish_run(data, results, timings, *, return_tensors, **metadata):

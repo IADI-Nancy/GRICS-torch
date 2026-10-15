@@ -153,3 +153,45 @@ def record_reconstruction(params, **metadata):
     current['resolution_levels'] = params.ResolutionLevels
     current['configuration'] = public_config(params)
     write_json(path, current)
+
+
+def reconstruction_axes(image, motion, motion_type):
+    image_axes = ['x', 'y'] + (['z'] if image.ndim == 3 else [])
+    motion_axes = (['component', 'motion_state'] if motion_type == 'rigid'
+                   else ['component'] + image_axes[1:])
+    if len(motion_axes) < motion.ndim:
+        motion_axes.append('sensor')
+    return image_axes, motion_axes
+
+
+def write_reconstruction(params, image, motion, *, native_image=None,
+                         image_stage='before_postprocessing', record_paths=False, **metadata):
+    """Save tensors; callers may supply completion status and export provenance."""
+    import torch
+
+    folder = Path(params.results_folder)
+    paths = {'output_dir': folder, 'image_file': None, 'native_image_file': None, 'motion_file': None}
+    if params.save_reconstruction_tensors:
+        folder.mkdir(parents=True, exist_ok=True)
+        paths['image_file'] = folder / 'image_reconstructed.pt'
+        paths['motion_file'] = folder / 'motion_parameters.pt'
+        torch.save(image.detach().cpu(), paths['image_file'])
+        if native_image is not None:
+            paths['native_image_file'] = folder / 'image_reconstructed_native.pt'
+            native_output = native_image.detach().cpu() if torch.is_tensor(native_image) else native_image
+            torch.save(native_output, paths['native_image_file'])
+        torch.save(motion.detach().cpu(), paths['motion_file'])
+    image_axes, motion_axes = reconstruction_axes(image, motion, params.reconstruction_motion_type)
+    details = dict(metadata)
+    if record_paths:
+        details.update(paths)
+    details.setdefault('status', 'reconstructed')
+    details['tensor_export'] = details.get('tensor_export', 'solver') if params.save_reconstruction_tensors else 'disabled'
+    details.update(image_stage=image_stage,
+                   image_shape=list(image.shape), motion_shape=list(motion.shape),
+                   image_axes=image_axes, motion_axes=motion_axes,
+                   motion_grid='reconstruction', motion_type=params.reconstruction_motion_type)
+    if native_image is not None:
+        details['native_image_shape'] = list(native_image.shape)
+    record_reconstruction(params, **details)
+    return paths

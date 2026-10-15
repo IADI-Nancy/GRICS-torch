@@ -1,4 +1,4 @@
-"""Shared selection and validation for preprocessed or raw acquisitions."""
+"""Pipeline input selection and raw/preprocessed data type detection."""
 from pathlib import Path
 import os
 import shutil
@@ -12,7 +12,7 @@ def resolve_input_files(raw_data_file, saec_file=None, preprocessed_file=None):
     if preprocessed_file is not None:
         preferred = Path(preprocessed_file).expanduser()
         if preferred.exists():
-            kind = data_type_from_raw_data_file(preferred, dimension="2D")
+            kind = data_type_from_raw_data_file(preferred)
             if kind != "preprocessed-real":
                 raise ValueError("preprocessed_file must contain preprocessed HDF5 data.")
             return preferred, None
@@ -28,7 +28,7 @@ def require_existing_file(path: Path, name: str) -> None:
         raise FileNotFoundError(f"{name} does not exist or is not a file: {path}")
 
 
-def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = None, *, dimension="3D") -> str:
+def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = None) -> str:
     require_existing_file(raw_data_file, "raw_data_file")
     suffix = raw_data_file.suffix.lower()
     if suffix not in {".dat", ".h5", ".mrd"}:
@@ -38,13 +38,6 @@ def data_type_from_raw_data_file(raw_data_file: Path, saec_file: Path | None = N
             if "kspace" in source:
                 if saec_file is not None:
                     raise ValueError("Preprocessed HDF5 already contains physiology; omit saec_file.")
-                required = {"kspace", "motion_data", "idx_ky", "idx_kz", "idx_nex"}
-                missing = required - set(source)
-                if missing:
-                    raise ValueError(f"Preprocessed HDF5 is missing datasets: {sorted(missing)}")
-                shape = source["kspace"].shape
-                if len(shape) != 5 or any(size < 1 for size in shape) or (dimension == "3D" and shape[-1] <= 1):
-                    raise ValueError(f"Expected {dimension} kspace [coils, repetitions, Nx, Ny, Nz], got {shape}.")
                 return "preprocessed-real"
     if saec_file is None:
         raise ValueError("saec_file is required for Siemens/ISMRMRD raw input.")
