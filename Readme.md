@@ -52,6 +52,10 @@ Four demo notebooks cover simulated and real-data reconstruction. Simulations an
 
 ## Configuration
 
+See [Configuration architecture](docs/architecture/configuration.md) for the
+directory structure, file ownership, loading order, defaults, overrides, motion
+includes, validation, and how the resolved settings reach runtime consumers.
+
 - `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
 - `config/coil_sensitivity/*.toml`: settings for the coil-sensitivity method named by `coil_sensitivity_config` in the reconstruction TOML; loaded automatically
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
@@ -188,7 +192,7 @@ Each repetition independently shuffles ky lines in 2D, or all retained `(ky, kz)
 ## Motion Simulation Modes
 
 Configured with one variable:
-- `simulated_motion_type`: `"rigid-realistic"`, `"rigid-per-shot"`, `"non-rigid-realistic"`, `"non-rigid-per-shot"`, or `"as-it-is"`.
+- `simulated_motion_type`: `"rigid-per-readout"`, `"rigid-per-shot"`, `"non-rigid-per-readout"`, `"non-rigid-per-shot"`, or `"as-it-is"`.
 
 `simulated_motion_type` is configured in `config/motion_simulation/*.toml`. Reconstruction independently uses `reconstruction_motion_type` (`"rigid"` or `"non-rigid"`) from `config/reconstruction/*.toml`.
 Implemented in `src/preprocessing/MotionSimulator.py`.
@@ -205,7 +209,7 @@ Shot-wise rigid states:
 - random `(tx, ty, phi)` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case) per shot in configured ranges
 - piecewise-constant motion in ky-time according to shot order
 
-### `rigid-realistic`
+### `rigid-per-readout`
 
 Continuous rigid curve over full acquisition:
 - random event times over the acquired readouts across all repetitions
@@ -224,7 +228,7 @@ Shot-wise non-rigid with fixed spatial basis maps:
 - one random scalar per shot (`s`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
 - displacement at state `m`: `[ux, uy, (uz)] = [alpha_x, alpha_y, (alpha_z)] * s[m]`
 
-### `non-rigid-realistic`
+### `non-rigid-per-readout`
 
 Continuous sinusoidal temporal curve:
 - random phase
@@ -255,7 +259,7 @@ Key points:
 
 State-count rules:
 - `rigid-per-shot` and `non-rigid-per-shot`: `N_motion_states` is automatically replaced by the shot count; changes are announced.
-- `rigid-realistic`, `non-rigid-realistic`, and `as-it-is`: `N_motion_states` stays at the manual reconstruction value
+- `rigid-per-readout`, `non-rigid-per-readout`, and `as-it-is`: `N_motion_states` stays at the manual reconstruction value
 
 For real data with generated sampling, configured shot counts are preserved and `Nex` must match the array. With `from-data` sampling and per-shot simulated motion, each recorded readout is a state; the count is resolved from the actual acquisition indices after loading.
 

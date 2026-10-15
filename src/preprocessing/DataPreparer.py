@@ -157,9 +157,9 @@ class DataPreparer:
 
     def _prepare_motion_simulator_inputs(self):
         motion_sim_device = self.t_device
-        # Realistic motion can retain one sparse warp per readout; build those
+        # Per-readout motion can retain one sparse warp per readout; build those
         # operators on the CPU to avoid exhausting GPU memory.
-        if self.params.simulated_motion_type.endswith("-realistic"):
+        if self.params.simulated_motion_type.endswith("-per-readout"):
             motion_sim_device = torch.device("cpu")
 
         input_ifft_image = self.input_ifft_image.to(motion_sim_device)
@@ -204,13 +204,13 @@ class DataPreparer:
         if self.params.simulated_motion_type.startswith("rigid-"):
             if self.params.simulated_motion_type.endswith("-per-shot"):
                 motionSimulator.simulate_discrete_rigid_motion()
-            elif self.params.simulated_motion_type.endswith("-realistic"):
-                motionSimulator.simulate_realistic_rigid_motion()
+            elif self.params.simulated_motion_type.endswith("-per-readout"):
+                motionSimulator.simulate_per_readout_rigid_motion()
         elif self.params.simulated_motion_type.startswith("non-rigid-"):
             if self.params.simulated_motion_type.endswith("-per-shot"):
                 motionSimulator.simulate_discrete_non_rigid_motion()
-            elif self.params.simulated_motion_type.endswith("-realistic"):
-                motionSimulator.simulate_realistic_non_rigid_motion()
+            elif self.params.simulated_motion_type.endswith("-per-readout"):
+                motionSimulator.simulate_per_readout_non_rigid_motion()
 
         self.kspace = motionSimulator.get_corrupted_kspace().to(self.t_device)
         self.image_no_moco = motionSimulator.get_corrupted_image().to(self.t_device)

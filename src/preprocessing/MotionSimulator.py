@@ -194,7 +194,7 @@ class MotionSimulator:
 
         return navigator, tx, ty, tz, rx, ry, rz
 
-    def simulate_realistic_rigid_motion(self):
+    def simulate_per_readout_rigid_motion(self):
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
         n_states = num_motion_readouts(self.ky_idx)
 
@@ -488,7 +488,7 @@ class MotionSimulator:
         signal = signal / torch.clamp(torch.max(torch.abs(signal)), min=1e-12)
         return signal
 
-    def simulate_realistic_non_rigid_motion(self):
+    def simulate_per_readout_non_rigid_motion(self):
         print("Simulating realistic non-rigid motion fields...")
 
         # One global motion state per acquired readout.

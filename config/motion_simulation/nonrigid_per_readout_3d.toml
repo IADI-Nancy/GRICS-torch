@@ -7,7 +7,7 @@ motion_simulation_config_dimension = "3D"
 # shared parameters supplied by include above; change the included file when changing models.
 # Additionally requires nonrigid_motion_amplitude, nonrigid_resp_cycles_min and
 # nonrigid_resp_cycles_max; omit nonrigid_discrete_s_scale.
-simulated_motion_type = "non-rigid-realistic"
+simulated_motion_type = "non-rigid-per-readout"
 # Global scale for synthetic non-rigid displacement fields.
 nonrigid_motion_amplitude = 2.0
 # Inclusive range of random respiratory cycles over the full acquisition.

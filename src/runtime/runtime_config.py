@@ -351,7 +351,7 @@ def validate_sampling_size(params, ny, nz):
 def _validate_motion(cfg):
     _require(cfg, {'simulated_motion_type'}, 'motion')
     mode = cfg['simulated_motion_type']
-    _choice(mode, 'simulated_motion_type', {'as-it-is', 'rigid-realistic', 'rigid-per-shot', 'non-rigid-realistic', 'non-rigid-per-shot'})
+    _choice(mode, 'simulated_motion_type', {'as-it-is', 'rigid-per-readout', 'rigid-per-shot', 'non-rigid-per-readout', 'non-rigid-per-shot'})
     supplied = cfg.keys() & (_RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
     if mode == 'as-it-is':
         if cfg['data_type'] not in REAL_DATA_TYPES or cfg['kspace_sampling_type'] != 'from-data':
@@ -370,7 +370,7 @@ def _validate_motion(cfg):
             required |= {'max_tx', 'max_ty', 'max_phi', 'max_center_x', 'max_center_y'}
         else:
             required |= {'max_tx_3d', 'max_ty_3d', 'max_tz_3d', 'max_rx_3d', 'max_ry_3d', 'max_rz_3d', 'max_center_x_3d', 'max_center_y_3d', 'max_center_z_3d'}
-        if mode.endswith('-realistic'):
+        if mode.endswith('-per-readout'):
             required |= {'num_motion_events', 'motion_tau'}
     else:
         common = _NONRIGID_MOTION_KEYS - {'nonrigid_discrete_s_scale', 'nonrigid_motion_amplitude', 'nonrigid_resp_cycles_min', 'nonrigid_resp_cycles_max'}
@@ -395,7 +395,7 @@ def _validate_motion(cfg):
             _number(cfg[key], key, positive=True)
         _number(cfg['nonrigid_diaphragm_level'], 'nonrigid_diaphragm_level', minimum=-1, maximum=1)
         _number(cfg['nonrigid_anterior_bias'], 'nonrigid_anterior_bias', minimum=0, maximum=1)
-        if mode.endswith('-realistic'):
+        if mode.endswith('-per-readout'):
             if cfg['nonrigid_resp_cycles_min'] > cfg['nonrigid_resp_cycles_max']:
                 raise ValueError('nonrigid_resp_cycles_min cannot exceed nonrigid_resp_cycles_max.')
 
@@ -673,5 +673,5 @@ def validate_motion_readout_count(params, readouts):
     """Validate motion-state/event counts when acquisition size is known."""
     if type(params.N_motion_states) is int and params.N_motion_states > readouts:
         raise ValueError('N_motion_states cannot exceed the number of acquired readouts.')
-    if params.simulated_motion_type == 'rigid-realistic' and params.num_motion_events > readouts:
+    if params.simulated_motion_type == 'rigid-per-readout' and params.num_motion_events > readouts:
         raise ValueError('num_motion_events cannot exceed the number of acquired readouts.')
