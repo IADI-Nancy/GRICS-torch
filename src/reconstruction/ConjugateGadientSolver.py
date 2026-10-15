@@ -156,7 +156,8 @@ class ConjugateGradientSolver:
             tol      : tolerance
             differentiable : preserve autograd through CG when True. The default
                              False retains the validated inference behavior.
-            return_last_iterate : return the final PCG iterate, as in GRICS++.
+            return_last_iterate : return the final PCG iterate instead of the
+                                  iterate with the lowest recorded residual.
         """
         context = nullcontext() if differentiable else torch.no_grad()
         with context:
@@ -313,8 +314,9 @@ class ConjugateGradientSolver:
             }
 
             # Image solves retain the lowest recorded residual. Preconditioned
-            # motion solves use the final iterate, matching GRICS++. last_info
-            # describes the final attempted iteration in either case.
+            # motion solves can request the final iterate so their update stays
+            # consistent with the final Krylov state. last_info describes the
+            # final attempted iteration in either case.
             return x if return_last_iterate else best_x
         
     # --------------------------------------------------------------

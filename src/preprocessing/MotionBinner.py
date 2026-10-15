@@ -28,7 +28,7 @@ def _kmeans_torch(x, k, n_iter=20):
     return labels, centers
 
 def _quantize_motion_features(x, n_bins):
-    """Uniformly quantize every physiological channel, as in GRICS++."""
+    """Uniformly quantize each physiological channel into ``n_bins`` levels."""
     if n_bins < 2:
         raise ValueError("motion_quantization_bins must be at least 2.")
     lower = x.amin(dim=0)
@@ -72,7 +72,7 @@ def _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx):
 
 
 def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
-    """GRICS++ virtual-time quantization and k-space-energy state selection."""
+    """Quantize virtual times and select motion states by k-space energy."""
     quantized = _quantize_motion_features(x, n_quantization_bins)
     virtual_states, inverse = torch.unique(quantized, dim=0, return_inverse=True)
     n_virtual = int(virtual_states.shape[0])
@@ -99,7 +99,8 @@ def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
     virtual_labels = distances.argmin(dim=1)
     labels = virtual_labels[inverse]
 
-    # GRICS++ represents a cluster by its selected high-energy virtual time.
+    # Represent each cluster by the mean samples at its selected high-energy
+    # virtual time, preserving the physiological units of the input features.
     centers = torch.empty((k, x.shape[1]), dtype=x.dtype, device=x.device)
     for state, virtual_idx in enumerate(selected):
         samples = inverse == virtual_idx

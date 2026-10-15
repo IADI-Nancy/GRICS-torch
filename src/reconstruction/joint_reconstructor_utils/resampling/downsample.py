@@ -97,16 +97,16 @@ def reduce_motion_states(sampling_indices, target_states, motion_signal, params,
             raise ValueError(
                 "Resolution-specific k-space is required for kspace_energy reduction."
             )
-        # Recompute state energy after the resolution crop, exactly where
-        # GRICS++ selects its resolution-specific virtual times.
+        # Recompute state energy after cropping so state selection reflects the
+        # frequencies that are present at this resolution.
         weights.zero_()
         for nex in range(params.Nex):
             for state in range(full_states):
                 indices = sampling_indices[nex][state].long()
                 if indices.numel() > 0:
                     weights[state] += kspace[:, nex, indices].abs().square().sum()
-        # GRICS++ keeps the highest-energy states at each resolution and
-        # attaches every remaining state to its nearest retained state.
+        # Keep the highest-energy states at this resolution and attach every
+        # remaining state to its nearest retained state in motion-signal space.
         selected = torch.argsort(weights, descending=True, stable=True)[:target_states]
         centers = motion_signal[selected].clone()
         labels = torch.cdist(motion_signal, centers).argmin(dim=1)

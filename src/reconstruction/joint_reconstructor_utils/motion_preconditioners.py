@@ -1,8 +1,9 @@
-"""GRICS++ pseudo Gauss-Seidel motion factors for 2D and 3D non-rigid fields.
+"""Pseudo Gauss-Seidel motion factors for 2D and 3D non-rigid fields.
 
-The C++ working component order is phase, [partition,] readout: Torch
-(y, [z,] x). Its flat offsets cross row and component boundaries by design.
-Triangular solves run in compiled CPU code, including for CUDA reconstructions.
+The factor layout orders components as phase, [partition,] readout, equivalent
+to Torch axes (y, [z,] x). Its flat offsets cross row and component boundaries
+by design. Triangular solves run in compiled CPU code, including for CUDA
+reconstructions.
 """
 from __future__ import annotations
 
@@ -37,10 +38,10 @@ def _solve_factors(diagonals, offsets, rhs):
 
 
 class PseudoGaussSeidelMotionPreconditioner:
-    """C1 and C2 from C++ MotionModelPerturbationSimulator::createPreconditioner.
+    """Build banded factors for a pseudo Gauss-Seidel motion preconditioner.
 
     ``local_normal`` has shape [component*sensor, component*sensor, x, y[, z]].
-    Factors use complex64 storage, matching the C++ implementation.
+    Factors use complex64 storage to limit the CPU memory and transfer cost.
     """
 
     def __init__(self, local_normal, *, lambda_scaled, voxel_spacing):
@@ -62,7 +63,8 @@ class PseudoGaussSeidelMotionPreconditioner:
         self.spatial_shape = spatial_shape
         self.nvoxels = int(np.prod(spatial_shape))
         sensors = count // dimensions
-        # C++ stores phase first, partition second when present, readout last.
+        # Store phase first, partition second when present, and readout last so
+        # unit spatial strides map to the corresponding band offsets.
         self.component_order = tuple(range(1, dimensions)) + (0,)
         self.inverse_component_order = tuple(self.component_order.index(d)
                                               for d in range(dimensions))
@@ -94,7 +96,7 @@ class PseudoGaussSeidelMotionPreconditioner:
     @classmethod
     def from_warped_gradients(cls, gradients, motion_signal: torch.Tensor,
                               *, lambda_scaled: float, voxel_spacing: tuple[float, ...]):
-        """Build C++'s local RᴴR approximation from every virtual time."""
+        """Build the local RᴴR approximation from every motion state."""
         gradients = iter(gradients)
         first = next(gradients, None)
         if first is None:
@@ -138,7 +140,7 @@ class PseudoGaussSeidelMotionPreconditioner:
         dimensions = 3 if nz > 1 else 2
         if (jacobian.motionOperator.motion_type != 'non-rigid'
                 or jacobian.Nalpha != dimensions):
-            raise ValueError('GRICS++ factors require 2D or 3D non-rigid motion.')
+            raise ValueError('Pseudo Gauss-Seidel factors require 2D or 3D non-rigid motion.')
         spatial_shape = (nx, ny, nz) if dimensions == 3 else (nx, ny)
 
         def warped_gradients():
@@ -155,7 +157,7 @@ class PseudoGaussSeidelMotionPreconditioner:
             lambda_scaled=lambda_scaled, voxel_spacing=voxel_spacing,
         )
 
-    def _to_cpp_layout(self, residual):
+    def _to_factor_layout(self, residual):
         if residual.numel() != self.count * self.nvoxels:
             raise ValueError('Unexpected number of motion parameters.')
         sensors = self.count // self.dimensions
@@ -165,7 +167,7 @@ class PseudoGaussSeidelMotionPreconditioner:
             return field.permute(0, 4, 1, 3, 2).contiguous().reshape(-1)
         return field.permute(0, 3, 1, 2).contiguous().reshape(-1)
 
-    def _from_cpp_layout(self, values):
+    def _from_factor_layout(self, values):
         sensors = self.count // self.dimensions
         if self.dimensions == 3:
             nx, ny, nz = self.spatial_shape
@@ -176,7 +178,7 @@ class PseudoGaussSeidelMotionPreconditioner:
         return field[list(self.inverse_component_order)].reshape(-1)
 
     def __call__(self, residual):
-        values = self._to_cpp_layout(residual).detach().cpu().numpy()
+        values = self._to_factor_layout(residual).detach().cpu().numpy()
         result = _solve_factors(self.diagonals, self.offsets, values)
-        return self._from_cpp_layout(
+        return self._from_factor_layout(
             torch.from_numpy(result).to(device=residual.device, dtype=residual.dtype))

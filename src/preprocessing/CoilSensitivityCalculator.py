@@ -25,7 +25,7 @@ class CoilSensitivityCalculator:
 
         if method == "espirit":
             return self.calculate_espirit(kspace, reference_kspace=reference_kspace)
-        return self.calculate_iadi_spline(kspace, reference_kspace=reference_kspace)
+        return self.calculate_odille_spline(kspace, reference_kspace=reference_kspace)
 
     @staticmethod
     def _average_repetitions(kspace):
@@ -160,11 +160,7 @@ class CoilSensitivityCalculator:
         smoothed = ifftnc(y_fft / denominator, dims=(-2, -1))
         return smoothed
 
-    def calculate_iadi_spline(self, kspace, reference_kspace=None):
-        # Match GRICS++ AutoCalibrationSensitivityReader: the classic GRICS
-        # input contains the imaging KspaceData, not the separate ISMRMRD
-        # reference buffer.  For these fully sampled TSE acquisitions the full
-        # averaged imaging k-space is used to form the autocalibration images.
+    def calculate_odille_spline(self, kspace, reference_kspace=None):
         del reference_kspace
         kspace_calib = self._average_repetitions(kspace).to(torch.complex64)
         coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
@@ -172,8 +168,8 @@ class CoilSensitivityCalculator:
         surface_abs = torch.abs(coil_images)
         reference_abs = torch.sqrt(torch.sum(surface_abs ** 2, dim=0).clamp_min(0.0))
 
-        # Match GRICS++ SensitivityMapCalculator::create_SensitivityMaps:
-        # stabilize the phase proxy at 5% of the global surface-coil maximum.
+        # Stabilize phase estimation in low-signal regions by flooring coil
+        # magnitudes at 5% of the global surface-coil maximum.
         threshold = 0.05 * torch.max(surface_abs)
         nonzero_surface_abs = torch.clamp(surface_abs, min=threshold.item())
         surface_phase = coil_images / nonzero_surface_abs
@@ -206,8 +202,9 @@ class CoilSensitivityCalculator:
 
         phase_factor = torch.exp(1j * torch.angle(surface_phase))
         eps = float(self.params.coil_sensitivity_eps)
-        # C++ divides by the smoothed reference directly.  Only guard exact
-        # numerical zeros; do not impose an additional relative intensity floor.
+        # Preserve the smoothed reference magnitude wherever it is positive;
+        # replace only exact zeros to avoid introducing an intensity-dependent
+        # floor into the sensitivity maps.
         reference_denominator = torch.where(
             reference_abs > 0,
             reference_abs,

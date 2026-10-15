@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run one 2D breast subject and compare every reconstructed slice to GRICS++.
+"""Run one 2D breast subject and compare each slice with a reference result.
 
 This opt-in integration test uses the prepared 0079 T2 acquisition when it is
 available. Otherwise it prepares the available ISMRMRD and SAEC inputs.
@@ -47,7 +47,7 @@ def _cpp_slice_folders(subject_root: Path) -> dict[int, Path]:
             folders[int(match.group(1))] = folder
     expected = list(range(1, len(folders) + 1))
     if sorted(folders) != expected:
-        raise ValueError(f'{subject_root}: GRICS++ slice folders must be contiguous; got {sorted(folders)}.')
+        raise ValueError(f'{subject_root}: reference slice folders must be contiguous; got {sorted(folders)}.')
     return folders
 
 
@@ -56,7 +56,7 @@ def _load_cpp_slice(folder: Path) -> np.ndarray:
     dimensions = xml.find('./PreProcessing/Dimensions')
     nx, ny, nz = (int(dimensions.attrib[key]) for key in ('Nx', 'Ny', 'Nz'))
     if nz != 1:
-        raise ValueError(f'{folder}: expected a 2D GRICS++ image, got Nz={nz}.')
+        raise ValueError(f'{folder}: expected a 2D reference image, got Nz={nz}.')
     name = xml.find('./PostProcessing/ReconstructedImage').attrib['FileName']
     image_path = folder / f'{name}.0000'
     image = np.fromfile(image_path, dtype='<c8')
@@ -74,7 +74,7 @@ def _torch_magnitude(image: torch.Tensor) -> np.ndarray:
 
 def _metrics(torch_image: np.ndarray, cpp_image: np.ndarray) -> dict[str, float]:
     if torch_image.shape != cpp_image.shape:
-        raise ValueError(f'Torch/GRICS++ shape mismatch: {torch_image.shape} versus {cpp_image.shape}.')
+        raise ValueError(f'Torch/reference shape mismatch: {torch_image.shape} versus {cpp_image.shape}.')
     denominator = float(np.vdot(torch_image.ravel(), torch_image.ravel()).real)
     if denominator <= 0:
         raise ValueError('Torch image has zero magnitude.')
@@ -82,7 +82,7 @@ def _metrics(torch_image: np.ndarray, cpp_image: np.ndarray) -> dict[str, float]
     aligned = torch_image * scale
     reference_norm = float(np.linalg.norm(cpp_image))
     if reference_norm <= 0:
-        raise ValueError('GRICS++ image has zero magnitude.')
+        raise ValueError('Reference image has zero magnitude.')
     data_range = float(max(aligned.max(), cpp_image.max()) - min(aligned.min(), cpp_image.min()))
     if data_range <= 0:
         raise ValueError('Images have zero comparison range.')
@@ -102,7 +102,7 @@ def _metric_label(summary: dict[str, float]) -> str:
 
 def _write_comparison_image(rows: list[dict], torch_image: np.ndarray, cpp_image: np.ndarray,
                             central_slice: int, run_folder: Path) -> Path:
-    """Save the central axial slice, with display scaling shared with GRICS++."""
+    """Save the central axial slice using one display scale for both images."""
     central = next(row for row in rows if row['slice_number'] == central_slice)
     aligned_torch = torch_image * float(central['scale_torch_to_grics_cpp'])
     vmax = max(float(np.quantile(aligned_torch, .995)), float(np.quantile(cpp_image, .995)))
@@ -114,7 +114,7 @@ def _write_comparison_image(rows: list[dict], torch_image: np.ndarray, cpp_image
         'std_ssim': float(np.std([row['ssim'] for row in rows])),
     }
     figure, axes = plt.subplots(1, 2, figsize=(10, 5), constrained_layout=True)
-    for axis, name, image in zip(axes, ('GRICS-torch', 'GRICS++'), (aligned_torch, cpp_image)):
+    for axis, name, image in zip(axes, ('GRICS-torch', 'Reference'), (aligned_torch, cpp_image)):
         axis.imshow(image.T, cmap='gray', origin='lower', vmin=0, vmax=vmax)
         axis.set_title(f'Axial slice {central_slice}: {name}')
         axis.axis('off')
@@ -134,14 +134,14 @@ def _metric_image(item: dict, cpp_image: np.ndarray) -> tuple[np.ndarray, str]:
         image = _torch_magnitude(native_image)
         if image.shape != cpp_image.shape:
             raise ValueError(
-                f'Native Torch image shape {image.shape} differs from GRICS++ {cpp_image.shape}.')
+                f'Native Torch image shape {image.shape} differs from reference {cpp_image.shape}.')
         return image, 'pipeline native image'
     native_path = item.get('native_image_file')
     if native_path is not None and Path(native_path).is_file():
         image = _torch_magnitude(torch.load(native_path, map_location='cpu', weights_only=True))
         if image.shape != cpp_image.shape:
             raise ValueError(
-                f'Native Torch image shape {image.shape} differs from GRICS++ {cpp_image.shape}.')
+                f'Native Torch image shape {image.shape} differs from reference {cpp_image.shape}.')
         return image, str(native_path)
     raise RuntimeError(
         'This comparison requires the native image before zero filling. '
@@ -153,7 +153,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
                 output_root: Path = ROOT / 'runs/test_real_2d_subject', device: str = 'cpu',
                 max_workers: int | None = None,
                 slice_start: int = 0, slice_stop: int | None = None) -> dict:
-    """Reconstruct one subject and compare all of its axial slices with GRICS++."""
+    """Reconstruct one subject and compare all axial slices with reference data."""
     if not re.fullmatch(r'\d{4}', subject):
         raise ValueError(f'Subject must be a four-digit identifier, got {subject!r}.')
     if sequence not in ('s', 'm'):
@@ -185,7 +185,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
     for item in result['reconstructions']:
         number = int(item['slice_number'])
         if number not in cpp_folders:
-            raise ValueError(f'No GRICS++ image for Torch slice {number}.')
+            raise ValueError(f'No reference image for Torch slice {number}.')
         cpp_image = _load_cpp_slice(cpp_folders[number])
         torch_image, source = _metric_image(item, cpp_image)
         rows.append({'slice_number': number, 'torch_metric_image_source': source,
@@ -193,7 +193,7 @@ def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATAS
         if number == central_slice:
             central_images = torch_image, cpp_image
     if central_images is None:
-        raise ValueError(f'Central GRICS++ slice {central_slice} was not reconstructed.')
+        raise ValueError(f'Central reference slice {central_slice} was not reconstructed.')
 
     summary = {
         'subject': acquisition,

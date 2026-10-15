@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the configured 3D breast reconstruction for 0079 and compare it with GRICS++.
+"""Run the configured 3D breast reconstruction and compare it with reference data.
 
 The reconstruction parameters come exclusively from
 ``config/reconstruction/nonrigid_3d_breast.toml``.  The script only selects the
@@ -47,7 +47,8 @@ def _load_cpp_volume(folder: Path) -> np.ndarray:
     values = np.fromfile(path, dtype='<c8')
     if values.size != nx * ny * nz:
         raise ValueError(f'{path}: expected {nx * ny * nz} complex values, got {values.size}.')
-    # GRICS++ writes native axial partitions, then transpose into [x, y, z].
+    # The stored volume lists axial partitions first; transpose it to the
+    # reconstruction layout [x, y, z].
     return np.abs(values.reshape(nz, nx, ny).transpose(1, 2, 0)).copy()
 
 
@@ -106,7 +107,7 @@ def _metric_label(metrics: dict[str, float]) -> str:
 def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder: Path,
                       cpp_folder: Path) -> dict:
     if torch_image.shape != cpp_image.shape:
-        raise ValueError(f'Torch/GRICS++ shape mismatch: {torch_image.shape} versus {cpp_image.shape}.')
+        raise ValueError(f'Torch/reference shape mismatch: {torch_image.shape} versus {cpp_image.shape}.')
     rows = [{'axial_slice': z + 1, **_slice_metrics(torch_image[:, :, z], cpp_image[:, :, z])}
             for z in range(torch_image.shape[2])]
     summary = _summary(rows)
@@ -125,7 +126,7 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
     folder.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(3, 2, figsize=(10, 13), constrained_layout=True)
     planes = ('Axial (z=1/2)', 'Sagittal (y=3/4)', 'Coronal (x=3/4-10)')
-    images = (('GRICS-torch', aligned_torch), ('GRICS++', cpp_image))
+    images = (('GRICS-torch', aligned_torch), ('Reference', cpp_image))
     vmax = max(float(np.quantile(image, .995)) for _, image in images)
     for row, plane_name in enumerate(planes):
         for column, (name, image) in enumerate(images):
@@ -155,7 +156,7 @@ def _write_comparison(torch_image: np.ndarray, cpp_image: np.ndarray, run_folder
 def run_subject(subject: str, *, sequence: str = 's', dataset_root: Path = DATASET_ROOT,
                 raw_root: Path = RAW_ROOT, output_root: Path = REPO_ROOT / 'runs/test_real_3d_subject',
                 device: str = 'gpu') -> dict:
-    """Reconstruct one 3D subject and compare it with its GRICS++ result."""
+    """Reconstruct one 3D subject and compare it with its reference result."""
     if not re.fullmatch(r'\d{4}', subject):
         raise ValueError(f'Subject must be a four-digit identifier, got {subject!r}.')
     if sequence not in ('s', 'm'):

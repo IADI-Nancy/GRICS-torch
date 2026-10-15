@@ -1,4 +1,4 @@
-"""Multiplicative calibration-image prior used by GRICS++."""
+"""Multiplicative calibration-image prior for intensity-weighted reconstruction."""
 
 import math
 

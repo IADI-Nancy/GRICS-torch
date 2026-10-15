@@ -99,7 +99,7 @@ class JointReconstructor:
             if (voxel_spacing_mm is None or len(voxel_spacing_mm) != spatial_dims
                     or any(not math.isfinite(float(value)) or float(value) <= 0
                            for value in voxel_spacing_mm)):
-                raise ValueError("GRICS++ scaling requires positive voxel_spacing_mm for each spatial dimension.")
+                raise ValueError("Voxel-aware regularization scaling requires positive voxel_spacing_mm for each spatial dimension.")
         self.voxel_spacing_mm = (tuple(float(value) for value in voxel_spacing_mm)
                                  if voxel_spacing_mm is not None else None)
         self.use_calibration_weighted_image = bool(getattr(params, "use_calibration_weighted_image", False))
