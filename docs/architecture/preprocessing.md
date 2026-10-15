@@ -17,11 +17,20 @@ flowchart TD
     PhysReader --> Raw
     Raw --> Loader[InputDataLoader]
     Preprocessed[Preprocessed HDF5] --> Loader
-    Synthetic[Image or Shepp-Logan phantom] --> Generator[SyntheticDataGenerator]
+    ImageFile[Input image file] --> Generator[SyntheticDataGenerator]
+    Phantom[Shepp-Logan parameters] --> Generator
     Generator --> Loader
     Loader --> Prepared[DataPreparer]
     Prepared --> Reconstruction[Reconstructor inputs]
+
+    classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef inputFile fill:#fef3c7,stroke:#d97706,color:#451a03
+    class MRD,PhysReader,Raw,Loader,Generator,Prepared pythonClass
+    class Siemens,ISMRMRD,Physiology,Preprocessed,ImageFile inputFile
 ```
+
+Blue nodes are Python classes. Amber nodes are input files. Uncolored nodes are
+parameters, processing steps, or outputs.
 
 For recorded data with `kspace_sampling_type = "from-data"`,
 `RawDataPreparer` synchronizes physiological signals with the recorded MRI
