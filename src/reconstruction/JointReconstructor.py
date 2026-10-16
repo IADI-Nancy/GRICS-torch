@@ -238,7 +238,7 @@ class JointReconstructor:
 
     def _n_motion_params(self, Data_res):
         if self.params.reconstruction_motion_type == "rigid":
-            return self.Nalpha * self.params.N_motion_states
+            return Data_res["MotionModel"].numel()
         return self.Nalpha * self.Nphysio * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
     def _build_pseudo_gauss_seidel_motion_preconditioner(self, jacobian, solver, data):
@@ -323,7 +323,7 @@ class JointReconstructor:
 
         # Restore either per-state rigid parameters or spatial motion fields.
         if self.params.reconstruction_motion_type == "rigid":
-            motion_perturb = mot_pert_vec.reshape(self.Nalpha, self.params.N_motion_states)
+            motion_perturb = mot_pert_vec.reshape_as(Data_res["MotionModel"])
         else:
             if int(Data_res.get("Nz", 1)) > 1:
                 motion_perturb = mot_pert_vec.reshape(self.Nalpha, Data_res["Nx"], Data_res["Ny"], Data_res["Nz"], self.Nphysio)
@@ -540,6 +540,15 @@ class JointReconstructor:
         else:
             final_image = final_best_image if final_best_image is not None else previous["ReconstructedImage"]
             final_motion = final_best_motion if final_best_motion is not None else previous["MotionModel"]
+
+        if self.params.reconstruction_motion_type == "rigid":
+            # Public outputs retain the original state ordering used by the navigator and plots.
+            full_motion = previous["RigidMotionModelFull"].to(final_motion.dtype).clone()
+            full_motion[:, previous["MotionStateIndices"]] = final_motion
+            missing_states = self.params.N_motion_states - final_motion.shape[1]
+            if missing_states:
+                print(f"[reconstruction] {missing_states} motion states have no samples at full resolution; returning their initial transforms.", flush=True)
+            final_motion = full_motion
 
         image_unscaled = final_image * self.kspace_scale
         logger.finish_reconstruction(image_unscaled, final_motion)

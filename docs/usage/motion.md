@@ -75,3 +75,7 @@ State-count rules:
 - `rigid-per-readout`, `non-rigid-per-readout`, and `as-it-is`: `N_motion_states` stays at the manual reconstruction value
 
 For real data with generated sampling, configured shot counts are preserved and `Nex` must match the array. With `from-data` sampling and per-shot simulated motion, each recorded readout is a state; the count is resolved from the actual acquisition indices after loading.
+
+At each resolution, reconstruction keeps only motion states with acquired samples inside the current k-space crop. A state is retained if it has samples in at least one repetition. This applies to both rigid and non-rigid reconstruction and needs no additional configuration; the actual count is reported in the resolution-level log. A crop without any acquired samples raises an error.
+
+Rigid reconstruction continues to fit an independent transform per active state. State identities are preserved between levels: existing estimates carry forward with translations scaled to the new grid, and newly visible states start from their supplied initial transforms or identity transforms when no initializer was given. The final rigid motion tensor retains the original full state ordering for API calls and plots. States without samples even at full resolution retain their initial transforms, with an explicit message. A list of different `N_motion_states` values still controls additional state merging for non-rigid reconstruction only.

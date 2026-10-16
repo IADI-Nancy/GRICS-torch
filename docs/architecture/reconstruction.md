@@ -33,9 +33,12 @@ it owns the reconstruction state and iteration policy.
 
 The full-resolution acquisition stays in `Data_full`. Each resolution has its
 own cropped k-space, resized coil maps, remapped sampling indices, and image
-and motion estimates. Non-rigid reconstruction may reduce motion states at
-coarser levels. The next level receives only the preceding image and motion
-estimates; temporary operators are released.
+and motion estimates. Resolution helpers remove states without acquired samples
+in the current crop; non-rigid reconstruction can additionally merge states.
+Rigid state IDs connect the compact per-level motion model to retained transforms
+in the original state order. The next level receives image and motion estimates
+with this mapping; temporary operators are released. Initialization and output
+semantics are in the [motion guide](../usage/motion.md#motion-binning-and-reconstruction-states).
 
 Within a Gauss–Newton iteration, fixed motion defines the encoding operator
 for the image solve. The updated image produces a k-space residual, which the

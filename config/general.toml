@@ -25,7 +25,7 @@ runtime_device = "gpu"
 # Keep seed present even when false; the loader always requires it.
 seed_enabled = true
 # Random seed used when seed_enabled is true; use any integer >= 0.
-seed = 1
+seed = 2
 # Select notebook-aware logging; true suppresses verbose/console logging unless overridden, false keeps configured logging.
 # Any automatic logging change is printed as an informational message.
 jupyter_notebook_flag = false

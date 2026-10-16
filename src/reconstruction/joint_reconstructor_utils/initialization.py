@@ -33,7 +33,8 @@ def apply_external_initializer(
             expected = (Nalpha, params.N_motion_states)
             if tuple(motion.shape) != expected:
                 raise ValueError(f"Rigid initial_motion must have shape {expected}.")
-            data["MotionModel"] = motion
+            data["RigidMotionModelFull"] = motion.clone()
+            data["MotionModel"] = motion[:, data["MotionStateIndices"]]
 
 
 def initialize_zero_image_and_motion(Data_res, *, params, device, Nalpha, Nphysio):
@@ -46,7 +47,9 @@ def initialize_zero_image_and_motion(Data_res, *, params, device, Nalpha, Nphysi
         Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=device)
 
     if params.reconstruction_motion_type == "rigid":
-        Data_res["MotionModel"] = torch.zeros((Nalpha, params.N_motion_states), device=device)
+        # Retain initial transforms for states that first appear at finer resolutions.
+        Data_res["RigidMotionModelFull"] = torch.zeros((Nalpha, params.N_motion_states), device=device)
+        Data_res["MotionModel"] = Data_res["RigidMotionModelFull"][:, Data_res["MotionStateIndices"]]
     elif params.reconstruction_motion_type == "non-rigid":
         if int(Data_res.get("Nz", 1)) > 1:
             Data_res["MotionModel"] = torch.zeros(

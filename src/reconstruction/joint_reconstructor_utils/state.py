@@ -16,10 +16,17 @@ def extract_image_and_motion_for_next_level(data):
     """
     if data is None:
         return None
-    return {
+    state = {
         "Nx": data["Nx"],
         "Ny": data["Ny"],
         "Nz": data.get("Nz", 1),
         "ReconstructedImage": data["ReconstructedImage"],
         "MotionModel": data["MotionModel"],
     }
+    if "RigidMotionModelFull" in data:
+        # Only active transforms were optimized; retain initial values for unseen states.
+        motion = data["RigidMotionModelFull"].to(data["MotionModel"].dtype).clone()
+        motion[:, data["MotionStateIndices"]] = data["MotionModel"]
+        state["RigidMotionModelFull"] = motion
+        state["MotionStateIndices"] = data["MotionStateIndices"]
+    return state

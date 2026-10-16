@@ -469,7 +469,7 @@ def _validate_reconstruction(cfg):
         states_per_level = [shot_count] * len(levels)
     full_states = max(states_per_level)
     if cfg['reconstruction_motion_type'] == 'rigid' and any(value != full_states for value in states_per_level):
-        raise ValueError('Per-level motion-state reduction requires non-rigid reconstruction.')
+        raise ValueError('Explicit per-level motion-state merging requires non-rigid reconstruction; empty states are removed automatically.')
     cfg['N_motion_states'] = full_states
     cfg['_motion_states_per_level'] = states_per_level
 

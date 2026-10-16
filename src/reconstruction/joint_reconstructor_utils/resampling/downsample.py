@@ -80,7 +80,7 @@ def downsample_kspace(Data_full, Nx_res, Ny_res, Nz_res=1):
 
 def reduce_motion_states(sampling_indices, target_states, motion_signal, params, device, kspace=None):
     full_states = int(motion_signal.shape[0])
-    if target_states == full_states:
+    if target_states >= full_states:
         return sampling_indices, motion_signal
 
     weights = torch.tensor(
@@ -177,8 +177,30 @@ def downsample_data(Data_full, res_factor, target_states, motion_signal, params,
         Data_full, Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
     )
     Data_res["KspaceData"] = downsample_kspace(Data_full, Nx, Ny, Nz_res=Nz)
+    # Exclude empty states before clustering so they cannot occupy cluster centers.
+    # Preserve original IDs whenever states are retained without merging (including rigid motion).
+    active_states = [state for state in range(motion_signal.shape[0])
+                     if any(states[state].numel() > 0 for states in sampling_indices)]
+    if not active_states:
+        raise ValueError(f"No acquired k-space samples remain at resolution factor {res_factor}; increase the coarsest resolution.")
+    state_indices = torch.tensor(active_states, dtype=torch.long, device=device)
+    sampling_indices = [[states[state] for state in active_states] for states in sampling_indices]
+    motion_signal = motion_signal[state_indices]
+    if target_states < len(active_states):
+        # Merged non-rigid states use cluster IDs rather than original state IDs.
+        state_indices = torch.arange(target_states, dtype=torch.long, device=device)
     Data_res["SamplingIndices"], Data_res["MotionSignal"] = reduce_motion_states(
         sampling_indices, target_states, motion_signal, params, device, kspace=Data_res["KspaceData"])
+    # Clustering can itself leave empty clusters, e.g. for identical signal values.
+    active_states = [state for state in range(Data_res["MotionSignal"].shape[0])
+                     if any(states[state].numel() > 0 for states in Data_res["SamplingIndices"])]
+    if not active_states:
+        raise ValueError(f"No acquired k-space samples remain at resolution factor {res_factor}; increase the coarsest resolution.")
+    active_indices = torch.tensor(active_states, dtype=torch.long, device=device)
+    Data_res["MotionStateIndices"] = state_indices[active_indices]
+    Data_res["SamplingIndices"] = [[states[state] for state in active_states]
+                                   for states in Data_res["SamplingIndices"]]
+    Data_res["MotionSignal"] = Data_res["MotionSignal"][active_indices]
     Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
     return Data_res

@@ -27,7 +27,7 @@ def configure_motion_states_per_resolution_level(params, motion_signal):
     if params.reconstruction_motion_type == "rigid" and any(
         value != full_states for value in motion_states_per_level
     ):
-        raise ValueError("Per-level motion-state reduction is supported only for non-rigid reconstruction.")
+        raise ValueError("Explicit per-level motion-state merging is supported only for non-rigid reconstruction; empty states are removed automatically.")
     return motion_states_per_level
 
 

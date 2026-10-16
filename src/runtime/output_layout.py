@@ -158,7 +158,7 @@ def record_reconstruction(params, **metadata):
 def reconstruction_axes(image, motion, motion_type):
     image_axes = ['x', 'y'] + (['z'] if image.ndim == 3 else [])
     motion_axes = (['component', 'motion_state'] if motion_type == 'rigid'
-                   else ['component'] + image_axes[1:])
+                   else ['component'] + image_axes)
     if len(motion_axes) < motion.ndim:
         motion_axes.append('sensor')
     return image_axes, motion_axes

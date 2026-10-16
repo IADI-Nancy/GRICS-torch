@@ -15,11 +15,9 @@ motion_preconditioner = true
 motion_gradient_boundary = "one_sided"
 
 # --- Motion-state binning ---
-# Motion states: a positive integer applies at every resolution level.
-# A list gives one positive count per ResolutionLevels entry, coarse to fine.
-# Different counts across levels require non-rigid reconstruction.
-# The largest count cannot exceed the available physiological samples.
-# Per-shot simulation uses the shot count and requires a scalar here.
+# Motion-state count: positive integer or one positive count per resolution level (coarse to fine).
+# Different per-level counts require non-rigid motion; empty states are omitted after each k-space crop.
+# Per-shot simulation requires a scalar and uses the shot count.
 N_motion_states = [4, 8, 16, 16]
 # Motion-state construction method. Allowed values: "kmeans" or "kspace_energy".
 # "kspace_energy" requires motion_quantization_bins (integer >= 2; e.g. 256).
