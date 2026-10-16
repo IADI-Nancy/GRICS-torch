@@ -18,6 +18,11 @@ flowchart TD
     CG[ConjugateGradientSolver] -->|"In: encoding or motion system<br/>Out: image or motion increment"| Solver
     Solver --> Result[Image and motion model]
 
+    %% Invisible links keep prepared inputs above all supporting components.
+    Prepared ~~~ Resampling
+    Prepared ~~~ Motion
+    Prepared ~~~ CG
+
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     class Solver coordinator
