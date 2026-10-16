@@ -16,15 +16,17 @@ flowchart TD
     Overrides[Run-specific overrides] -->|applied after files, before validation| Load
     Load -->|schema and cross-file validation; notebook logging policy| Params[Validated flat params namespace]
 
-    %% Layout-only links split the configuration sources across two rows.
-    General ~~~ Source
-    Reconstruction ~~~ Sampling
-    Coil ~~~ Motion
+    %% Layout-only nodes lift selected sources two ranks above the lower row.
+    General ~~~ GeneralGap[" "] ~~~ Source
+    Reconstruction ~~~ ReconstructionGap[" "] ~~~ Sampling
+    Coil ~~~ CoilGap[" "] ~~~ Motion
 
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
+    classDef layoutNode fill:transparent,stroke:transparent,color:transparent
     class General,Reconstruction,Coil,Source,Sampling,Motion pythonClass
     class Load coordinator
+    class GeneralGap,ReconstructionGap,CoilGap layoutNode
 ```
 
 Blue nodes are Python functions; uncolored nodes are parameters or outputs.

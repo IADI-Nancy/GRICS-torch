@@ -53,15 +53,17 @@ flowchart TD
     Export[export_reconstruction] -->|"In: final image, native image, motion model and metadata<br/>Out: saved paths and updated result metadata"| Pipeline
     Finish[finish_run] -->|"In: results and timings<br/>Out: run folder, timings and reconstruction results"| Pipeline
 
-    %% Layout-only links split the components across two rows.
-    Inputs ~~~ Runtime
-    Config ~~~ Preparer
-    Export ~~~ Finish
+    %% Layout-only nodes lift selected components two ranks above the lower row.
+    Inputs ~~~ InputsGap[" "] ~~~ Runtime
+    Config ~~~ ConfigGap[" "] ~~~ Preparer
+    Export ~~~ ExportGap[" "] ~~~ Finish
 
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef layoutNode fill:transparent,stroke:transparent,color:transparent
     class Pipeline coordinator
     class Inputs,Config,Runtime,Preparer,Solver,Execution,Export,Finish pythonClass
+    class InputsGap,ConfigGap,ExportGap layoutNode
 ```
 
 Arrow labels describe the source component's inputs and outputs.
