@@ -59,3 +59,6 @@ binning additionally requires prepared k-space.
 `GRICSPreparerAPI` reuses `MotionSamplingPreparer` for applications that already
 own their acquisition arrays. API usage is in the
 [README](../../Readme.md#data-preparation-api).
+
+The resulting tensors and sampling layout are consumed by
+[joint reconstruction](reconstruction.md).

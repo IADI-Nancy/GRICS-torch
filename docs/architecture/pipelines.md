@@ -42,6 +42,8 @@ release registered resources.
 
 See [configuration](configuration.md), [input loading](input_data_loading.md),
 and [data preparation](data_preparation.md) for those components' boundaries.
+The solver's internal flow is described in
+[reconstruction](reconstruction.md).
 
 ## 2D T2 pipeline
 
