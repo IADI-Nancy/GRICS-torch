@@ -1,4 +1,0 @@
-[ismrmrd_reader]
-# Print one line per raw parallel-calibration acquisition; true enables and false disables this diagnostic.
-# This affects logging only; it does not change which raw data are read or retained.
-print_raw_calibration_lines = false

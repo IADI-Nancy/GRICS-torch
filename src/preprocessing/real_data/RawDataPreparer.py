@@ -21,15 +21,14 @@ class RawDataPreparer:
     """
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_reader,
-                 device, print_raw_calibration_lines, physio_clock_drift_seconds=0.0):
-        # Readers own format-specific processing; the logging flag affects only raw calibration messages.
+                 device, physio_clock_drift_seconds=0.0):
         if isinstance(physio_clock_drift_seconds, bool) or not isinstance(physio_clock_drift_seconds, (int, float)) or not np.isfinite(physio_clock_drift_seconds):
             raise ValueError("physio_clock_drift_seconds must be a finite number.")
         if not physiological_reader.supports_clock_correction and physio_clock_drift_seconds != 0:
             raise ValueError("The selected physiological reader does not support clock correction.")
         self.physio_clock_drift_seconds = float(physio_clock_drift_seconds)
         self.physiological_reader = physiological_reader
-        self.reader = ISMRMRDReader(ismrmrd_file, device=device, print_raw_calibration_lines=print_raw_calibration_lines)
+        self.reader = ISMRMRDReader(ismrmrd_file, device=device)
         self.physiological_file = physiological_file
         self.device = device
         self.synchronization = None

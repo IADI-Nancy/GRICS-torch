@@ -13,7 +13,7 @@ flowchart TD
     ReconstructionGap --> Load
     Coil[_load_coil_sensitivity_config] ---|"In: configuration root and accumulated settings<br/>Out: coil-sensitivity settings selected by coil_sensitivity_config"| CoilGap[" "]
     CoilGap --> Load
-    Source[_load_source_config] -->|"In: configuration root, data_type and source paths<br/>Out: synthetic or real-data settings"| Load
+    Source[_load_source_config] -->|"In: configuration root, data_type and source paths<br/>Out: synthetic or physiological-data settings"| Load
     Sampling[_load_sampling_simulation_config] -->|"In: configuration root, data_type, sampling path and overrides<br/>Out: explicit sampling settings or recorded-data defaults"| Load
     Motion[_load_motion_simulation_config] -->|"In: configuration root, data_type and motion path<br/>Out: explicit motion settings or recorded-data defaults"| Load
     Overrides[Run-specific overrides] -->|applied after files, before validation| Load

@@ -37,11 +37,9 @@ class ISMRMRDReader:
     It does not synchronize physiological signals or select reconstruction slices.
     """
 
-    def __init__(self, ismrmrd_file, device="cpu", print_raw_calibration_lines=False):
+    def __init__(self, ismrmrd_file, device="cpu"):
         self.ismrmrd_file = ismrmrd_file
         self.device = device
-        # Log each flagged calibration acquisition; does not control data extraction.
-        self.print_raw_calibration_lines = bool(print_raw_calibration_lines)
 
     @staticmethod
     def _encoding_limit_size(limit_obj):
@@ -201,11 +199,6 @@ class ISMRMRDReader:
                 kspace[:, nex, :, ky, z] = acq_data
 
                 if _is_parallel_calibration(acq):
-                    if self.print_raw_calibration_lines:
-                        print(
-                            "[ISMRMRDReader] parallel calibration line: "
-                            f"acquisition={i}, ky={ky}, z={z}, repetition={rep}"
-                        )
                     if reference_line_seen[ky, z]:
                         raise ValueError(
                             "Duplicate parallel-calibration acquisition found for "

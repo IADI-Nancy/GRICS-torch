@@ -7,12 +7,11 @@ merge order are documented in the [configuration architecture](../architecture/c
 - `config/coil_sensitivity/*.toml`: settings for the coil-sensitivity method named by `coil_sensitivity_config` in the reconstruction TOML; loaded automatically
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
 - `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings (only if synthetic data is used)
-- `config/real_data/`: configurations for loading real MRI and physiological data
-    - `config/real_data/ismrmrd_reader.toml`: ISMRMRD-reader settings, loaded only for ISMRMRD or Siemens raw inputs
-    - `config/real_data/saec.toml`: SAEC physiological sensor selection, loaded only if a SAEC file is used
-    - `config/real_data/polaris.toml`: Polaris infrared camera channel selection, required only if this sensor is used
-    - `config/real_data/physio_text.toml`: clock-shift settings for physiological text inputs, loaded automatically for that mode
-    - `config/real_data/physio_array.toml`: clock-shift settings for physiological array inputs, loaded automatically for that mode
+- `config/physiological_data/`: configurations for physiological input processing
+    - `config/physiological_data/saec.toml`: SAEC sensor selection, loaded only if a SAEC file is used
+    - `config/physiological_data/polaris.toml`: Polaris infrared camera channel selection, required only if this sensor is used
+    - `config/physiological_data/physio_text.toml`: clock-shift settings for physiological text inputs, loaded automatically for that mode
+    - `config/physiological_data/physio_array.toml`: clock-shift settings for physiological array inputs, loaded automatically for that mode
 - `config/sampling_simulation/*.toml`: simulated k-space acquisition ordering
 - `config/motion_simulation/*.toml`: selected simulated rigid or non-rigid motion modes
 - `config/motion_simulation/common/*.toml`: shared motion parameters, loaded only through a selected motion mode

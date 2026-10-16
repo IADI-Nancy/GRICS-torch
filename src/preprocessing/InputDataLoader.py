@@ -319,8 +319,7 @@ class InputDataLoader:
     def _load_realworld_data_from_ismrm_and_physiology(self, path_to_ismrm, path_to_physiology, slice_idx=None):
         # Resampled workflows need decoded MRI data but do not use recorded physiology.
         if self.params.kspace_sampling_type != "from-data":
-            reader = ISMRMRDReader(path_to_ismrm, device="cpu",
-                                   print_raw_calibration_lines=self.params.print_raw_calibration_lines)
+            reader = ISMRMRDReader(path_to_ismrm, device="cpu")
             raw_data = reader.read_data()
             data = {"kspace": raw_data["kspace"].cpu().numpy(),
                     "slice_geometry": raw_data["slice_geometry"],
@@ -335,7 +334,7 @@ class InputDataLoader:
             ismrmrd_file=path_to_ismrm, physiological_file=path_to_physiology,
             physiological_reader=physiological_reader,
             physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
-            device="cpu", print_raw_calibration_lines=self.params.print_raw_calibration_lines)
+            device="cpu")
         self.raw_data_preparer = preparer
         cache = self.raw_data_cache if self.params.cache_preprocessed_data else None
         data = preparer.read_data(cache=cache)
