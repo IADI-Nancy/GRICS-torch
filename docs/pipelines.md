@@ -44,19 +44,22 @@ components in `src/`. Helpers used only by these entry points live in
 
 ```mermaid
 flowchart TD
-    Inputs[resolve_input_files] -->|"In: raw MRI, SAEC and preprocessed file paths<br/>Out: selected input paths"| Pipeline[run_pipeline]
-    Config[load_config] -->|"In: data type, TOML paths and overrides<br/>Out: validated params"| Pipeline
+    Inputs[resolve_input_files] ---|"In: raw MRI, SAEC and preprocessed file paths<br/>Out: selected input paths"| InputsGap[" "]
+    InputsGap --> Pipeline[run_pipeline]
+    Config[load_config] ---|"In: data type, TOML paths and overrides<br/>Out: validated params"| ConfigGap[" "]
+    ConfigGap --> Pipeline
     Runtime[initialize_runtime] -->|"In: params<br/>Out: devices and initialized run state"| Pipeline
     Preparer[DataPreparer] -->|"In: input paths, params and devices<br/>Out: prepared k-space, coil sensitivity maps,<br/>motion signal and sampling indices"| Pipeline
     Solver[JointReconstructor] -.->|"In: prepared tensors, sampling indices and params<br/>Out: reconstructed image and motion model"| Execution[timed_reconstruction]
     Execution -->|"In: prepared DataPreparer<br/>Out: reconstructed image, motion model and elapsed time"| Pipeline
-    Export[export_reconstruction] -->|"In: final image, native image, motion model and metadata<br/>Out: saved paths and updated result metadata"| Pipeline
+    Export[export_reconstruction] ---|"In: final image, native image, motion model and metadata<br/>Out: saved paths and updated result metadata"| ExportGap[" "]
+    ExportGap --> Pipeline
     Finish[finish_run] -->|"In: results and timings<br/>Out: run folder, timings and reconstruction results"| Pipeline
 
-    %% Layout-only nodes lift selected components two ranks above the lower row.
-    Inputs ~~~ InputsGap[" "] ~~~ Runtime
-    Config ~~~ ConfigGap[" "] ~~~ Preparer
-    Export ~~~ ExportGap[" "] ~~~ Finish
+    %% Hidden route nodes keep selected labels on the upper edge segments.
+    InputsGap ~~~ Runtime
+    ConfigGap ~~~ Preparer
+    ExportGap ~~~ Finish
 
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554

@@ -7,19 +7,22 @@ notebooks, pipelines, and applications.
 
 ```mermaid
 flowchart TD
-    General[_load_general_config] -->|"In: configuration root<br/>Out: general.toml settings"| Load[load_config]
-    Reconstruction[_load_reconstruction_config] -->|"In: required reconstruction TOML path<br/>Out: reconstruction settings"| Load
-    Coil[_load_coil_sensitivity_config] -->|"In: configuration root and accumulated settings<br/>Out: coil-sensitivity settings selected by coil_sensitivity_config"| Load
+    General[_load_general_config] ---|"In: configuration root<br/>Out: general.toml settings"| GeneralGap[" "]
+    GeneralGap --> Load[load_config]
+    Reconstruction[_load_reconstruction_config] ---|"In: required reconstruction TOML path<br/>Out: reconstruction settings"| ReconstructionGap[" "]
+    ReconstructionGap --> Load
+    Coil[_load_coil_sensitivity_config] ---|"In: configuration root and accumulated settings<br/>Out: coil-sensitivity settings selected by coil_sensitivity_config"| CoilGap[" "]
+    CoilGap --> Load
     Source[_load_source_config] -->|"In: configuration root, data_type and source paths<br/>Out: synthetic or real-data settings"| Load
     Sampling[_load_sampling_simulation_config] -->|"In: configuration root, data_type, sampling path and overrides<br/>Out: explicit sampling settings or recorded-data defaults"| Load
     Motion[_load_motion_simulation_config] -->|"In: configuration root, data_type and motion path<br/>Out: explicit motion settings or recorded-data defaults"| Load
     Overrides[Run-specific overrides] -->|applied after files, before validation| Load
     Load -->|schema and cross-file validation; notebook logging policy| Params[Validated flat params namespace]
 
-    %% Layout-only nodes lift selected sources two ranks above the lower row.
-    General ~~~ GeneralGap[" "] ~~~ Source
-    Reconstruction ~~~ ReconstructionGap[" "] ~~~ Sampling
-    Coil ~~~ CoilGap[" "] ~~~ Motion
+    %% Hidden route nodes keep selected labels on the upper edge segments.
+    GeneralGap ~~~ Source
+    ReconstructionGap ~~~ Sampling
+    CoilGap ~~~ Motion
 
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
