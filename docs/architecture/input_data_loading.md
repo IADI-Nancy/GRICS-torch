@@ -103,7 +103,8 @@ currently active slice or volume.
 validates the input, normalizes k-space, estimates coil sensitivity maps, imports
 or simulates motion, bins samples into motion states, and prepares diagnostic
 output. It may replace its working k-space without changing the complete input
-stored by `InputDataLoader`.
+stored by `InputDataLoader`. The downstream stages and output contracts are
+described in [Data preparation architecture](data_preparation.md).
 
 ## Main data shapes
 

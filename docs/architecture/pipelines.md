@@ -117,9 +117,11 @@ For raw input, `prepared_output_file` enables the preprocessing cache and calls
 cache through a temporary file and atomically moves it to the requested path. It
 does not overwrite an existing destination.
 
-The detailed loader and preparation responsibilities are described in
-[Input data loading architecture](input_data_loading.md). Configuration selection and
-override rules are described in [Configuration architecture](configuration.md).
+The detailed responsibilities are described in
+[Input data loading architecture](input_data_loading.md) and
+[Data preparation architecture](data_preparation.md). Configuration selection
+and override rules are described in
+[Configuration architecture](configuration.md).
 
 ## Shared reconstruction execution
 
