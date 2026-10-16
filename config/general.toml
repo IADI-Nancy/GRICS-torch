@@ -1,52 +1,53 @@
 [paths]
+# Root for run outputs; use any nonempty absolute or working-directory-relative path string.
 # Each execution creates output_root/workflow_label/<date-time>/.
 output_root = "runs"
-# Label grouping related runs under output_root; notebooks and pipelines override this with their demo/pipeline name.
+# Label grouping related runs under output_root; use any nonempty path segment string.
+# Notebooks and pipelines override it with their demo/pipeline name.
 workflow_label = "reconstruction"
+# Root for converted and preprocessed caches; use "auto" or any nonempty absolute or working-directory-relative path.
 # "auto" resolves to <repository-parent>/data/cache/grics, outside this repository.
 cache_root = "auto"
 
 [runtime]
-# Write GRICS text logs independently of tensors and plots.
+# Write GRICS text logs independently of tensors and plots; true enables and false disables them.
 save_reconstruction_logs = true
-# Save final reconstruction image and motion tensors.
+# Save final reconstruction image and motion tensors; true enables and false disables them.
 save_reconstruction_tensors = true
-# Save diagnostic plots and final image/motion previews independently of logs and tensors.
+# Save diagnostic plots and final image/motion previews; true enables and false disables them.
 save_debug_plots = true
-# Request deterministic PyTorch/cuDNN algorithms; warn when unavailable. Seeding is controlled below.
+# Request deterministic PyTorch/cuDNN algorithms; true requests them and false allows nondeterministic kernels.
+# Seeding is controlled below.
 use_deterministic_algorithms = true
 # Preferred compute device: "gpu" or "cpu".
 runtime_device = "gpu"
-# Enable random seeding independently of deterministic algorithms.
-# When true, uses seed below (a non-negative integer).
+# Enable random seeding independently of deterministic algorithms; true uses seed below and false leaves RNGs unseeded.
 # Keep seed present even when false; the loader always requires it.
 seed_enabled = true
-# Random seed used when seed_enabled is true.
+# Random seed used when seed_enabled is true; use any integer >= 0.
 seed = 1
-# Notebook mode disables verbose/console logging unless explicitly set in overrides.
+# Select notebook-aware logging; true suppresses verbose/console logging unless overridden, false keeps configured logging.
 # Any automatic logging change is printed as an informational message.
 jupyter_notebook_flag = false
-# Flip displayed images vertically. Set explicitly for acquisition orientation.
+# Control display orientation; true flips displayed images vertically and false preserves array orientation.
 flip_for_display = false
-# Print inner conjugate-gradient solver diagnostics.
+# Print inner conjugate-gradient solver diagnostics; true enables and false disables them.
 verbose = true
-# Print detailed JointReconstructor progress to console.
+# Print detailed JointReconstructor progress; true enables and false disables it.
 # Start/finish messages are always printed, including in notebook mode.
 print_to_console = true
-# Release generated cache files at execution end; false retains them for reuse.
+# Manage generated cache lifetime; true releases files at execution end and false retains them for reuse.
 remove_temporary_data_after_run = true
-# Optional reusable HDF5 preprocessing cache; avoids creating a second large file by default.
-# When true, writes the reusable preprocessing cache under cache_root.
+# Control reusable HDF5 preprocessing caching; true writes under cache_root and false avoids the extra cache file.
 # cache_root remains required when false; "auto" is supported.
 cache_preprocessed_data = false
 
 
 [kspace_normalization]
-# Normalize k-space before optimization.
-# When true, uses kspace_norm_mode and positive kspace_norm_eps below.
+# Control k-space normalization before optimization; true applies kspace_norm_mode and false preserves input scaling.
 # Keep both settings present even when false; the loader always requires them.
 normalize_kspace = true
 # Normalization mode: "rms" or "max".
 kspace_norm_mode = "rms"
-# Lower bound to avoid division by zero during normalization.
+# Lower bound to avoid division by zero during normalization; use any finite value > 0.
 kspace_norm_eps = 1.0e-12

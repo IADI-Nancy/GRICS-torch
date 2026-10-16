@@ -63,7 +63,7 @@ Use `-1` for every timestamp when values are already synchronized to MRI readout
 Pass `filename` as `(ismrmrd_file, physio_file)` or `(siemens_raw_file, physio_file)`, or as a dictionary with the corresponding keys. Text channels are ordered by numeric sensor ID and then value-column order. These four generic physiological modes require `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` in `load_config(...)`.
 
 ### `ismrmrd-saec` and `siemens-saec`
-Uses the corresponding MRI data format together with physiological data file in SAEC [3, 4] format (`saec_file`). Pass `real_data_config="config/real_data/saec.toml"` and `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` to `load_config(...)`. Select the sensor type in `saec.toml`.
+Uses the corresponding MRI data format together with physiological data file in SAEC [1, 2] format (`saec_file`). Pass `real_data_config="config/real_data/saec.toml"` and `ismrmrd_reader_config="config/real_data/ismrmrd_reader.toml"` to `load_config(...)`. Select the sensor type in `saec.toml`.
 
 SAEC processing depends on `rawdata_sensor_type`:
 
@@ -85,4 +85,8 @@ Generic `physio_text` and `physio_array` inputs are not filtered. Their channels
 
 Physiological clock correction (Polaris, `physio_text`, `physio_array`): set `physio_clock_drift_seconds` in `config/real_data/polaris.toml` for Polaris, `config/real_data/physio_text.toml` for text inputs, or `config/real_data/physio_array.toml` for array inputs (default `0.0`), or pass `overrides={"physio_clock_drift_seconds": -0.25}`. Positive shifts samples later; negative shifts earlier, after sequence-end alignment. Already-synchronized (`-1`) inputs reject any nonzero clock correction. Missing coverage at either edge is extrapolated with $\hat{x}[n] = c + \sum_{k=1}^{p} a_k x[n-k]$, fitted per channel (up to 20 lags over the nearest 10 seconds; reversed history at the start). Any required extension greater than 1 second raises an error. SAEC is unchanged.
 
-SAEC sources [3] and [4] are listed in the [project references](../../Readme.md#references).
+## References
+
+[1] Isaieva, K., Fauvel, M., Weber, N., Vuissoz, P. A., Felblinger, J., Oster, J., & Odille, F. (2022). A hardware and software system for MRI applications requiring external device data. Magnetic Resonance in Medicine, 88(3), 1406-1418.
+
+[2] IADI-Nancy. [wrapperHDF5](https://github.com/IADI-Nancy/wrapperHDF5).

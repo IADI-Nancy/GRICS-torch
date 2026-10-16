@@ -1,9 +1,9 @@
 [from_image]
-# Input images are two-dimensional.
+# Input dimensionality; from-image data supports only "2D" (other synthetic sources may use "2D" or "3D").
 data_dimension = "2D"
 # Number of synthetic receiver coils used to generate k-space from input images.
-# Must be divisible by 4.
+# Use a positive integer divisible by 4.
 Ncoils_input = 4
-# Multiplicative resize factor applied to loaded image before synthetic k-space generation.
-# 1.0 keeps original size; values <1 downsample; values >1 upsample.
+# Multiplicative resize factor applied before synthetic k-space generation; use any finite value > 0.
+# 1.0 keeps original size, values < 1 downsample, and values > 1 upsample.
 image_resize_factor = 1.0

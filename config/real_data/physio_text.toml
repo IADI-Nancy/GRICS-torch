@@ -1,4 +1,4 @@
 [physio]
 # Synchronization settings for physiological text inputs.
-# Timestamp shift after sequence-end alignment, in seconds; positive moves later.
+# Timestamp shift after sequence-end alignment; use any finite number of seconds (negative earlier, 0 unchanged, positive later).
 physio_clock_drift_seconds = 0.0

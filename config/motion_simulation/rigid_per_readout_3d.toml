@@ -1,13 +1,15 @@
 [motion]
+# Import shared motion parameters; use one nonempty relative TOML path below this file's directory.
 include = "common/rigid_3d_common.toml"
-# Dimensionality required by this motion simulation file.
+# Required data dimensionality; choose "2D" or "3D" and match the input data.
 motion_simulation_config_dimension = "3D"
-# Smooth rigid-motion events over the acquisition.
+# Synthetic motion mode; choose "rigid-per-readout", "rigid-per-shot", "non-rigid-per-readout", or "non-rigid-per-shot"; real recorded motion uses "as-it-is".
+# This file selects smooth rigid-motion events over the acquisition.
 # Requires motion_simulation_config_dimension matching the input data and the
 # shared parameters supplied by include above; change the included file when changing models.
 # Additionally requires num_motion_events and motion_tau; omit both for "rigid-per-shot".
 simulated_motion_type = "rigid-per-readout"
-# Number of smooth motion events across the acquisition.
+# Number of smooth events; use a positive integer no greater than the acquired readout count.
 num_motion_events = 3
-# Transition duration in lines for each motion event; larger values are slower.
+# Transition duration per event; use a positive integer number of readouts, where larger values are slower.
 motion_tau = 10

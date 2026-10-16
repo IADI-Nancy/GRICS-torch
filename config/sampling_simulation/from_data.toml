@@ -1,5 +1,5 @@
 [sampling]
-# Preserve the acquisition order and repetition counts recorded in real input data.
+# Sampling order model; "from-data" preserves real recorded order; simulation files use "linear", "interleaved", or "random".
 # Loaded automatically for real data when no simulated sampling is selected.
 # Requires real input data; omit NshotsPerNex, Nex, acceleration_factor and calibration_lines.
 # The loader rejects these simulated-sampling parameters for "from-data".

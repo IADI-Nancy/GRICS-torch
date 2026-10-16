@@ -1,8 +1,10 @@
 [motion]
+# Import shared motion parameters; use one nonempty relative TOML path below this file's directory.
 include = "common/rigid_2d_common.toml"
-# Dimensionality required by this motion simulation file.
+# Required data dimensionality; choose "2D" or "3D" and match the input data.
 motion_simulation_config_dimension = "2D"
-# One independently sampled rigid state per acquisition shot.
+# Synthetic motion mode; choose "rigid-per-readout", "rigid-per-shot", "non-rigid-per-readout", or "non-rigid-per-shot"; real recorded motion uses "as-it-is".
+# This file selects one independently sampled rigid state per acquisition shot.
 # Requires motion_simulation_config_dimension matching the input data and the
 # shared parameters supplied by include above; change the included file when changing models.
 # Omit num_motion_events and motion_tau; both are required only for "rigid-per-readout".

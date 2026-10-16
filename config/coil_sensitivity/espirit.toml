@@ -1,12 +1,12 @@
 [coil_sensitivity]
-# Estimate sensitivity maps with ESPIRiT.
+# Coil-map method; choose "espirit" or "odille-spline". This file selects ESPIRiT.
 # "espirit" requires espirit_calibration_width, espirit_kernel_width and espirit_max_iter.
 # Omit spline_magnitude_smoothing, spline_phase_smoothing and coil_sensitivity_eps.
 # Switch the whole coil-sensitivity config when changing methods.
 coil_sensitivity_method = "espirit"
-# Square/cubic calibration region width; must fit every encoded spatial axis.
+# Square/cubic calibration region width; use a positive integer that fits every encoded spatial axis.
 espirit_calibration_width = 48
-# ESPIRiT kernel width; cannot exceed espirit_calibration_width.
+# ESPIRiT kernel width; use a positive integer no greater than espirit_calibration_width.
 espirit_kernel_width = 12
-# ESPIRiT power-method iterations.
+# ESPIRiT power-method iterations; use any positive integer.
 espirit_max_iter = 100

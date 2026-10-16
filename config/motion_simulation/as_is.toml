@@ -1,5 +1,6 @@
 [motion]
-# Use the physiological trace belonging to the original real-data acquisition.
+# Motion mode; "as-it-is" uses the recorded physiological trace, while synthetic alternatives are
+# "rigid-per-readout", "rigid-per-shot", "non-rigid-per-readout", and "non-rigid-per-shot".
 # Requires from-data sampling; reordered acquisitions require simulated motion.
 # Omit synthetic motion parameters and motion_simulation_config_dimension; the
 # loader rejects them for "as-it-is".
