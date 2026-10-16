@@ -7,25 +7,26 @@ notebooks, pipelines, and applications.
 
 ```mermaid
 flowchart TD
-    General[general.toml] -->|automatic| Load[load_config]
-    Reconstruction[Reconstruction TOML] -->|required| Load
-    Reconstruction -.->|coil_sensitivity_config selects| Coil[Coil-sensitivity TOML]
-    Coil -->|automatic| Load
-    Source[Synthetic or real-data TOMLs] -->|selected by data_type and source paths| Load
-    Sampling[Sampling TOML] -->|explicit; from_data.toml defaults for real data| Load
-    Motion[Motion TOML] -->|explicit; as_is.toml defaults for real data| Load
-    Common[Common motion TOML] -->|optional include within selected motion file| Motion
+    General[_load_general_config] -->|"In: configuration root<br/>Out: general.toml settings"| Load[load_config]
+    Reconstruction[_load_reconstruction_config] -->|"In: required reconstruction TOML path<br/>Out: reconstruction settings"| Load
+    Coil[_load_coil_sensitivity_config] -->|"In: configuration root and accumulated settings<br/>Out: coil-sensitivity settings selected by coil_sensitivity_config"| Load
+    Source[_load_source_config] -->|"In: configuration root, data_type and source paths<br/>Out: synthetic or real-data settings"| Load
+    Sampling[_load_sampling_simulation_config] -->|"In: configuration root, data_type, sampling path and overrides<br/>Out: explicit sampling settings or recorded-data defaults"| Load
+    Motion[_load_motion_simulation_config] -->|"In: configuration root, data_type and motion path<br/>Out: explicit motion settings or recorded-data defaults"| Load
     Overrides[Run-specific overrides] -->|applied after files, before validation| Load
     Load -->|schema and cross-file validation; notebook logging policy| Params[Validated flat params namespace]
 
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
-    classDef inputFile fill:#fef3c7,stroke:#d97706,color:#451a03
-    class Load pythonClass
-    class General,Reconstruction,Coil,Source,Sampling,Motion,Common inputFile
+    classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
+    class General,Reconstruction,Coil,Source,Sampling,Motion pythonClass
+    class Load coordinator
 ```
 
-Blue nodes are Python functions, amber nodes are files, and uncolored nodes are
-parameters or outputs. The dotted edge denotes file selection.
+Blue nodes are Python functions; uncolored nodes are parameters or outputs.
+`In` and `Out` describe each helper's inputs and returned settings.
+`load_config` merges general, reconstruction, coil-sensitivity, source,
+sampling, and motion settings in that order. It passes the accumulated settings
+to the coil-sensitivity helper; helpers do not call one another to transfer them.
 
 ## Configuration boundaries
 

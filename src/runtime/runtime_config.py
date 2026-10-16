@@ -505,6 +505,26 @@ def load_postprocessing_config(path, *, overrides=None):
     return SimpleNamespace(**cfg)
 
 
+def _load_general_config(root):
+    """Load shared runtime settings from config/general.toml."""
+    return _load_toml_flat(root / 'general.toml', 'general')
+
+
+def _load_reconstruction_config(reconstruction_config):
+    """Load the required reconstruction settings."""
+    return _load_toml_flat(reconstruction_config, 'reconstruction')
+
+
+def _load_coil_sensitivity_config(root, cfg):
+    """Load the coil-sensitivity file selected by reconstruction settings."""
+    _require(cfg, {'coil_sensitivity_config'}, 'reconstruction')
+    csm_method = cfg['coil_sensitivity_config']
+    csm_files = {'espirit': 'espirit.toml', 'odille-spline': 'odille_spline.toml'}
+    if not isinstance(csm_method, str) or csm_method not in csm_files:
+        raise ValueError('coil_sensitivity_config must be espirit or odille-spline.')
+    return _load_toml_flat(root / 'coil_sensitivity' / csm_files[csm_method], 'coil_sensitivity')
+
+
 def _load_real_data_config(root, data_type, *, real_data_config,
                            ismrmrd_reader_config, polaris_config, physio_config):
     """Load the reader and sensor files selected from config/real_data."""
@@ -620,15 +640,10 @@ def load_config(*, data_type, reconstruction_config,
     """Load file-owned settings, apply overrides, then validate dependent sections."""
     _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
     root = Path(__file__).resolve().parents[2] / 'config'
-    cfg = _load_toml_flat(root / 'general.toml', 'general')
+    cfg = _load_general_config(root)
     cfg['data_type'] = data_type
-    cfg.update(_load_toml_flat(reconstruction_config, 'reconstruction'))
-    _require(cfg, {'coil_sensitivity_config'}, 'reconstruction')
-    csm_method = cfg['coil_sensitivity_config']
-    csm_files = {'espirit': 'espirit.toml', 'odille-spline': 'odille_spline.toml'}
-    if not isinstance(csm_method, str) or csm_method not in csm_files:
-        raise ValueError('coil_sensitivity_config must be espirit or odille-spline.')
-    cfg.update(_load_toml_flat(root / 'coil_sensitivity' / csm_files[csm_method], 'coil_sensitivity'))
+    cfg.update(_load_reconstruction_config(reconstruction_config))
+    cfg.update(_load_coil_sensitivity_config(root, cfg))
     cfg.update(_load_source_config(
         root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
         real_data_config=real_data_config, ismrmrd_reader_config=ismrmrd_reader_config,
