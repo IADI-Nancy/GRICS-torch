@@ -53,7 +53,8 @@ class GRICSPreparerAPI:
 
     Args:
         reconstruction_config: Path to the mandatory reconstruction TOML.
-        data_type: Explicit external real-data mode.
+        data_type: Must be ``"preprocessed-real"`` because acquisition metadata
+            is supplied directly by the caller.
         overrides: Optional mapping of allowed run-specific overrides.
     """
 
@@ -61,6 +62,8 @@ class GRICSPreparerAPI:
         self, reconstruction_config: str | PathLike[str], *,
         data_type: str, overrides: Mapping[str, Any] | None = None,
     ) -> None:
+        if data_type != "preprocessed-real":
+            raise ValueError("GRICSPreparerAPI accepts only data_type='preprocessed-real'; acquisition metadata must be supplied by the caller.")
         self.params = load_config(
             data_type=data_type, reconstruction_config=reconstruction_config,
             overrides=overrides,

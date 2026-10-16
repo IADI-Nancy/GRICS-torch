@@ -49,7 +49,7 @@ def validate_input_for_reconstruction(input_data, params):
         else (input_data.Nx, input_data.Ny)
     )
     validate_reconstruction_size(params, spatial_shape)
-    validate_calibration_size(params, spatial_shape, has_reference=input_data.reference_kspace is not None)
+    validate_calibration_size(params, spatial_shape)
     validate_motion_readout_count(params, input_data.ky_idx.numel())
 
 

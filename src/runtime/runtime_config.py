@@ -318,8 +318,6 @@ def _validate_sampling(cfg):
     if cfg['acceleration_factor'] > 1 and cfg['calibration_lines'] == 0:
         raise ValueError('Accelerated sampling requires positive calibration_lines.')
     cfg['Nshots'] = cfg['NshotsPerNex'] * cfg['Nex']
-    if cfg['data_type'] == 'shepp-logan':
-        validate_sampling_size(SimpleNamespace(**cfg), cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
 
 
 def validate_sampling_size(params, ny, nz):
@@ -628,7 +626,7 @@ def _validate_known_source_size(cfg):
         spatial.append(cfg['Nz_SheppLogan'])
     params = SimpleNamespace(**cfg)
     validate_reconstruction_size(params, spatial)
-    validate_calibration_size(params, spatial, has_reference=False)
+    validate_calibration_size(params, spatial)
     readouts = validate_sampling_size(params, cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
     validate_motion_readout_count(params, readouts)
 
@@ -677,7 +675,7 @@ def validate_reconstruction_size(params, spatial_shape):
             raise ValueError("ResolutionLevels would produce an empty spatial dimension.")
 
 
-def validate_calibration_size(params, spatial_shape, *, has_reference):
+def validate_calibration_size(params, spatial_shape):
     """Validate requested calibration support against actual data dimensions."""
     if params.coil_sensitivity_method == 'espirit':
         if params.espirit_calibration_width > min(spatial_shape):
