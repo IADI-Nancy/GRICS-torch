@@ -1,5 +1,8 @@
 """Validate configuration used by the joint reconstruction loop."""
 
+import math
+import torch
+
 
 def configure_motion_states_per_resolution_level(params, motion_signal):
     """Return validated motion-state counts, one per resolution level."""
@@ -62,3 +65,48 @@ def image_regularization_weight_for_level(params, level_index):
             )
         return float(lambda_r[level_index])
     return float(lambda_r)
+
+
+def validate_voxel_spacing(regularization_scaling, voxel_spacing_mm, Nz_full):
+    """Validate scaling mode and return full-resolution voxel spacing in mm."""
+    if regularization_scaling not in ("direct", "voxel_aware"):
+        raise ValueError('regularization_scaling must be "direct" or "voxel_aware".')
+    spatial_dims = 3 if Nz_full > 1 else 2
+    if regularization_scaling == "voxel_aware":
+        if (voxel_spacing_mm is None or len(voxel_spacing_mm) != spatial_dims
+                or any(not math.isfinite(float(value)) or float(value) <= 0
+                       for value in voxel_spacing_mm)):
+            raise ValueError("Voxel-aware regularization scaling requires positive voxel_spacing_mm for each spatial dimension.")
+    return tuple(float(value) for value in voxel_spacing_mm) if voxel_spacing_mm is not None else None
+
+
+def validate_calibration_image_prior(calibration_image_prior, use_calibration_weighted_image, external_image_regularizer, spatial_shape, device):
+    """Validate the enabled calibration prior and return a real device tensor."""
+    if not use_calibration_weighted_image:
+        return None
+    if external_image_regularizer is not None:
+        raise ValueError("Calibration-weighted images cannot be combined with an external image regularizer.")
+    if calibration_image_prior is None:
+        raise ValueError("Calibration-weighted image is enabled, but no calibration image was supplied.")
+    Nx_full, Ny_full, Nz_full = spatial_shape
+    spatial_shape = spatial_shape if Nz_full > 1 else (Nx_full, Ny_full)
+    calibration = torch.as_tensor(calibration_image_prior, device=device)
+    if Nz_full == 1 and tuple(calibration.shape) == (Nx_full, Ny_full, 1):
+        calibration = calibration[..., 0]
+    if (tuple(calibration.shape) != spatial_shape or calibration.is_complex()
+            or not torch.isfinite(calibration).all() or torch.any(calibration < 0)):
+        raise ValueError(f"Calibration image must be a finite nonnegative real image of shape {spatial_shape}.")
+    return calibration.to(torch.float64)
+
+
+def validate_motion_signal(motion_signal, device):
+    """Validate the motion signal and move it to the reconstruction device."""
+    if motion_signal is None:
+        raise ValueError("motion_signal must be provided.")
+    motion_signal = motion_signal.to(device)
+    if motion_signal.ndim != 2:
+        raise ValueError(
+            "motion_signal must have shape [Nstate, Nsensor]. "
+            f"Got {tuple(motion_signal.shape)}."
+        )
+    return motion_signal

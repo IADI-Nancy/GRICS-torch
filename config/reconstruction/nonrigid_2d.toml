@@ -46,7 +46,7 @@ cg_stagnation_consecutive_steps = 3
 cg_stagnation_countdown_steps = 0
 
 # --- Regularization scaling ---
-# Regularization scaling: "direct" uses configured weights directly; "grics_cpp" scales them by resolution and voxel spacing.
+# Regularization scaling: "direct" uses configured weights directly; "voxel_aware" scales them by resolution and voxel spacing.
 regularization_scaling = "direct"
 # Control probe-based regularization scaling; true estimates it and false uses analytic/configured scaling.
 # When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).

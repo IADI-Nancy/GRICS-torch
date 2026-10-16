@@ -404,7 +404,7 @@ def _validate_reconstruction(cfg):
     elif 'cg_reg_scale_num_probes' in cfg:
         raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
     _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
-    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'grics_cpp'})
+    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'voxel_aware'})
     if cfg['reconstruction_motion_type'] == 'rigid':
         if 'motion_preconditioner' in cfg:
             raise ValueError('motion_preconditioner is only valid for non-rigid reconstruction.')

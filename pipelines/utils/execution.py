@@ -37,7 +37,7 @@ def timed_reconstruction(data):
     synchronize(data.kspace.device)
     started = time.perf_counter()
     voxel_spacing_mm = None
-    if data.params.regularization_scaling == "grics_cpp":
+    if data.params.regularization_scaling == "voxel_aware":
         encoding = acquisition_header(data).encoding[0].encodedSpace
         matrix, fov = encoding.matrixSize, encoding.fieldOfView_mm
         axes = ("x", "y", "z") if data.params.data_dimension == "3D" else ("x", "y")

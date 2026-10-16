@@ -2,6 +2,8 @@
 
 Do not create a Git commit unless a human explicitly asks you to commit. Requests to edit files, fix code, transfer changes between branches, or prepare work do not authorize a commit. Leave completed changes uncommitted for human review unless a commit is explicitly requested.
 
+Always display difference (codex diff).
+
 When adding a feature, name new variables consistently with the style used by nearby code and existing variables in the same module. Preserve established naming conventions across related code.
 
 Never use a fallback that is hidden from the user. If a fallback is needed, make it explicit in the code or user-facing output, and explain when and why it is used.
@@ -24,7 +26,4 @@ Use consistent style (the same as in docs/architecture/input_data_loading.md) fo
 
 Number citations independently in each Markdown document starting with `[1]`. Put every cited reference in a References section at the end of the same document instead of relying on another document's reference list.
 
-Keep architecture documentation limited to the information needed to understand
-component responsibilities, data flow, and state ownership. Do not repeat in
-prose what a data-flow diagram already shows or duplicate details from usage
-guides or the README; link to existing explanations instead.
+Keep architecture documentation limited to the information needed to understand component responsibilities, data flow, and state ownership. Do not repeat in prose what a data-flow diagram already shows or duplicate details from usage guides or the README; link to existing explanations instead.
