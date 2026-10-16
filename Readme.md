@@ -2,6 +2,8 @@
 
 This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS models MRI acquisition and motion and does not require AI priors. It requires motion-related data (e.g. respiratory belt measurements, navigators, PilotTone amplitude variations, or similar signals). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
 
+The code currently supports only Cartesian sampling and performs best with fully sampled data. The algorithm was developed primarily for non-rigid motion correction. Rigid motion correction is also available, but has been less extensively validated; users are encouraged to assess its performance for their application as we continue to refine it.
+
 Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
 ## License and citation
