@@ -1,4 +1,5 @@
 import copy
+import gc
 import os
 import time
 import torch
@@ -155,13 +156,7 @@ class DataPreparer:
         self.input_ifft_image = input_ifft_image.to(self.t_device)
         del coil_ifft_images
 
-    def _prepare_motion_simulator_inputs(self):
-        motion_sim_device = self.t_device
-        # Per-readout motion can retain one sparse warp per readout; build those
-        # operators on the CPU to avoid exhausting GPU memory.
-        if self.params.simulated_motion_type.endswith("-per-readout"):
-            motion_sim_device = torch.device("cpu")
-
+    def _prepare_motion_simulator_inputs(self, motion_sim_device):
         input_ifft_image = self.input_ifft_image.to(motion_sim_device)
         smaps = self.smaps.to(motion_sim_device)
         ky_idx = self.ky_idx.to(motion_sim_device)
@@ -182,8 +177,47 @@ class DataPreparer:
                 for kz_per_nex in kz_per_motion_state
             ]
 
-        return (motion_sim_device, input_ifft_image, smaps, ky_idx, nex_idx,
-            ky_per_motion_state, kz_idx, kz_per_motion_state)
+        return input_ifft_image, smaps, ky_idx, nex_idx, ky_per_motion_state, kz_idx, kz_per_motion_state
+
+    def _simulate_motion_on_device(self, motion_sim_device):
+        inputs = self._prepare_motion_simulator_inputs(motion_sim_device)
+        input_ifft_image, smaps, ky_idx, nex_idx, ky_per_motion_state, kz_idx, kz_per_motion_state = inputs
+        print("[DataPreparer] Starting motion simulation "
+            f"(type={self.params.simulated_motion_type}, device={motion_sim_device})...", flush=True)
+        motion_simulator = MotionSimulator(input_ifft_image, smaps, ky_idx, nex_idx, ky_per_motion_state,
+            kz_idx=kz_idx, kz_per_motion_state=kz_per_motion_state, params=self.params,
+            sp_device=self.sp_device, t_device=motion_sim_device)
+
+        simulation_methods = {
+            "rigid-per-shot": motion_simulator.simulate_discrete_rigid_motion,
+            "rigid-per-readout": motion_simulator.simulate_per_readout_rigid_motion,
+            "non-rigid-per-shot": motion_simulator.simulate_discrete_non_rigid_motion,
+            "non-rigid-per-readout": motion_simulator.simulate_per_readout_non_rigid_motion,
+        }
+        simulation_methods[self.params.simulated_motion_type]()
+        return motion_simulator
+
+    @staticmethod
+    def _is_cuda_out_of_memory(error):
+        return isinstance(error, torch.cuda.OutOfMemoryError) or "cuda out of memory" in str(error).lower()
+
+    def _simulate_motion_with_cpu_fallback(self):
+        motion_sim_device = torch.device(self.t_device)
+        retry_on_cpu = False
+        try:
+            motion_simulator = self._simulate_motion_on_device(motion_sim_device)
+        except RuntimeError as error:
+            if motion_sim_device.type != "cuda" or not self._is_cuda_out_of_memory(error):
+                raise
+            retry_on_cpu = True
+
+        if retry_on_cpu:
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("[DataPreparer] CUDA memory is insufficient for motion simulation; "
+                "switching to CPU and restarting the simulation.", flush=True)
+            motion_simulator = self._simulate_motion_on_device(torch.device("cpu"))
+        return motion_simulator
 
     def _apply_or_import_motion(self):
         # Real motion case
@@ -194,23 +228,7 @@ class DataPreparer:
 
         # Only a simulated-motion workflow treats the input IFFT image as its ground truth.
         self.image_ground_truth = self.input_ifft_image
-        (motion_sim_device, input_ifft_image, smaps, ky_idx, nex_idx, ky_per_motion_state,
-            kz_idx, kz_per_motion_state) = self._prepare_motion_simulator_inputs()
-
-        print("[DataPreparer] Starting motion simulation " f"(type={self.params.simulated_motion_type})...")
-        motionSimulator = MotionSimulator(input_ifft_image, smaps, ky_idx, nex_idx, ky_per_motion_state, kz_idx=kz_idx,
-            kz_per_motion_state=kz_per_motion_state, params = self.params,sp_device=self.sp_device, t_device=motion_sim_device)
-
-        if self.params.simulated_motion_type.startswith("rigid-"):
-            if self.params.simulated_motion_type.endswith("-per-shot"):
-                motionSimulator.simulate_discrete_rigid_motion()
-            elif self.params.simulated_motion_type.endswith("-per-readout"):
-                motionSimulator.simulate_per_readout_rigid_motion()
-        elif self.params.simulated_motion_type.startswith("non-rigid-"):
-            if self.params.simulated_motion_type.endswith("-per-shot"):
-                motionSimulator.simulate_discrete_non_rigid_motion()
-            elif self.params.simulated_motion_type.endswith("-per-readout"):
-                motionSimulator.simulate_per_readout_non_rigid_motion()
+        motionSimulator = self._simulate_motion_with_cpu_fallback()
 
         self.kspace = motionSimulator.get_corrupted_kspace().to(self.t_device)
         self.image_no_moco = motionSimulator.get_corrupted_image().to(self.t_device)

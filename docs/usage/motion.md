@@ -8,6 +8,8 @@ Configured with one variable:
 `simulated_motion_type` is configured in `config/motion_simulation/*.toml`. Reconstruction independently uses `reconstruction_motion_type` (`"rigid"` or `"non-rigid"`) from `config/reconstruction/*.toml`.
 Implemented in `src/preprocessing/MotionSimulator.py`.
 
+Motion simulation starts on the configured runtime device, which is the GPU by default. If CUDA memory is insufficient, preparation prints an explicit message, clears unused CUDA memory, and restarts the complete simulation on the CPU. Other runtime errors are not treated as memory fallbacks.
+
 ### `as-it-is`
 
 No synthetic corruption added. Valid only for real-data types with `from-data` sampling, including SAEC and Polaris inputs.
