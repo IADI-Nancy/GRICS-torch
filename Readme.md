@@ -41,6 +41,8 @@ By default, the script mounts the **parent directory of this repository** at `/h
 
 After `./docker.sh run`, open the VS Code Command Palette and select **Dev Containers: Open Container Configuration File**. Paste the JSON printed by `docker.sh` into that file and save it, then connect to the running container. This makes VS Code use the container user created with the host user's UID and GID, so files created inside the mounted workspace belong to the actual host user instead of `root`.
 
+For a comfortable VS Code setup, install [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) on the host. The configuration printed by `docker.sh` installs [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python), [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance), [Jupyter](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter), Jupyter Keymap, and Jupyter Notebook Renderers in the container. Install [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml) in the attached container for editing configuration files.
+
 ## Repository layout
 
 - `src/preprocessing/`: data loading, sampling simulation, motion simulation, motion binning
@@ -60,7 +62,9 @@ The demo notebooks expose each reconstruction stage and are the shortest path th
 - [3D rigid Shepp-Logan simulation](demo_c_3D_rigid_simulated_shepp_interleaved.ipynb)
 - [3D non-rigid Shepp-Logan simulation](demo_d_3D_nonrigid_simulated_shepp_random.ipynb)
 
-For complete acquisitions, two specific examples used in our research projects (e.g. [2]] are provided (`pipelines/siemens_breast_T2.py` and `pipelines/siemens_breast_3d_lowres.py`). They coordinate the same stages with input selection, export, and execution management. Their data flow is documented in [pipeline architecture](docs/pipelines.md).
+To run a demo notebook, select `/opt/conda/envs/environment_grics/bin/python` as its kernel. The reconstruction progress bars use `tqdm.auto` and notebook widgets. This container already includes the Python packages `ipykernel` and `ipywidgets`; if VS Code asks to install either one, check that the selected kernel is `environment_grics`. When using a different Python environment, install those packages in that environment to run notebooks and display widget progress bars.
+
+For complete acquisitions, two specific examples used in our research projects [2,3] are provided (`pipelines/siemens_breast_T2.py` and `pipelines/siemens_breast_3d_lowres.py`). They coordinate the same stages with input selection, export, and execution management. Their data flow is documented in [pipeline architecture](docs/pipelines.md).
 
 Simulations and some reconstruction steps use random initialization; `seed_enabled` and `seed` in `config/general.toml` control reproducibility. Results can vary with the seed and compute backend. Generated results are written under `runs/` by default; see the [output guide](docs/usage/outputs.md).
 
@@ -80,4 +84,7 @@ Parts of this code and its documentation were developed with the assistance of A
 ## References
 
 [1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine, 60(1), 146-157.
+
 [2] Isaieva, K., Meullenet, C., Vuissoz, P. A., Fauvel, M., Nohava, L., Laistler, E., ... & Odille, F. (2023). Feasibility of online non‐rigid motion correction for high‐resolution supine breast MRI. Magnetic Resonance in Medicine, 90(5), 2130-2143.
+
+[3] Isaieva, K., Weber, N., Nohava, L., Fischer, B., Megel, A., Henrot, P., ... & Odille, F. (2025). Optimal sensor selection for motion-corrected supine breast MRI with a wearable coil. IEEE Transactions on Biomedical Engineering, 72(7), 2261-2268.
