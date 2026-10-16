@@ -1,10 +1,46 @@
 # Pipeline architecture
 
+The basic pipeline follows the same reconstruction stages as the demos.
+Acquisition-specific 2D and 3D pipelines are preimplemented for workflows that
+also need input selection, parallel execution, postprocessing, or DICOM export.
+
+## Basic pipeline
+
+```mermaid
+flowchart TD
+    Files[Configuration files and run overrides] -->|"In: selected data and reconstruction modes<br/>Out: validated params"| Config[load_config]
+    Config -->|"In: params<br/>Out: compute devices and run state"| Runtime[initialize_runtime]
+    Input[Image, phantom, preprocessed data or raw acquisition] -->|"In: source and params<br/>Out: loaded acquisition"| Load[DataPreparer.load_input_data]
+    Runtime --> Load
+    Load -->|"In: acquisition and selected slice or volume<br/>Out: k-space, coil maps, motion signal and sampling layout"| Prepare[DataPreparer.prepare_reconstructor_inputs]
+    Prepare -->|"In: prepared tensors and params<br/>Out: reconstructed image and motion model"| Reconstruct[JointReconstructor.run]
+    Reconstruct -->|"In: reconstruction results<br/>Out: saved results, metadata and completed logs"| Finalize[write_reconstruction and finish_run]
+
+    classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef inputFile fill:#fef3c7,stroke:#d97706,color:#451a03
+    class Config,Runtime,Load,Prepare,Reconstruct,Finalize pythonClass
+    class Files,Input inputFile
+```
+
+Blue nodes are Python functions or class methods. Amber nodes are user-selected
+inputs. `In` and `Out` describe each stage's inputs and returned state.
+
+Source-specific behavior is contained in `DataPreparer`. `JointReconstructor`
+receives the shared interface and does not load configuration or input data;
+the notebook or pipeline owns workflow postprocessing and export.
+
+See [configuration](architecture/configuration.md),
+[input loading](architecture/input_data_loading.md),
+[data preparation](architecture/data_preparation.md), and
+[reconstruction](architecture/reconstruction.md) for component boundaries.
+
+## Preimplemented pipelines
+
 `siemens_breast_T2.py` and `siemens_breast_3d_lowres.py` coordinate the shared
 components in `src/`. Helpers used only by these entry points live in
 `pipelines/utils/`.
 
-## System interaction
+### System interaction
 
 ```mermaid
 flowchart TD
@@ -17,6 +53,11 @@ flowchart TD
     Export[export_reconstruction] -->|"In: final image, native image, motion model and metadata<br/>Out: saved paths and updated result metadata"| Pipeline
     Finish[finish_run] -->|"In: results and timings<br/>Out: run folder, timings and reconstruction results"| Pipeline
 
+    %% Layout-only links split the components across two rows.
+    Inputs ~~~ Runtime
+    Config ~~~ Preparer
+    Export ~~~ Finish
+
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     class Pipeline coordinator
@@ -28,7 +69,7 @@ Arrow labels describe the source component's inputs and outputs.
 solver call inside `timed_reconstruction`. Workflow-specific postprocessing and
 optional DICOM export appear in the flows below.
 
-## Shared boundaries
+### Shared boundaries
 
 `pipelines/utils/inputs.py` owns file selection. An existing preprocessed file
 takes precedence; when it is absent, the pipeline announces its use of raw MRI
@@ -40,12 +81,7 @@ system. Pipeline-owned runtime overrides take precedence over caller values.
 `@managed_execution` surrounds the run to finalize success or failure and
 release registered resources.
 
-See [configuration](configuration.md), [input loading](input_data_loading.md),
-and [data preparation](data_preparation.md) for those components' boundaries.
-The solver's internal flow is described in
-[reconstruction](reconstruction.md).
-
-## 2D T2 pipeline
+### 2D T2 pipeline
 
 ```mermaid
 sequenceDiagram
@@ -78,7 +114,7 @@ workers can use fork; CUDA execution requires one worker.
 NumPy result transport avoids PyTorch shared-memory lifetime issues. Final
 exports occur only after all selected slices succeed.
 
-## 3D low-resolution pipeline
+### 3D low-resolution pipeline
 
 ```mermaid
 flowchart LR
@@ -96,4 +132,4 @@ postprocessing configuration or zero-filling step, so the exported and native
 images refer to the same solver result.
 
 Output names, flags, and cache lifetime are documented in the
-[README](../../Readme.md#outputs).
+[output guide](usage/outputs.md).

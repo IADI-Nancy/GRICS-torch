@@ -54,4 +54,5 @@ spatial `z` axis and flattens motion and indices into chronological readouts;
 [reconstruction preparation](data_preparation.md). This separation lets
 multi-slice pipelines reuse the acquisition without reading source files again.
 
-Input formats and stored array shapes are in the [README](../../Readme.md#data-types).
+Input formats and stored array shapes are in the
+[input data guide](../usage/input_formats.md).

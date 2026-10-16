@@ -2,7 +2,7 @@ FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 LABEL org.opencontainers.image.source=https://github.com/IADI-Nancy/GRICS-torch
 LABEL org.opencontainers.image.description="GRICS-torch: A PyTorch-based framework for MRI reconstruction with motion compensation, developed by the IADI lab in Nancy, France."
-LABEL org.opencontainers.image.licenses="CC BY-NC 4.0"
+LABEL org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]

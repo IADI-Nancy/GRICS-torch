@@ -16,6 +16,11 @@ flowchart TD
     Overrides[Run-specific overrides] -->|applied after files, before validation| Load
     Load -->|schema and cross-file validation; notebook logging policy| Params[Validated flat params namespace]
 
+    %% Layout-only links split the configuration sources across two rows.
+    General ~~~ Source
+    Reconstruction ~~~ Sampling
+    Coil ~~~ Motion
+
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
     class General,Reconstruction,Coil,Source,Sampling,Motion pythonClass
@@ -46,4 +51,5 @@ Caller-supplied paths resolve relative to the working directory unless absolute.
 pipeline. `initialize_runtime(params)` then handles device selection and run
 state independently of configuration loading.
 
-File choices and usage examples are in the [README](../../Readme.md#configuration).
+File choices and usage examples are in the
+[configuration guide](../usage/configuration.md).
