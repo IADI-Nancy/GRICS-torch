@@ -29,7 +29,7 @@ def _first_existing_glob(folder, *patterns):
 
 
 def _infer_has_ground_truth(params):
-    return params.motion_simulation_model_mode != "as-it-is"
+    return params.simulated_motion_type != "as-it-is"
 
 
 def _display_image_row(image_paths, subtitles, title=None, figsize=None):
@@ -96,13 +96,13 @@ def display_run_panels(
     image_gt=None,
 ):
     if jupyter_notebook_flag is None:
-        jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
+        jupyter_notebook_flag = bool(params.jupyter_notebook_flag)
     if not jupyter_notebook_flag:
         return
     if has_ground_truth is None:
         has_ground_truth = _infer_has_ground_truth(params)
 
-    logs_folder = Path(params.logs_folder)
+    logs_folder = Path(params.debug_folder) / "residuals"
     input_folder = Path(params.initial_data_folder)
     results_folder = Path(params.results_folder)
 
@@ -126,7 +126,7 @@ def display_run_panels(
     else:
         image_paths = [
             _first_existing_path(input_folder / "image_corrupted.png", input_folder / "input_distorted.png"),
-            _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex1.png"),
+            _first_existing_path(results_folder / "image_reconstructed.png", results_folder / "image_reconstructed_nex_001.png"),
         ]
         subtitles = ["Corrupted", "Corrected"]
         if has_ground_truth:
@@ -166,7 +166,7 @@ def display_run_panels(
                 alpha_rec=alpha_rec,
                 image_sim=image_sim,
                 image_rec=image_rec,
-                flip_vertical=bool(getattr(params, "flip_for_display", False)),
+                flip_vertical=bool(params.flip_for_display),
             )
         else:
             # Reconstruction saves one field per physiological sensor. Prefer
@@ -201,7 +201,7 @@ def display_run_panels(
 
 def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_notebook_flag=None):
     if jupyter_notebook_flag is None:
-        jupyter_notebook_flag = bool(getattr(params, "jupyter_notebook_flag", False))
+        jupyter_notebook_flag = bool(params.jupyter_notebook_flag)
     if not jupyter_notebook_flag:
         return
     if has_ground_truth is None:
@@ -209,13 +209,12 @@ def display_input_sampling_motion_panels(params, has_ground_truth=None, jupyter_
 
     input_folder = Path(params.initial_data_folder)
     row_width = 13.0 if has_ground_truth else 10.0
-    is_3d = getattr(params, "data_dimension", None) == "3D"
+    is_3d = params.data_dimension == "3D"
     sampling_path = _first_existing_glob(
         input_folder,
         "ky_kz_order_nex*.png",
         "ky_order_nex*.png",
-        "ky_order_realworld_slice*.png",
-        "ky_order_rawdata_slice*.png",
+        "ky_order_acquisition_slice*.png",
         "ky_sampling_order.png",
     )
     motion_vs_ky_path = _first_existing_path(
@@ -276,7 +275,7 @@ def display_3d_image_matrix(image_uncorrected, image_corrected, image_gt):
 
 
 def display_logs_and_motion_same_as_2d(params):
-    logs_folder = Path(params.logs_folder)
+    logs_folder = Path(params.debug_folder) / "residuals"
     input_folder = Path(params.initial_data_folder)
     results_folder = Path(params.results_folder)
 

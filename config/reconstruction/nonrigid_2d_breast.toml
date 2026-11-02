@@ -1,0 +1,78 @@
+[reconstruction]
+
+# Coil sensitivity method: "espirit" or "odille-spline".
+coil_sensitivity_config = "odille-spline"
+
+# --- Data and motion model ---
+# Data dimensionality. Allowed values: "2D" or "3D"; it must match the input data.
+reconstruction_dimension = "2D"
+# Motion model. Allowed values: "rigid" or "non-rigid".
+reconstruction_motion_type = "non-rigid"
+# Control pseudo Gauss-Seidel motion preconditioning; true enables and false disables it (non-rigid only).
+# Requires lambda_m > 0 when enabled.
+motion_preconditioner = true
+# Motion-Jacobian boundary rule; choose "zero" for zero boundary gradients or "one_sided" for one-sided differences.
+motion_gradient_boundary = "one_sided"
+
+# --- Motion-state binning ---
+# Motion-state count: positive integer or one positive count per resolution level (coarse to fine).
+# Different per-level counts require non-rigid motion; empty states are omitted after each k-space crop.
+# Per-shot simulation requires a scalar and uses the shot count.
+N_motion_states = [4, 8, 16, 16]
+# Motion-state construction method. Allowed values: "kmeans" or "kspace_energy".
+# "kspace_energy" requires motion_quantization_bins (integer >= 2; e.g. 256).
+# For "kmeans", omit motion_quantization_bins; the config loader rejects it.
+motion_binning_mode = "kspace_energy"
+# Number of uniform quantization levels per physiological channel when
+# motion_binning_mode = "kspace_energy". Must be an integer greater than or equal to 2.
+# Required only when motion_binning_mode = "kspace_energy"; omit otherwise.
+motion_quantization_bins = 256
+
+# --- Multi-resolution reconstruction ---
+# Spatial scale at each reconstruction level, relative to full resolution.
+# Values must increase in (0, 1] and end at 1.0 (full resolution).
+ResolutionLevels = [0.125, 0.25, 0.5, 1.0]
+# Gauss-Newton iterations: one positive integer applies to every level,
+# or use a list with exactly one entry per ResolutionLevels value (coarse to fine).
+GN_iterations_per_level = [4, 4, 4, 1]
+# Control the final GN motion update; true updates image and motion, false keeps the final iteration image-only.
+update_motion_on_final_iteration = false
+# Control GN early stopping; true stops when the image residual increases and false always runs configured iterations.
+gn_early_stopping = true
+
+# --- Conjugate-gradient stopping ---
+# Control CG stagnation stopping; true enables and false disables it.
+cg_stop_on_stagnation = true
+# Interval for recomputing the true CG residual; use any positive integer number of iterations.
+cg_true_residual_interval = 10
+# Tiny updates required to trigger the stagnation countdown; use any integer >= 0.
+cg_stagnation_consecutive_steps = 6
+# Stagnation countdown including the trigger; use any integer >= 0, where 0 or 1 stops immediately.
+cg_stagnation_countdown_steps = 0
+
+# --- Regularization scaling ---
+# Regularization scaling: "direct" uses configured weights directly; "voxel_aware" scales them by resolution and voxel spacing.
+regularization_scaling = "voxel_aware"
+# Control probe-based regularization scaling; true estimates it and false uses analytic/configured scaling.
+# When true, cg_reg_scale_num_probes is required (positive integer; e.g. 8).
+# When false, omit cg_reg_scale_num_probes; the config loader rejects it.
+cg_use_reg_scale_proxy = false
+# Control calibration weighting; true solves x = C p and regularizes p, false solves directly for x.
+# Requires odille-spline coil sensitivities.
+use_calibration_weighted_image = true
+
+# --- Image update ---
+# Image regularization weight; use a finite value >= 0 or one such value per resolution level.
+lambda_r = 1.0
+# Maximum CG iterations per image update; use any positive integer.
+max_iter_recon = 50
+# Relative convergence tolerance for image updates; use any finite value > 0.
+tol_recon = 1.0e-3
+
+# --- Motion update ---
+# Motion regularization weight; use any finite value >= 0.
+lambda_m = 0.5
+# Maximum CG iterations per motion update; use any positive integer.
+max_iter_motion = 10
+# Relative convergence tolerance for motion updates; use any finite value > 0.
+tol_motion = 1.0e-2

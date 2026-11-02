@@ -2,7 +2,7 @@ FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 LABEL org.opencontainers.image.source=https://github.com/IADI-Nancy/GRICS-torch
 LABEL org.opencontainers.image.description="GRICS-torch: A PyTorch-based framework for MRI reconstruction with motion compensation, developed by the IADI lab in Nancy, France."
-LABEL org.opencontainers.image.licenses="CC BY-NC 4.0"
+LABEL org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
@@ -55,19 +55,18 @@ ENV PATH=/opt/conda/envs/environment_grics/bin:$PATH
 # -------------------------------------------------------------------
 # Install pip packages
 # -------------------------------------------------------------------
+COPY requirements-torch.txt /tmp/requirements-torch.txt
+COPY requirements-pip.txt /tmp/requirements-pip.txt
+
 # PyTorch (CUDA wheels)
 RUN pip install --no-cache-dir \
-    torch==2.5.1+cu121 \
-    torchvision==0.20.1+cu121 \
-    torchaudio==2.5.1+cu121 \
+    -r /tmp/requirements-torch.txt \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Everything else
 RUN pip install --no-cache-dir \
-    ismrmrd==1.14.2 \
-    GitPython==3.1.46 \
-    pandas==2.3.3 \
-    scikit-image==0.26.0
+    -r /tmp/requirements-pip.txt \
+ && rm /tmp/requirements-torch.txt /tmp/requirements-pip.txt
 
 ENV CUDA_PATH=/usr/local/cuda-12.1
 ENV NVCC=$CUDA_PATH/bin/nvcc
@@ -80,6 +79,40 @@ ENV LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 RUN git clone https://github.com/IADI-Nancy/wrapperHDF5.git /opt/wrapperHDF5
 ENV PYTHONPATH=/opt/wrapperHDF5
 # -------------------------------------------------------------------
+
+# -------------------------------------------------------------------
+# Install siemens_to_ismrmrd from PR#139 / v1.2.13
+# -------------------------------------------------------------------
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list \
+    && apt update \
+    && apt install -y --no-install-recommends \
+        libboost-all-dev \
+        libpugixml-dev \
+        libhdf5-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/ismrmrd/ismrmrd.git /opt/ismrmrd_cpp \
+ && cd /opt/ismrmrd_cpp \
+ && git checkout v1.14.2 \
+ && mkdir build && cd build \
+ && cmake -D CMAKE_BUILD_TYPE=Release -D USE_HDF5_DATASET_SUPPORT=ON .. \
+ && make -j$(nproc) \
+ && make install \
+ && ldconfig
+
+RUN git clone https://github.com/ismrmrd/siemens_to_ismrmrd.git /opt/siemens_to_ismrmrd \
+ && cd /opt/siemens_to_ismrmrd \
+ && git checkout v1.2.13 \
+ && mkdir build && cd build \
+ && cmake -D CMAKE_BUILD_TYPE=Release .. \
+ && make -j$(nproc) \
+ && make install \
+ && ldconfig
+ 
+ #--------------------------------------------------------------------
 
 RUN echo 'pyuser ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers \
     && echo 'Defaults    env_keep += "PATH"' >> /etc/sudoers \

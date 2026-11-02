@@ -1,106 +1,16 @@
-from dataclasses import dataclass, field
+"""Strict, file-owned configuration. TOML values precede explicit call overrides."""
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
-import os
+import math
 import tomllib
-import warnings
 
-import torch
-
-
-def _flatten(dct, prefix=""):
-    out = {}
-    for key, value in dct.items():
-        full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, dict):
-            out.update(_flatten(value, full_key))
-        else:
-            out[full_key] = value
-    return out
-
-
-def _load_toml_flat(path):
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
-    flat = _flatten(data)
-    return {key.split(".")[-1]: value for key, value in flat.items()}
-
-
-def _rename_cfg_key(cfg, source_key, target_key):
-    if source_key not in cfg:
-        return
-    source_value = cfg.pop(source_key)
-    if target_key in cfg and cfg[target_key] != source_value:
-        raise ValueError(
-            f"Config provides conflicting values for '{source_key}' and '{target_key}'."
-        )
-    cfg[target_key] = source_value
-
-
-def _rename_motion_simulation_model_mode_key(cfg):
-    source_key = "motion_simulation_type"
-    target_key = "motion_simulation_model_mode"
-    if source_key not in cfg:
-        return
-    source_value = cfg.pop(source_key)
-    if target_key in cfg:
-        source_norm = _normalize_motion_simulation_model_mode(source_value)
-        target_norm = _normalize_motion_simulation_model_mode(cfg[target_key])
-        if source_norm != target_norm:
-            raise ValueError(
-                f"Config provides conflicting values for '{source_key}' and '{target_key}'."
-            )
-        cfg[target_key] = target_norm
-        return
-    cfg[target_key] = source_value
-
-
-def _normalize_positive_int(value, name):
-    value = int(value)
-    if value < 1:
-        raise ValueError(f"{name} must be >= 1.")
-    return value
-
-
-def _normalize_synthetic_coil_count(value, name):
-    value = _normalize_positive_int(value, name)
-    if value % 4 != 0:
-        raise ValueError(
-            f"{name} must be divisible by 4 for synthetic coil-map generation."
-        )
-    return value
-
-
-def _require_dict_value(dct, name, context):
-    if name not in dct:
-        raise ValueError(f"{name} must be provided in the {context} config.")
-    return dct[name]
-
-
-def _normalize_required_float(dct, name, context, *, min_value=None, max_value=None):
-    value = float(_require_dict_value(dct, name, context))
-    if min_value is not None and value < min_value:
-        raise ValueError(f"{name} must be >= {min_value}.")
-    if max_value is not None and value > max_value:
-        raise ValueError(f"{name} must be <= {max_value}.")
-    dct[name] = value
-    return value
-
-
-def _normalize_required_positive_float(dct, name, context):
-    value = float(_require_dict_value(dct, name, context))
-    if value <= 0:
-        raise ValueError(f"{name} must be > 0.")
-    dct[name] = value
-    return value
-
-
-def _normalize_required_positive_int(dct, name, context):
-    value = _normalize_positive_int(_require_dict_value(dct, name, context), name)
-    dct[name] = value
-    return value
-
+ISMRMRD_READER_DATA_TYPES = {
+    f'{source}-{physiology}'
+    for source in ('ismrmrd', 'siemens')
+    for physiology in ('saec', 'polaris', 'physio_text', 'physio_array')
+}
+REAL_DATA_TYPES = {'preprocessed-real'} | ISMRMRD_READER_DATA_TYPES
+SYNTHETIC_DATA_TYPES = {'shepp-logan', 'from_image'}
 
 _RIGID_MOTION_KEYS = {
     "num_motion_events",
@@ -129,7 +39,6 @@ _NONRIGID_MOTION_KEYS = {
     "nonrigid_resp_cycles_max",
     "nonrigid_diaphragm_level",
     "nonrigid_diaphragm_sharpness",
-    "nonrigid_lateral_sigma",
     "nonrigid_lateral_sigma_lr",
     "nonrigid_lateral_sigma_ap",
     "nonrigid_ap_fraction",
@@ -139,864 +48,626 @@ _NONRIGID_MOTION_KEYS = {
     "nonrigid_top_decay",
 }
 
-_CODE_DEFAULTS = {
-    "use_scaled_motion_update": False,
-    "espirit_max_iter": 100,
-    "cg_true_residual_interval": 10,
-    "jupyter_notebook_flag": False,
-}
-
-_MOTION_TYPES = {"rigid", "non-rigid"}
-_MOTION_STATE_MODES = {"realistic", "per-shot"}
-_SAMPLING_TYPES = {"linear", "interleaved", "random", "from-data"}
-_MOTION_SIM_MODEL_MODES = {
-    "as-it-is",
-    "rigid-realistic",
-    "rigid-per-shot",
-    "non-rigid-realistic",
-    "non-rigid-per-shot",
-}
-_LEGACY_MOTION_SIM_MODEL_MODE_ALIASES = {
-    "rigid": "rigid-realistic",
-    "discrete-rigid": "rigid-per-shot",
-    "non-rigid": "non-rigid-realistic",
-    "discrete-non-rigid": "non-rigid-per-shot",
-}
-_SIM_MODEL_MODE_TO_MODEL = {
-    "rigid-realistic": ("rigid", "realistic"),
-    "rigid-per-shot": ("rigid", "per-shot"),
-    "non-rigid-realistic": ("non-rigid", "realistic"),
-    "non-rigid-per-shot": ("non-rigid", "per-shot"),
-    "as-it-is": (None, None),
-}
-_PER_SHOT_SIM_MODEL_MODES = {"rigid-per-shot", "non-rigid-per-shot"}
-_RIGID_SIM_MODEL_MODES = {"rigid-realistic", "rigid-per-shot"}
-_NONRIGID_SIM_MODEL_MODES = {"non-rigid-realistic", "non-rigid-per-shot"}
-
-_PATH_KEYS = {
-    "debug_folder",
-    "logs_folder",
-    "results_folder",
-    "initial_data_folder",
-}
+_PATH_KEYS = {'output_root', 'workflow_label', 'cache_root'}
 _RUNTIME_KEYS = {
-    "debug_flag",
-    "runtime_device",
-    "verbose",
-    "print_to_console",
-    "clean_output_folders_before_run",
-    "jupyter_notebook_flag",
-    "flip_for_display",
-    "seed",
+    'save_debug_plots', 'save_reconstruction_logs', 'save_reconstruction_tensors', 'use_deterministic_algorithms', 'runtime_device', 'verbose', 'print_to_console',
+    'remove_temporary_data_after_run', 'cache_preprocessed_data', 'jupyter_notebook_flag', 'flip_for_display',
+    'seed', 'seed_enabled',
 }
-_DATA_KEYS = {
-    "data_type",
-    "data_dimension",
-    "reconstruction_dimension",
-    "motion_simulation_config_dimension",
+_NORMALIZATION_KEYS = {'normalize_kspace', 'kspace_norm_mode', 'kspace_norm_eps'}
+_PHYSIOLOGICAL_DATA_KEYS = {
+    'rawdata_sensor_type', 'saec_belt_lowpass_cutoff_hz',
+    'saec_marmot_lowpass_cutoff_hz', 'saec_marmot_highpass_cutoff_hz',
 }
-_DATA_SOURCE_KEYS = {
-    "FoVxy_mm",
-    "FoVz_mm",
-    "N_SheppLogan",
-    "Ncoils_SheppLogan",
-    "Ncoils_input",
-    "Nz_SheppLogan",
-    "SheppLoganFillFraction",
-    "from_image",
-    "image_resize_factor",
-    "rawdata_sensor_type",
+_PHYSIO_CLOCK_KEYS = {'physio_clock_drift_seconds'}
+_POLARIS_KEYS = {'polaris_channel_mode', 'polaris_lowpass_cutoff_hz'}
+_CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
+_CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
+_CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
+_RECONSTRUCTION_KEYS = {
+    'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
+    'coil_sensitivity_config',
+    'motion_binning_mode', 'motion_quantization_bins',
+    'ResolutionLevels', 'GN_iterations_per_level',
+    'update_motion_on_final_iteration', 'gn_early_stopping',
+    'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
+    'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
+    'use_calibration_weighted_image', 'regularization_scaling', 'motion_preconditioner',
+    'motion_gradient_boundary',
+    'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
-_SAMPLING_KEYS = {
-    "kspace_sampling_type",
-    "NshotsPerNex",
-    "Nex",
-    "Nshots",
+_SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
+_SHEPP_KEYS = {'data_dimension', 'N_SheppLogan', 'Ncoils_SheppLogan', 'Nz_SheppLogan',
+               'SheppLoganFillFraction'}
+_IMAGE_KEYS = {'data_dimension', 'Ncoils_input', 'image_resize_factor'}
+_RIGID_GEOMETRY_KEYS = {'FoVxy_mm', 'FoVz_mm'}
+_MOTION_KEYS = {'motion_simulation_config_dimension', 'simulated_motion_type'} | _RIGID_GEOMETRY_KEYS | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
+_FILE_SCHEMAS = {
+    'general': {'paths': _PATH_KEYS, 'runtime': _RUNTIME_KEYS,
+                'kspace_normalization': _NORMALIZATION_KEYS},
+    'physiological_data': {'physiological_data': _PHYSIOLOGICAL_DATA_KEYS},
+    'polaris': {'polaris': _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS},
+    'physio': {'physio': _PHYSIO_CLOCK_KEYS},
+    'reconstruction': {'reconstruction': _RECONSTRUCTION_KEYS},
+    'sampling': {'sampling': _SAMPLING_KEYS},
+    'shepp-logan': {'shepp_logan': _SHEPP_KEYS},
+    'from_image': {'from_image': _IMAGE_KEYS},
+    'motion': {'motion': _MOTION_KEYS},
+    'postprocessing': {'postprocessing': {'normalize_image_by_grics_reference'}},
+    'coil_sensitivity': {'coil_sensitivity': _CSM_KEYS},
 }
-_MOTION_KEYS = {
-    "reconstruction_motion_type",
-    "simulated_motion_type",
-    "motion_state_mode",
-    "motion_simulation_model_mode",
-} | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
-
-_STRUCTURAL_OVERRIDE_KEYS = {"data_type"}
-
-
-def _drop_keys(cfg, keys):
-    for key in keys:
-        cfg.pop(key, None)
-
-
-def _normalize_data_dimension(dim):
-    if dim is None:
-        return None
-    d = str(dim).strip().upper()
-    if d in {"2D", "2"}:
-        return "2D"
-    if d in {"3D", "3"}:
-        return "3D"
-    raise ValueError("data_dimension must be '2D' or '3D'.")
-
-
-def _normalize_motion_type(raw_motion_type):
-    key = str(raw_motion_type).strip().lower()
-    if key not in _MOTION_TYPES:
-        raise ValueError(f"Unsupported motion_type: {raw_motion_type}")
-    return key
-
-
-def _normalize_motion_state_mode(raw_mode):
-    key = str(raw_mode).strip().lower()
-    if key not in _MOTION_STATE_MODES:
-        raise ValueError(
-            f"Unsupported motion_state_mode: {raw_mode}. Supported: 'realistic', 'per-shot'."
-        )
-    return key
-
-
-def _normalize_motion_simulation_model_mode(raw_type):
-    if raw_type is None:
-        return None
-    key = str(raw_type).strip().lower()
-    key = _LEGACY_MOTION_SIM_MODEL_MODE_ALIASES.get(key, key)
-    if key not in _MOTION_SIM_MODEL_MODES:
-        raise ValueError(f"Unsupported motion_simulation_model_mode: {raw_type}")
-    return key
-
-
-def _simulation_model_mode_from_motion_model(motion_type, motion_state_mode):
-    mtype = _normalize_motion_type(motion_type)
-    mode = _normalize_motion_state_mode(motion_state_mode)
-    return f"{mtype}-{mode}"
-
-
-def _apply_motion_simulation_model_mode_derivatives(cfg):
-    sim_type = _normalize_motion_simulation_model_mode(cfg.get("motion_simulation_model_mode"))
-    inferred_motion_type, inferred_mode = _SIM_MODEL_MODE_TO_MODEL[sim_type]
-    cfg["motion_simulation_model_mode"] = sim_type
-    cfg["simulated_motion_type"] = inferred_motion_type
-    cfg["motion_state_mode"] = inferred_mode
-
-
-@dataclass
-class PathsConfig:
-    debug_folder: str | None = None
-    logs_folder: str | None = None
-    results_folder: str | None = None
-    initial_data_folder: str | None = None
-
-    def to_flat_dict(self):
-        out = {}
-        for key in _PATH_KEYS:
-            value = getattr(self, key)
-            if value is not None:
-                out[key] = value
-        return out
-
-
-@dataclass
-class RuntimeConfig:
-    debug_flag: bool | None = None
-    runtime_device: str | None = None
-    verbose: bool | None = None
-    print_to_console: bool | None = None
-    clean_output_folders_before_run: bool | None = None
-    jupyter_notebook_flag: bool | None = None
-    flip_for_display: bool | None = None
-    seed: int | None = None
-
-    def to_flat_dict(self):
-        out = {}
-        for key in _RUNTIME_KEYS:
-            value = getattr(self, key)
-            if value is not None:
-                out[key] = value
-        return out
-
-
-@dataclass
-class DataConfig:
-    data_type: str | None = None
-    data_dimension: str | None = None
-    reconstruction_dimension: str | None = None
-    motion_simulation_config_dimension: str | None = None
-    source_options: dict[str, Any] = field(default_factory=dict)
-
-    def to_flat_dict(self):
-        out = {}
-        for key in _DATA_KEYS:
-            value = getattr(self, key)
-            if value is not None:
-                out[key] = value
-        out.update(self.source_options)
-        return out
-
-
-@dataclass
-class SamplingConfig:
-    kspace_sampling_type: str | None = None
-    NshotsPerNex: int | None = None
-    Nex: int | None = None
-    Nshots: int | None = None
-
-    def to_flat_dict(self):
-        out = {}
-        for key in _SAMPLING_KEYS:
-            value = getattr(self, key)
-            if value is not None:
-                out[key] = value
-        return out
-
-
-@dataclass
-class MotionConfig:
-    reconstruction_motion_type: str | None = None
-    simulated_motion_type: str | None = None
-    motion_state_mode: str | None = None
-    motion_simulation_model_mode: str | None = None
-    parameters: dict[str, Any] = field(default_factory=dict)
-
-    def to_flat_dict(self):
-        out = {
-            "reconstruction_motion_type": self.reconstruction_motion_type,
-            "simulated_motion_type": self.simulated_motion_type,
-            "motion_state_mode": self.motion_state_mode,
-            "motion_simulation_model_mode": self.motion_simulation_model_mode,
-        }
-        out.update(self.parameters)
-        return out
-
-
-@dataclass
-class ReconstructionConfig:
-    N_motion_states: int | None = None
-    options: dict[str, Any] = field(default_factory=dict)
-
-    def to_flat_dict(self):
-        out = dict(self.options)
-        if self.N_motion_states is not None:
-            out["N_motion_states"] = self.N_motion_states
-        return out
-
-
-@dataclass
-class ConfigBundle:
-    paths: PathsConfig
-    runtime: RuntimeConfig
-    data: DataConfig
-    sampling: SamplingConfig
-    motion: MotionConfig
-    reconstruction: ReconstructionConfig
-
-    @classmethod
-    def from_flat_dict(cls, flat_cfg):
-        remaining = dict(flat_cfg)
-
-        paths = PathsConfig(**{key: remaining.pop(key, None) for key in _PATH_KEYS})
-        runtime = RuntimeConfig(**{key: remaining.pop(key, None) for key in _RUNTIME_KEYS})
-
-        data_kwargs = {key: remaining.pop(key, None) for key in _DATA_KEYS}
-        data_source_options = {
-            key: remaining.pop(key)
-            for key in list(remaining.keys())
-            if key in _DATA_SOURCE_KEYS
-        }
-        data = DataConfig(**data_kwargs, source_options=data_source_options)
-
-        sampling = SamplingConfig(**{key: remaining.pop(key, None) for key in _SAMPLING_KEYS})
-
-        motion_kwargs = {
-            key: remaining.pop(key, None)
-            for key in (
-                "reconstruction_motion_type",
-                "simulated_motion_type",
-                "motion_state_mode",
-                "motion_simulation_model_mode",
-            )
-        }
-        motion_parameters = {
-            key: remaining.pop(key)
-            for key in list(remaining.keys())
-            if key in (_RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
-        }
-        motion = MotionConfig(**motion_kwargs, parameters=motion_parameters)
-
-        n_motion_states = remaining.pop("N_motion_states", None)
-        reconstruction = ReconstructionConfig(
-            N_motion_states=n_motion_states,
-            options=remaining,
-        )
-
-        return cls(
-            paths=paths,
-            runtime=runtime,
-            data=data,
-            sampling=sampling,
-            motion=motion,
-            reconstruction=reconstruction,
-        )
-
-    def to_flat_dict(self):
-        flat = {}
-        flat.update(self.paths.to_flat_dict())
-        flat.update(self.runtime.to_flat_dict())
-        flat.update(self.data.to_flat_dict())
-        flat.update(self.sampling.to_flat_dict())
-        flat.update(self.motion.to_flat_dict())
-        flat.update(self.reconstruction.to_flat_dict())
-        return flat
-
-
-def _load_base_config_dict(
-    *,
-    data_type,
-    reconstruction_config,
-    shepp_logan_config=None,
-    from_image_config=None,
-    sampling_config=None,
-    motion_simulation_config=None,
-):
-    repo_root = Path(__file__).resolve().parents[2]
-    general_path = repo_root / "config" / "general.toml"
-    if not general_path.exists():
-        raise FileNotFoundError(f"Missing general config: {general_path}")
-    if not reconstruction_config:
-        raise ValueError("reconstruction_config is required.")
-
-    cfg = dict(_CODE_DEFAULTS)
-    cfg.update(_load_toml_flat(general_path))
-    cfg["data_type"] = data_type
-
-    reconstruction_cfg = _load_toml_flat(reconstruction_config)
-    _rename_cfg_key(reconstruction_cfg, "motion_type", "reconstruction_motion_type")
-    cfg.update(reconstruction_cfg)
-
-    if data_type == "shepp-logan":
-        if not shepp_logan_config:
-            raise ValueError("shepp_logan_config is required when data_type='shepp-logan'.")
-        cfg.update(_load_toml_flat(shepp_logan_config))
-    elif data_type == "from_image":
-        if from_image_config is None:
-            raise ValueError(
-                "from_image_config is required when data_type is 'from_image'."
-            )
-        cfg.update(_load_toml_flat(from_image_config))
-    elif data_type in {"real-world", "raw-data"}:
-        pass
-    else:
-        raise ValueError(f"Unsupported data_type: {data_type}")
-
-    if sampling_config:
-        cfg.update(_load_toml_flat(sampling_config))
-    if motion_simulation_config:
-        motion_cfg = _load_toml_flat(motion_simulation_config)
-        _rename_cfg_key(motion_cfg, "motion_type", "simulated_motion_type")
-        _rename_motion_simulation_model_mode_key(motion_cfg)
-        cfg.update(motion_cfg)
-    _rename_motion_simulation_model_mode_key(cfg)
-
-    return cfg
-
-
-def _apply_direct_arguments(
-    cfg,
-    *,
-    reconstruction_motion_type=None,
-    simulated_motion_type=None,
-    motion_simulation_model_mode=None,
-    motion_simulation_type=None,
-    motion_state_mode=None,
-    data_dimension=None,
-    kspace_sampling_type=None,
-    NshotsPerNex=None,
-    Nex=None,
-    N_motion_states=None,
-    flip_for_display=None,
-):
-    if reconstruction_motion_type is not None:
-        cfg["reconstruction_motion_type"] = reconstruction_motion_type
-    if simulated_motion_type is not None:
-        cfg["simulated_motion_type"] = simulated_motion_type
-    if motion_simulation_type is not None:
-        if motion_simulation_model_mode is not None:
-            old_mode = _normalize_motion_simulation_model_mode(motion_simulation_type)
-            new_mode = _normalize_motion_simulation_model_mode(motion_simulation_model_mode)
-            if old_mode != new_mode:
-                raise ValueError(
-                    "motion_simulation_type conflicts with motion_simulation_model_mode."
-                )
-            motion_simulation_model_mode = new_mode
-        else:
-            motion_simulation_model_mode = motion_simulation_type
-    if motion_simulation_model_mode is not None:
-        cfg["motion_simulation_model_mode"] = motion_simulation_model_mode
-    if motion_state_mode is not None:
-        cfg["motion_state_mode"] = motion_state_mode
-    if data_dimension is not None:
-        cfg["data_dimension"] = data_dimension
-    if kspace_sampling_type is not None:
-        cfg["kspace_sampling_type"] = kspace_sampling_type
-    if NshotsPerNex is not None:
-        cfg["NshotsPerNex"] = int(NshotsPerNex)
-    if Nex is not None:
-        cfg["Nex"] = int(Nex)
-    if N_motion_states is not None:
-        cfg["N_motion_states"] = int(N_motion_states)
-    if flip_for_display is not None:
-        cfg["flip_for_display"] = bool(flip_for_display)
-
-
-def _resolve_sampling_origin(cfg, data_type):
-    if "kspace_sampling_type" in cfg:
-        return False
-
-    _drop_keys(cfg, {"kspace_sampling_type", "NshotsPerNex", "Nex", "Nshots"})
-    if data_type not in {"real-world", "raw-data"}:
-        raise ValueError(
-            "Sampling configuration is required when data_type is not 'real-world'/'raw-data'. "
-            "Provide sampling_config or kspace_sampling_type (+ Nex/NshotsPerNex)."
-        )
-    return True
-
-
-def _require_motion_input_for_simulated_sources(cfg, *, motion_simulation_config):
-    if (
-        cfg.get("data_type") not in {"real-world", "raw-data"}
-        and motion_simulation_config is None
-        and cfg.get("motion_simulation_model_mode") is None
-        and cfg.get("motion_state_mode") is None
-    ):
-        raise ValueError(
-            "motion_simulation_config (or motion_simulation_model_mode/motion_state_mode override) is required "
-            f"for data_type='{cfg.get('data_type')}'."
-        )
-
-
-def _resolve_motion_simulation(cfg, *, sampling_from_data, motion_simulation_config):
-    motion_simulation_model_mode_final = cfg.get("motion_simulation_model_mode")
-    has_motion_model_request = (
-        motion_simulation_config is not None
-        or cfg.get("simulated_motion_type") is not None
-        or cfg.get("motion_state_mode") is not None
-    )
-    if motion_simulation_model_mode_final is None and has_motion_model_request:
-        motion_state_mode_final = cfg.get("motion_state_mode")
-        simulated_motion_type_final = cfg.get(
-            "simulated_motion_type",
-            cfg["reconstruction_motion_type"],
-        )
-        motion_simulation_model_mode_final = _simulation_model_mode_from_motion_model(
-            simulated_motion_type_final,
-            motion_state_mode_final,
-        )
-        cfg["simulated_motion_type"] = _normalize_motion_type(simulated_motion_type_final)
-        cfg["motion_state_mode"] = _normalize_motion_state_mode(motion_state_mode_final)
-    elif motion_simulation_model_mode_final is None and sampling_from_data:
-        motion_simulation_model_mode_final = "as-it-is"
-
-    cfg["motion_simulation_model_mode"] = motion_simulation_model_mode_final
-    _apply_motion_simulation_model_mode_derivatives(cfg)
-    if (
-        cfg["motion_simulation_model_mode"] == "as-it-is"
-        and cfg.get("data_type") not in {"real-world", "raw-data"}
-    ):
-        raise ValueError(
-            "motion_simulation_model_mode='as-it-is' is only valid for real-world or raw-data inputs."
-        )
-
-
-def _prune_irrelevant_motion_parameters(cfg):
-    sim_type = cfg["motion_simulation_model_mode"]
-    if sim_type == "as-it-is":
-        _drop_keys(cfg, _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
-    elif sim_type in _RIGID_SIM_MODEL_MODES:
-        _drop_keys(cfg, _NONRIGID_MOTION_KEYS)
-    elif sim_type in _NONRIGID_SIM_MODEL_MODES:
-        _drop_keys(cfg, _RIGID_MOTION_KEYS)
-    else:
-        raise ValueError(f"Unsupported motion_simulation_model_mode: {sim_type}")
-
-
-def _apply_user_overrides(cfg, overrides):
+_OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
+                  (_RECONSTRUCTION_KEYS - {'coil_sensitivity_config'}) | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
+                  _MOTION_KEYS | _PHYSIOLOGICAL_DATA_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
+_BOOL_KEYS = {
+    'save_debug_plots', 'use_deterministic_algorithms',
+    'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
+    'jupyter_notebook_flag', 'flip_for_display', 'seed_enabled', 'normalize_kspace',
+    'update_motion_on_final_iteration', 'gn_early_stopping',
+    'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
+    'use_calibration_weighted_image', 'motion_preconditioner',
+}
+
+
+def _require(cfg, keys, context):
+    missing = sorted(set(keys) - cfg.keys())
+    if missing:
+        raise ValueError(f'Missing {context} settings: {missing}. Set them in the owning TOML or overrides.')
+
+
+def _load_toml_flat(path, kind, _include_chain=()):
+    """Load one file-owned TOML configuration, expanding common motion files.
+
+    Only ``[motion].include`` is supported. It names one relative TOML fragment;
+    included settings are read first, and the selecting file may not redefine them.
+    This keeps every effective setting unambiguous.
+    """
+    path = Path(path).resolve()
+    if path in _include_chain:
+        chain = ' -> '.join(str(item) for item in (*_include_chain, path))
+        raise ValueError(f'Motion configuration include cycle: {chain}.')
+    schema = _FILE_SCHEMAS[kind]
+    with path.open('rb') as handle:
+        data = tomllib.load(handle)
+    unknown_sections = data.keys() - schema.keys()
+    if unknown_sections:
+        raise ValueError(f'{path}: invalid {kind} sections: {sorted(unknown_sections)}.')
+    result = {}
+    for section, entries in data.items():
+        if not isinstance(entries, dict):
+            raise ValueError(f'{path}: expected a [{section}] table.')
+        include = entries.get('include')
+        if include is not None:
+            if kind != 'motion' or section != 'motion':
+                raise ValueError(f'{path}: include is allowed only in a [motion] table.')
+            if not isinstance(include, str) or not include.strip():
+                raise ValueError(f'{path}: motion.include must be one nonempty relative path.')
+            include_path = Path(include)
+            if include_path.is_absolute() or '..' in include_path.parts:
+                raise ValueError(f'{path}: motion.include must be a relative path below its directory.')
+            included = _load_toml_flat(path.parent / include_path, 'motion', (*_include_chain, path))
+            duplicate = result.keys() & included.keys()
+            if duplicate:
+                raise ValueError(f'{path}: duplicate settings from included common motion files: {sorted(duplicate)}.')
+            result.update(included)
+        for key, value in entries.items():
+            if key == 'include':
+                continue
+            if key not in schema[section]:
+                raise ValueError(f'{path}: setting {section}.{key} is not allowed in this file/section.')
+            if key in result:
+                raise ValueError(f'{path}: setting {key} duplicates an included motion setting.')
+            result[key] = value
+    return result
+
+
+def _integer(value, name, minimum=1):
+    if type(value) is not int or value < minimum:
+        raise ValueError(f'{name} must be an integer >= {minimum}; got {value!r}.')
+    return value
+
+
+def _number(value, name, *, minimum=None, positive=False, maximum=None):
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise ValueError(f'{name} must be a finite number; got {value!r}.')
+    if positive and value <= 0:
+        raise ValueError(f'{name} must be > 0.')
+    if minimum is not None and value < minimum:
+        raise ValueError(f'{name} must be >= {minimum}.')
+    if maximum is not None and value > maximum:
+        raise ValueError(f'{name} must be <= {maximum}.')
+    return value
+
+
+def _choice(value, name, choices):
+    if not isinstance(value, str) or value not in choices:
+        raise ValueError(f'{name} must be one of {sorted(choices)}; got {value!r}.')
+
+
+def _apply_overrides(cfg, overrides, allowed):
     for key, value in (overrides or {}).items():
-        if key in _STRUCTURAL_OVERRIDE_KEYS:
-            raise ValueError(
-                f"'{key}' cannot be set via overrides because it determines which source configs are loaded. "
-                f"Pass {key}=... directly to load_config(...) instead."
-            )
+        if key not in allowed:
+            raise ValueError(f'Unknown or misplaced configuration override: {key}.')
         cfg[key] = value
 
 
-def _apply_notebook_output_defaults(cfg, overrides):
-    notebook_flag = bool(cfg.get("jupyter_notebook_flag", False))
-    if not overrides or "print_to_console" not in overrides:
-        cfg["print_to_console"] = not notebook_flag
-    if not overrides or "verbose" not in overrides:
-        cfg["verbose"] = not notebook_flag
+def _validate_general(cfg):
+    _require(cfg, _PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS, 'general')
+    for key in _BOOL_KEYS & cfg.keys():
+        if type(cfg[key]) is not bool:
+            raise ValueError(f'{key} must be a boolean.')
+    for key in _PATH_KEYS:
+        if not isinstance(cfg[key], str) or not cfg[key].strip():
+            raise ValueError(f'{key} must be a nonempty path string.')
+    _integer(cfg['seed'], 'seed', 0)
+    _choice(cfg['runtime_device'], 'runtime_device', {'cpu', 'gpu'})
+    _choice(cfg['kspace_norm_mode'], 'kspace_norm_mode', {'rms', 'max'})
+    _number(cfg['kspace_norm_eps'], 'kspace_norm_eps', positive=True)
 
 
-def _apply_display_defaults(cfg, data_type):
-    if "flip_for_display" not in cfg:
-        cfg["flip_for_display"] = data_type in {"real-world", "raw-data"}
+def _validate_physiological_data(cfg):
+    """Validate reader, sensor, and clock settings, including misplaced overrides."""
+    data_type = cfg['data_type']
+    saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
+    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
+    generic_physio_data = data_type in {
+        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
+        for kind in ('physio_text', 'physio_array')
+    }
+    if saec_data:
+        _require(cfg, _PHYSIOLOGICAL_DATA_KEYS, 'physiological-data')
+        if not isinstance(cfg['rawdata_sensor_type'], str) or not cfg['rawdata_sensor_type']:
+            raise ValueError('rawdata_sensor_type must be a nonempty string.')
+        for key in ('saec_belt_lowpass_cutoff_hz', 'saec_marmot_lowpass_cutoff_hz',
+                    'saec_marmot_highpass_cutoff_hz'):
+            _number(cfg[key], key, positive=True)
+    elif cfg.keys() & _PHYSIOLOGICAL_DATA_KEYS:
+        raise ValueError(f'Physiological-data settings incompatible with {data_type}: {sorted(cfg.keys() & _PHYSIOLOGICAL_DATA_KEYS)}.')
+    if polaris_data:
+        _require(cfg, _POLARIS_KEYS, 'Polaris')
+        _choice(cfg['polaris_channel_mode'], 'polaris_channel_mode', {'all', 'largest-amplitude'})
+        _number(cfg['polaris_lowpass_cutoff_hz'], 'polaris_lowpass_cutoff_hz', positive=True)
+    elif cfg.keys() & _POLARIS_KEYS:
+        raise ValueError(f'Polaris settings incompatible with {data_type}: {sorted(cfg.keys() & _POLARIS_KEYS)}.')
+    if polaris_data or generic_physio_data:
+        _require(cfg, _PHYSIO_CLOCK_KEYS, 'physiological sensor')
+        cfg['physio_clock_drift_seconds'] = float(_number(
+            cfg['physio_clock_drift_seconds'], 'physio_clock_drift_seconds'))
+    elif saec_data:
+        # SAEC uses its Siemens stop trigger; retain zero for the shared preparer.
+        shift = _number(cfg.get('physio_clock_drift_seconds', 0.0), 'physio_clock_drift_seconds')
+        if shift != 0:
+            raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
+        cfg['physio_clock_drift_seconds'] = 0.0
+    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
+        raise ValueError(f'Physiological clock settings incompatible with {data_type}.')
 
 
-def _normalize_runtime_config(runtime, data_type):
-    if runtime.flip_for_display is None:
-        runtime.flip_for_display = data_type in {"real-world", "raw-data"}
-    if runtime.clean_output_folders_before_run is None:
-        runtime.clean_output_folders_before_run = True
-    if runtime.jupyter_notebook_flag is None:
-        runtime.jupyter_notebook_flag = False
-    if runtime.runtime_device is None:
-        warnings.warn(
-            "runtime_device not specified; defaulting to 'cpu'.",
-            RuntimeWarning,
-        )
-        runtime.runtime_device = "cpu"
-    runtime.runtime_device = str(runtime.runtime_device).lower()
-    if runtime.runtime_device not in {"cpu", "gpu"}:
-        raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
-    if runtime.print_to_console is None:
-        runtime.print_to_console = not bool(runtime.jupyter_notebook_flag)
-    if runtime.verbose is None:
-        runtime.verbose = not bool(runtime.jupyter_notebook_flag)
-
-
-def _normalize_sampling_config(sampling, data_type):
-    if sampling.kspace_sampling_type is None:
-        if data_type in {"real-world", "raw-data"}:
-            sampling.kspace_sampling_type = "from-data"
-        else:
-            sampling.kspace_sampling_type = "linear"
+def _validate_csm(cfg):
+    _require(cfg, {'coil_sensitivity_method'}, 'coil sensitivity')
+    method = cfg['coil_sensitivity_method']
+    _choice(method, 'coil_sensitivity_method', {'espirit', 'odille-spline'})
+    expected = _CSM_ESPIRIT_KEYS if method == 'espirit' else _CSM_ODILLE_SPLINE_KEYS
+    supplied = cfg.keys() & _CSM_KEYS
+    if supplied != expected:
+        missing = sorted(expected - supplied)
+        irrelevant = sorted(supplied - expected)
+        raise ValueError(f'coil sensitivity config for {method!r} must contain exactly {sorted(expected)}; missing={missing}, irrelevant={irrelevant}.')
+    if method == 'espirit':
+        for key in ('espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'):
+            _integer(cfg[key], key)
+        if cfg['espirit_kernel_width'] > cfg['espirit_calibration_width']:
+            raise ValueError('espirit_kernel_width cannot exceed espirit_calibration_width.')
     else:
-        sampling.kspace_sampling_type = str(sampling.kspace_sampling_type).strip().lower()
-
-    if sampling.kspace_sampling_type not in _SAMPLING_TYPES:
-        raise ValueError(
-            "kspace_sampling_type must be one of "
-            f"{sorted(_SAMPLING_TYPES)}."
-        )
-
-    has_sampling_sim = sampling.NshotsPerNex is not None and sampling.Nex is not None
-    if has_sampling_sim:
-        sampling.NshotsPerNex = _normalize_positive_int(sampling.NshotsPerNex, "NshotsPerNex")
-        sampling.Nex = _normalize_positive_int(sampling.Nex, "Nex")
-        sampling.Nshots = int(sampling.NshotsPerNex) * int(sampling.Nex)
-    elif sampling.Nshots is None:
-        sampling.Nshots = 1
+        for key in ('spline_magnitude_smoothing', 'spline_phase_smoothing'):
+            _number(cfg[key], key, minimum=0)
+        _number(cfg['coil_sensitivity_eps'], 'coil_sensitivity_eps', positive=True)
 
 
-def _normalize_data_config(data):
-    recon_dim = _normalize_data_dimension(data.reconstruction_dimension)
-
-    for coil_key in ("Ncoils_SheppLogan", "Ncoils_input"):
-        if coil_key in data.source_options:
-            data.source_options[coil_key] = _normalize_synthetic_coil_count(
-                data.source_options[coil_key],
-                coil_key,
-            )
-
-    inferred_dim = None
-    if "Nz_SheppLogan" in data.source_options:
-        nz = int(data.source_options["Nz_SheppLogan"])
-        inferred_dim = "3D" if nz > 1 else "2D"
-
-    if data.data_dimension is None:
-        if inferred_dim is not None:
-            data.data_dimension = inferred_dim
-        elif recon_dim is not None:
-            data.data_dimension = recon_dim
-        else:
-            data.data_dimension = "2D"
-    else:
-        data.data_dimension = _normalize_data_dimension(data.data_dimension)
-
-    if data.data_type == "from_image" and data.data_dimension == "3D":
-        raise ValueError(
-            f"data_type='{data.data_type}' is only supported for 2D inputs; "
-            "3D is not compatible with this source type."
-        )
-
-    motion_cfg_dim = _normalize_data_dimension(data.motion_simulation_config_dimension)
-    if recon_dim is not None and recon_dim != data.data_dimension:
-        raise ValueError(
-            f"Reconstruction config is tagged {recon_dim}, but data_dimension is {data.data_dimension}."
-        )
-    if motion_cfg_dim is not None and motion_cfg_dim != data.data_dimension:
-        raise ValueError(
-            f"Motion simulation config is tagged {motion_cfg_dim}, but data_dimension is {data.data_dimension}."
-        )
-
-    if "Nz_SheppLogan" in data.source_options:
-        nz_dim = "3D" if int(data.source_options["Nz_SheppLogan"]) > 1 else "2D"
-        if nz_dim != data.data_dimension:
-            raise ValueError(
-                f"Shepp-Logan Nz_SheppLogan={int(data.source_options['Nz_SheppLogan'])} implies {nz_dim}, "
-                f"but data_dimension is {data.data_dimension}."
-            )
+def _validate_source(cfg):
+    _choice(cfg['reconstruction_dimension'], 'reconstruction_dimension', {'2D', '3D'})
+    # Real input dimensionality is taken from the explicitly selected reconstruction tag.
+    if 'data_dimension' not in cfg and cfg['data_type'] in REAL_DATA_TYPES:
+        cfg['data_dimension'] = cfg['reconstruction_dimension']
+    _require(cfg, {'data_dimension'}, 'data source')
+    _choice(cfg['data_dimension'], 'data_dimension', {'2D', '3D'})
+    if cfg['data_dimension'] != cfg['reconstruction_dimension']:
+        raise ValueError('data_dimension must match reconstruction_dimension.')
+    if cfg['data_type'] == 'shepp-logan':
+        _require(cfg, _SHEPP_KEYS, 'Shepp-Logan source')
+        for key in ('N_SheppLogan', 'Nz_SheppLogan', 'Ncoils_SheppLogan'):
+            _integer(cfg[key], key)
+        if cfg['Ncoils_SheppLogan'] % 4:
+            raise ValueError('Ncoils_SheppLogan must be divisible by 4.')
+        dim = '3D' if cfg['Nz_SheppLogan'] > 1 else '2D'
+        if dim != cfg['data_dimension']:
+            raise ValueError('Nz_SheppLogan conflicts with data_dimension.')
+        _number(cfg['SheppLoganFillFraction'], 'SheppLoganFillFraction', positive=True, maximum=1)
+    if cfg['data_type'] == 'from_image':
+        _require(cfg, _IMAGE_KEYS, 'image source')
+        if cfg['data_dimension'] != '2D':
+            raise ValueError('from_image supports only 2D data.')
+        _integer(cfg['Ncoils_input'], 'Ncoils_input')
+        if cfg['Ncoils_input'] % 4:
+            raise ValueError('Ncoils_input must be divisible by 4.')
+        _number(cfg['image_resize_factor'], 'image_resize_factor', positive=True)
 
 
-def _normalize_required_motion_source_options(data, names):
-    for name in names:
-        _normalize_required_positive_float(data.source_options, name, "data source")
-
-
-def _normalize_required_motion_parameters(motion, names, *, positive_names=(), nonnegative_names=()):
-    for name in names:
-        if name in positive_names:
-            _normalize_required_positive_float(motion.parameters, name, "motion")
-        elif name in nonnegative_names:
-            _normalize_required_float(motion.parameters, name, "motion", min_value=0.0)
-        else:
-            _normalize_required_float(motion.parameters, name, "motion")
-
-
-def _normalize_motion_config(motion, data):
-    if motion.reconstruction_motion_type is None:
-        raise ValueError("reconstruction_motion_type must be provided.")
-    motion.reconstruction_motion_type = _normalize_motion_type(motion.reconstruction_motion_type)
-
-    if motion.simulated_motion_type is not None:
-        motion.simulated_motion_type = _normalize_motion_type(motion.simulated_motion_type)
-
-    if motion.motion_state_mode is not None:
-        motion.motion_state_mode = _normalize_motion_state_mode(motion.motion_state_mode)
-
-    if motion.motion_simulation_model_mode is None:
-        raise ValueError("motion_simulation_model_mode must be resolved before motion config normalization.")
-    motion.motion_simulation_model_mode = _normalize_motion_simulation_model_mode(motion.motion_simulation_model_mode)
-
-    inferred_motion_type, inferred_mode = _SIM_MODEL_MODE_TO_MODEL[motion.motion_simulation_model_mode]
-    if inferred_motion_type is not None:
-        if (
-            motion.simulated_motion_type is not None
-            and motion.simulated_motion_type != inferred_motion_type
-        ):
-            raise ValueError(
-                f"motion_simulation_model_mode '{motion.motion_simulation_model_mode}' is incompatible with "
-                f"simulated_motion_type '{motion.simulated_motion_type}'."
-            )
-        motion.simulated_motion_type = inferred_motion_type
-
-    if inferred_mode is not None:
-        if motion.motion_state_mode is not None and motion.motion_state_mode != inferred_mode:
-            raise ValueError(
-                f"motion_state_mode='{motion.motion_state_mode}' conflicts with "
-                f"motion_simulation_model_mode='{motion.motion_simulation_model_mode}'."
-            )
-        motion.motion_state_mode = inferred_mode
-    else:
-        motion.simulated_motion_type = None
-        if motion.motion_simulation_model_mode == "as-it-is" and motion.motion_state_mode is not None:
-            raise ValueError(
-                "motion_state_mode must not be set when motion_simulation_model_mode='as-it-is'."
-            )
-        motion.motion_state_mode = None
-
-    if motion.motion_simulation_model_mode == "as-it-is":
+def _validate_sampling(cfg):
+    _choice(cfg['kspace_sampling_type'], 'kspace_sampling_type', {'linear', 'interleaved', 'random', 'from-data'})
+    if cfg['kspace_sampling_type'] == 'from-data':
+        if cfg['data_type'] not in REAL_DATA_TYPES:
+            raise ValueError('from-data sampling requires real input data.')
+        extra = (cfg.keys() & _SAMPLING_KEYS) - {'kspace_sampling_type'}
+        if extra:
+            raise ValueError(f'from-data sampling reads acquisition counts from data; remove {sorted(extra)}.')
         return
+    _require(cfg, _SAMPLING_KEYS, 'simulated sampling')
+    for key in ('NshotsPerNex', 'Nex', 'acceleration_factor'):
+        _integer(cfg[key], key)
+    _integer(cfg['calibration_lines'], 'calibration_lines', 0)
+    if cfg['acceleration_factor'] > 1 and cfg['calibration_lines'] == 0:
+        raise ValueError('Accelerated sampling requires positive calibration_lines.')
+    cfg['Nshots'] = cfg['NshotsPerNex'] * cfg['Nex']
 
-    if data.data_dimension not in {"2D", "3D"}:
-        raise ValueError("data_dimension must be resolved before motion config normalization.")
 
-    if motion.motion_simulation_model_mode in _RIGID_SIM_MODEL_MODES:
-        if "rigid_motion_amplitude_scale" in motion.parameters:
-            _normalize_required_float(
-                motion.parameters,
-                "rigid_motion_amplitude_scale",
-                "motion",
-                min_value=0.0,
-            )
+def validate_sampling_size(params, ny, nz):
+    """Validate data-dependent sampling bounds once the image dimensions are known."""
+    if params.kspace_sampling_type == 'from-data':
+        return
+    if params.calibration_lines > ny:
+        raise ValueError('calibration_lines cannot exceed the ky matrix size.')
+    if params.acceleration_factor > ny:
+        raise ValueError('acceleration_factor cannot exceed the ky matrix size.')
+    acquired = set(range(0, ny, params.acceleration_factor))
+    if params.acceleration_factor > 1:
+        start = (ny - params.calibration_lines) // 2
+        acquired.update(range(start, start + params.calibration_lines))
+    if params.NshotsPerNex > len(acquired) * nz:
+        raise ValueError('NshotsPerNex cannot exceed the number of acquired readouts per repetition.')
+    if nz > 1 and params.kspace_sampling_type in {'linear', 'interleaved'}:
+        # These 3D orders assign ky groups (with all kz partitions) to each shot.
+        for shot in range(params.NshotsPerNex):
+            if params.kspace_sampling_type == 'linear':
+                candidates = range(shot * ny // params.NshotsPerNex, (shot + 1) * ny // params.NshotsPerNex)
+            else:
+                candidates = range(shot, ny, params.NshotsPerNex)
+            if not acquired.intersection(candidates):
+                raise ValueError('Sampling configuration creates an empty 3D shot.')
+    return len(acquired) * nz * params.Nex
 
-        if motion.motion_state_mode == "realistic":
-            _normalize_required_positive_int(motion.parameters, "num_motion_events", "motion")
-            _normalize_required_positive_int(motion.parameters, "motion_tau", "motion")
 
-        if data.data_dimension == "2D":
-            _normalize_required_motion_source_options(data, ("FoVxy_mm",))
-            _normalize_required_motion_parameters(
-                motion,
-                ("max_tx", "max_ty", "max_phi", "max_center_x", "max_center_y"),
-            )
+def _validate_motion(cfg):
+    _require(cfg, {'simulated_motion_type'}, 'motion')
+    mode = cfg['simulated_motion_type']
+    _choice(mode, 'simulated_motion_type', {'as-it-is', 'rigid-per-readout', 'rigid-per-shot', 'non-rigid-per-readout', 'non-rigid-per-shot'})
+    supplied = cfg.keys() & (_RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS)
+    if mode == 'as-it-is':
+        if cfg['data_type'] not in REAL_DATA_TYPES or cfg['kspace_sampling_type'] != 'from-data':
+            raise ValueError('as-it-is motion requires real data with from-data sampling; reordered data requires simulated motion.')
+        if supplied or 'motion_simulation_config_dimension' in cfg:
+            raise ValueError('as-it-is motion cannot have synthetic motion parameters.')
+        return
+    _require(cfg, {'motion_simulation_config_dimension'}, 'motion')
+    _choice(cfg['motion_simulation_config_dimension'], 'motion_simulation_config_dimension', {'2D', '3D'})
+    if cfg['motion_simulation_config_dimension'] != cfg['data_dimension']:
+        raise ValueError('motion_simulation_config_dimension must match data_dimension.')
+    rigid = mode.startswith('rigid-')
+    if rigid:
+        required = {'rigid_motion_amplitude_scale'}
+        if cfg['data_dimension'] == '2D':
+            required |= {'max_tx', 'max_ty', 'max_phi', 'max_center_x', 'max_center_y'}
         else:
-            _normalize_required_motion_source_options(data, ("FoVxy_mm", "FoVz_mm"))
-            _normalize_required_motion_parameters(
-                motion,
-                (
-                    "max_tx_3d",
-                    "max_ty_3d",
-                    "max_tz_3d",
-                    "max_rx_3d",
-                    "max_ry_3d",
-                    "max_rz_3d",
-                    "max_center_x_3d",
-                    "max_center_y_3d",
-                    "max_center_z_3d",
-                ),
-            )
-
-    if motion.motion_simulation_model_mode in _NONRIGID_SIM_MODEL_MODES:
-        _normalize_required_motion_parameters(
-            motion,
-            (
-                "nonrigid_diaphragm_level",
-                "nonrigid_diaphragm_sharpness",
-                "nonrigid_lateral_sigma_lr",
-                "nonrigid_lateral_sigma_ap",
-                "nonrigid_lr_fraction",
-                "nonrigid_ap_fraction",
-                "nonrigid_anterior_bias",
-                "nonrigid_inferior_gain",
-                "nonrigid_top_decay",
-            ),
-            positive_names=("nonrigid_lateral_sigma_lr", "nonrigid_lateral_sigma_ap"),
-        )
-        _normalize_required_float(
-            motion.parameters,
-            "nonrigid_anterior_bias",
-            "motion",
-            min_value=0.0,
-            max_value=1.0,
-        )
-
-        if motion.motion_state_mode == "per-shot":
-            _normalize_required_motion_parameters(
-                motion,
-                ("nonrigid_discrete_s_scale",),
-                nonnegative_names=("nonrigid_discrete_s_scale",),
-            )
-
-        if motion.motion_state_mode == "realistic":
-            _normalize_required_float(
-                motion.parameters,
-                "nonrigid_motion_amplitude",
-                "motion",
-                min_value=0.0,
-            )
-            cycles_min = _normalize_required_positive_float(
-                motion.parameters,
-                "nonrigid_resp_cycles_min",
-                "motion",
-            )
-            cycles_max = _normalize_required_positive_float(
-                motion.parameters,
-                "nonrigid_resp_cycles_max",
-                "motion",
-            )
-            if cycles_min > cycles_max:
-                raise ValueError(
-                    "nonrigid_resp_cycles_min must be <= nonrigid_resp_cycles_max."
-                )
-
-
-def _normalize_reconstruction_config(reconstruction, motion, sampling):
-    if reconstruction.N_motion_states is None:
-        raise ValueError("N_motion_states must be provided in the reconstruction config or via override.")
-
-    manual_states = _normalize_positive_int(reconstruction.N_motion_states, "N_motion_states")
-    if motion.motion_simulation_model_mode in _PER_SHOT_SIM_MODEL_MODES:
-        reconstruction.N_motion_states = int(sampling.Nshots)
+            required |= {'max_tx_3d', 'max_ty_3d', 'max_tz_3d', 'max_rx_3d', 'max_ry_3d', 'max_rz_3d', 'max_center_x_3d', 'max_center_y_3d', 'max_center_z_3d'}
+        if mode.endswith('-per-readout'):
+            required |= {'num_motion_events', 'motion_tau'}
     else:
-        reconstruction.N_motion_states = manual_states
+        common = _NONRIGID_MOTION_KEYS - {'nonrigid_discrete_s_scale', 'nonrigid_motion_amplitude', 'nonrigid_resp_cycles_min', 'nonrigid_resp_cycles_max'}
+        required = common | ({'nonrigid_discrete_s_scale'} if mode.endswith('-per-shot') else {'nonrigid_motion_amplitude', 'nonrigid_resp_cycles_min', 'nonrigid_resp_cycles_max'})
+    irrelevant = supplied - required
+    if not rigid and cfg.keys() & _RIGID_GEOMETRY_KEYS:
+        raise ValueError(f'Rigid-motion geometry is incompatible with {mode}: {sorted(cfg.keys() & _RIGID_GEOMETRY_KEYS)}.')
+    if irrelevant:
+        raise ValueError(f'Parameters incompatible with {mode}: {sorted(irrelevant)}.')
+    _require(cfg, required, f'{mode} motion')
+    if rigid:
+        _require(cfg, {'FoVxy_mm'} | ({'FoVz_mm'} if cfg['data_dimension'] == '3D' else set()), 'motion field of view')
+        for key in required:
+            if key in {'num_motion_events', 'motion_tau'}:
+                _integer(cfg[key], key)
+            else:
+                _number(cfg[key], key, minimum=None if key.startswith('max_center_') else 0)
+    else:
+        for key in required:
+            _number(cfg[key], key, minimum=-1 if key == 'nonrigid_diaphragm_level' else 0)
+        for key in ('nonrigid_lateral_sigma_lr', 'nonrigid_lateral_sigma_ap', 'nonrigid_diaphragm_sharpness'):
+            _number(cfg[key], key, positive=True)
+        _number(cfg['nonrigid_diaphragm_level'], 'nonrigid_diaphragm_level', minimum=-1, maximum=1)
+        _number(cfg['nonrigid_anterior_bias'], 'nonrigid_anterior_bias', minimum=0, maximum=1)
+        if mode.endswith('-per-readout'):
+            if cfg['nonrigid_resp_cycles_min'] > cfg['nonrigid_resp_cycles_max']:
+                raise ValueError('nonrigid_resp_cycles_min cannot exceed nonrigid_resp_cycles_max.')
 
 
-def _ensure_output_folders(paths):
-    for folder in (
-        paths.debug_folder,
-        paths.logs_folder,
-        paths.results_folder,
-        paths.initial_data_folder,
-    ):
-        os.makedirs(folder, exist_ok=True)
+
+def _validate_reconstruction(cfg):
+    required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
+    if cfg.get('reconstruction_motion_type') == 'rigid':
+        required.remove('motion_preconditioner')
+    _require(cfg, required, 'reconstruction')
+    if cfg['motion_binning_mode'] == 'kspace_energy':
+        _require(cfg, {'motion_quantization_bins'}, 'kspace-energy motion binning')
+    elif 'motion_quantization_bins' in cfg:
+        raise ValueError('motion_quantization_bins is only valid when motion_binning_mode="kspace_energy".')
+    if cfg['cg_use_reg_scale_proxy']:
+        _require(cfg, {'cg_reg_scale_num_probes'}, 'CG regularization-scale proxy')
+    elif 'cg_reg_scale_num_probes' in cfg:
+        raise ValueError('cg_reg_scale_num_probes is only valid when cg_use_reg_scale_proxy=true.')
+    _choice(cfg['reconstruction_motion_type'], 'reconstruction_motion_type', {'rigid', 'non-rigid'})
+    _choice(cfg['regularization_scaling'], 'regularization_scaling', {'direct', 'voxel_aware'})
+    if cfg['reconstruction_motion_type'] == 'rigid':
+        if 'motion_preconditioner' in cfg:
+            raise ValueError('motion_preconditioner is only valid for non-rigid reconstruction.')
+    elif type(cfg['motion_preconditioner']) is not bool:
+        raise ValueError('motion_preconditioner must be a boolean.')
+    _choice(cfg['motion_gradient_boundary'], 'motion_gradient_boundary', {'zero', 'one_sided'})
+    if type(cfg['use_calibration_weighted_image']) is not bool:
+        raise ValueError('use_calibration_weighted_image must be a boolean.')
+    if cfg['use_calibration_weighted_image'] and cfg['coil_sensitivity_method'] != 'odille-spline':
+        raise ValueError('Calibration-weighted images require odille-spline coil sensitivities.')
+    levels = cfg['ResolutionLevels']
+    if not isinstance(levels, list) or not levels:
+        raise ValueError('ResolutionLevels must be a nonempty list.')
+    for value in levels:
+        _number(value, 'ResolutionLevels entry', positive=True, maximum=1)
+    if any(a >= b for a, b in zip(levels, levels[1:])) or levels[-1] != 1:
+        raise ValueError('ResolutionLevels must increase strictly and end at 1.0.')
+    iterations = cfg['GN_iterations_per_level']
+    if isinstance(iterations, list) and len(iterations) != len(levels):
+        raise ValueError(f'GN_iterations_per_level has {len(iterations)} entries; ResolutionLevels has {len(levels)}.')
+    if not isinstance(iterations, (int, list)) or type(iterations) is bool:
+        raise ValueError('GN_iterations_per_level must be a positive integer or a list of positive integers.')
+    for value in iterations if isinstance(iterations, list) else [iterations]:
+        _integer(value, 'GN_iterations_per_level entry')
+    for key in ('max_iter_recon', 'max_iter_motion', 'cg_true_residual_interval'):
+        _integer(cfg[key], key)
+    if cfg['cg_use_reg_scale_proxy']:
+        _integer(cfg['cg_reg_scale_num_probes'], 'cg_reg_scale_num_probes')
+    for key in ('cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps'):
+        _integer(cfg[key], key, 0)
+    for key in ('tol_recon', 'tol_motion'):
+        _number(cfg[key], key, positive=True)
+    for key in ('lambda_r', 'lambda_m'):
+        values = cfg[key]
+        if key == 'lambda_r' and isinstance(values, list):
+            if len(values) != len(levels):
+                raise ValueError('lambda_r must have one value per resolution level.')
+        else:
+            values = [values]
+        for value in values:
+            _number(value, key, minimum=0)
+    if cfg['reconstruction_motion_type'] == 'non-rigid' and cfg['motion_preconditioner'] and cfg['lambda_m'] == 0:
+        raise ValueError('motion_preconditioner=true requires lambda_m > 0.')
+    _choice(cfg['motion_binning_mode'], 'motion_binning_mode', {'kmeans', 'kspace_energy'})
+    if cfg['motion_binning_mode'] == 'kspace_energy':
+        _integer(cfg['motion_quantization_bins'], 'motion_quantization_bins', 2)
+    configured_states = cfg['N_motion_states']
+    if isinstance(configured_states, list):
+        if len(configured_states) != len(levels):
+            raise ValueError(f'N_motion_states has {len(configured_states)} entries; ResolutionLevels has {len(levels)}.')
+        states_per_level = [_integer(value, 'N_motion_states entry') for value in configured_states]
+    else:
+        states = _integer(configured_states, 'N_motion_states')
+        states_per_level = [states] * len(levels)
+    per_shot = cfg['simulated_motion_type'].endswith('-per-shot')
+    if per_shot and isinstance(configured_states, list):
+        raise ValueError('N_motion_states must be a scalar for per-shot simulation because the shot count determines the number of states.')
+    if per_shot and 'Nshots' in cfg:
+        shot_count = cfg['Nshots']
+        if configured_states != shot_count:
+            print(f"[config] Per-shot simulation: N_motion_states changed from {configured_states} to {shot_count} (shot count).", flush=True)
+        states_per_level = [shot_count] * len(levels)
+    full_states = max(states_per_level)
+    if cfg['reconstruction_motion_type'] == 'rigid' and any(value != full_states for value in states_per_level):
+        raise ValueError('Explicit per-level motion-state merging requires non-rigid reconstruction; empty states are removed automatically.')
+    cfg['N_motion_states'] = full_states
+    cfg['_motion_states_per_level'] = states_per_level
 
 
-def _resolve_configs(configs):
-    torch.set_default_dtype(torch.float64)
-
-    _normalize_runtime_config(configs.runtime, configs.data.data_type)
-    _normalize_sampling_config(configs.sampling, configs.data.data_type)
-    _normalize_data_config(configs.data)
-    _normalize_motion_config(configs.motion, configs.data)
-    _normalize_reconstruction_config(configs.reconstruction, configs.motion, configs.sampling)
-    _ensure_output_folders(configs.paths)
-    return configs
+def _apply_notebook_logging(cfg, overrides):
+    """Quiet notebook logs unless the caller explicitly overrides that setting."""
+    if not cfg['jupyter_notebook_flag']:
+        return
+    for key in ('verbose', 'print_to_console'):
+        if key not in (overrides or {}) and cfg[key]:
+            cfg[key] = False
+            print(f"[config] Notebook mode: {key} changed from True to False. Use overrides to keep it enabled.", flush=True)
 
 
-def load_config(
-    *,
-    data_type,
-    reconstruction_motion_type=None,
-    simulated_motion_type=None,
-    reconstruction_config,
-    shepp_logan_config=None,
-    from_image_config=None,
-    sampling_config=None,
-    motion_simulation_config=None,
-    motion_simulation_model_mode=None,
-    motion_simulation_type=None,
-    motion_state_mode=None,
-    data_dimension=None,
-    kspace_sampling_type=None,
-    NshotsPerNex=None,
-    Nex=None,
-    N_motion_states=None,
-    flip_for_display=None,
-    overrides=None,
-):
-    cfg = _load_base_config_dict(
-        data_type=data_type,
-        reconstruction_config=reconstruction_config,
-        shepp_logan_config=shepp_logan_config,
-        from_image_config=from_image_config,
-        sampling_config=sampling_config,
-        motion_simulation_config=motion_simulation_config,
-    )
+def load_postprocessing_config(path, *, overrides=None):
+    cfg = _load_toml_flat(path, 'postprocessing')
+    allowed = _FILE_SCHEMAS['postprocessing']['postprocessing']
+    _apply_overrides(cfg, overrides, allowed)
+    _require(cfg, allowed, 'postprocessing')
+    if type(cfg['normalize_image_by_grics_reference']) is not bool:
+        raise ValueError('normalize_image_by_grics_reference must be a boolean.')
+    return SimpleNamespace(**cfg)
 
-    _apply_direct_arguments(
-        cfg,
-        reconstruction_motion_type=reconstruction_motion_type,
-        simulated_motion_type=simulated_motion_type,
-        motion_simulation_model_mode=motion_simulation_model_mode,
-        motion_simulation_type=motion_simulation_type,
-        motion_state_mode=motion_state_mode,
-        data_dimension=data_dimension,
-        kspace_sampling_type=kspace_sampling_type,
-        NshotsPerNex=NshotsPerNex,
-        Nex=Nex,
-        N_motion_states=N_motion_states,
-        flip_for_display=flip_for_display,
-    )
 
-    if "reconstruction_motion_type" not in cfg:
-        raise ValueError(
-            "reconstruction_motion_type must be provided either in reconstruction config "
-            "or as a load_config argument."
-        )
+def _load_general_config(root):
+    """Load shared runtime settings from config/general.toml."""
+    return _load_toml_flat(root / 'general.toml', 'general')
 
-    _apply_user_overrides(cfg, overrides)
-    _rename_motion_simulation_model_mode_key(cfg)
 
-    sampling_from_data = _resolve_sampling_origin(cfg, cfg["data_type"])
-    _require_motion_input_for_simulated_sources(
-        cfg,
-        motion_simulation_config=motion_simulation_config,
-    )
-    _resolve_motion_simulation(
-        cfg,
-        sampling_from_data=sampling_from_data,
-        motion_simulation_config=motion_simulation_config,
-    )
+def _load_reconstruction_config(reconstruction_config):
+    """Load the required reconstruction settings."""
+    return _load_toml_flat(reconstruction_config, 'reconstruction')
 
-    if "kspace_sampling_type" in cfg and ("NshotsPerNex" not in cfg or "Nex" not in cfg):
-        raise ValueError(
-            "NshotsPerNex and Nex are required when kspace_sampling_type is specified."
-        )
 
-    _prune_irrelevant_motion_parameters(cfg)
-    _apply_notebook_output_defaults(cfg, overrides)
-    _apply_display_defaults(cfg, cfg["data_type"])
+def _load_coil_sensitivity_config(root, cfg):
+    """Load the coil-sensitivity file selected by reconstruction settings."""
+    _require(cfg, {'coil_sensitivity_config'}, 'reconstruction')
+    csm_method = cfg['coil_sensitivity_config']
+    csm_files = {'espirit': 'espirit.toml', 'odille-spline': 'odille_spline.toml'}
+    if not isinstance(csm_method, str) or csm_method not in csm_files:
+        raise ValueError('coil_sensitivity_config must be espirit or odille-spline.')
+    return _load_toml_flat(root / 'coil_sensitivity' / csm_files[csm_method], 'coil_sensitivity')
 
-    configs = ConfigBundle.from_flat_dict(cfg)
-    configs = _resolve_configs(configs)
-    return SimpleNamespace(**configs.to_flat_dict())
+
+def _load_physiological_data_config(root, data_type, *, physiological_data_config,
+                                    polaris_config, physio_config):
+    """Load sensor files selected from config/physiological_data."""
+    cfg = {}
+    saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
+    if physiological_data_config is not None and not saec_data:
+        raise ValueError('physiological_data_config is only valid for ISMRMRD or Siemens SAEC data.')
+    if saec_data:
+        if physiological_data_config is None:
+            raise ValueError(f'{data_type} requires a physiological_data_config.')
+        cfg.update(_load_toml_flat(physiological_data_config, 'physiological_data'))
+    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
+    if polaris_config is not None and not polaris_data:
+        raise ValueError('polaris_config is only valid for ISMRMRD or Siemens Polaris data.')
+    if polaris_data:
+        if polaris_config is None:
+            raise ValueError(f'{data_type} requires a polaris_config.')
+        cfg.update(_load_toml_flat(polaris_config, 'polaris'))
+    generic_physio_data = data_type in {
+        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
+        for kind in ('physio_text', 'physio_array')
+    }
+    if physio_config is not None and not generic_physio_data:
+        raise ValueError('physio_config is only valid for physiological text or array inputs.')
+    if generic_physio_data:
+        cfg.update(_load_toml_flat(
+            physio_config if physio_config is not None else root / 'physiological_data' / f"{data_type.split('-', 1)[1]}.toml", 'physio'))
+    return cfg
+
+
+def _load_synthetic_data_config(data_type, *, shepp_logan_config, from_image_config):
+    """Load the selected source from config/synthetic_data."""
+    cfg = {}
+    if data_type in SYNTHETIC_DATA_TYPES:
+        path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
+        if path is None:
+            raise ValueError(f'{data_type} requires its source configuration file.')
+        cfg.update(_load_toml_flat(path, data_type))
+    return cfg
+
+
+def _load_source_config(root, data_type, *, shepp_logan_config, from_image_config,
+                        physiological_data_config, polaris_config, physio_config):
+    """Select source files and reject configuration paths for other data types."""
+    if shepp_logan_config is not None and data_type != 'shepp-logan':
+        raise ValueError('shepp_logan_config is only valid for shepp-logan data.')
+    if from_image_config is not None and data_type != 'from_image':
+        raise ValueError('from_image_config is only valid for from_image data.')
+    cfg = _load_physiological_data_config(
+        root, data_type, physiological_data_config=physiological_data_config,
+        polaris_config=polaris_config, physio_config=physio_config)
+    cfg.update(_load_synthetic_data_config(
+        data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config))
+    return cfg
+
+
+def _load_sampling_simulation_config(root, data_type, sampling_config, overrides):
+    """Use recorded sampling by default for real data."""
+    cfg = {}
+    if sampling_config is not None:
+        cfg.update(_load_toml_flat(sampling_config, 'sampling'))
+    elif data_type in REAL_DATA_TYPES and (overrides or {}).get('kspace_sampling_type', 'from-data') == 'from-data':
+        cfg.update(_load_toml_flat(root / 'sampling_simulation/from_data.toml', 'sampling'))
+    return cfg
+
+
+def _load_motion_simulation_config(root, data_type, motion_simulation_config):
+    """Keep recorded motion by default for real data."""
+    cfg = {}
+    if motion_simulation_config is not None:
+        cfg.update(_load_toml_flat(motion_simulation_config, 'motion'))
+    elif data_type in REAL_DATA_TYPES:
+        cfg.update(_load_toml_flat(root / 'motion_simulation/as_is.toml', 'motion'))
+    return cfg
+
+
+def _validate_synthetic_data_settings(cfg):
+    """Reject synthetic source settings belonging to a different data type."""
+    data_type = cfg['data_type']
+    source_only = (_SHEPP_KEYS | _IMAGE_KEYS) - {'data_dimension'}
+    permitted_source = _SHEPP_KEYS if data_type == 'shepp-logan' else _IMAGE_KEYS if data_type == 'from_image' else set()
+    misplaced = (cfg.keys() & source_only) - permitted_source
+    if misplaced:
+        raise ValueError(f'Source settings incompatible with {data_type}: {sorted(misplaced)}.')
+
+
+def _validate_known_source_size(cfg):
+    """Check dependent limits when source dimensions are known before loading data."""
+    if cfg['data_type'] != 'shepp-logan':
+        return
+    spatial = [cfg['N_SheppLogan'], cfg['N_SheppLogan']]
+    if cfg['data_dimension'] == '3D':
+        spatial.append(cfg['Nz_SheppLogan'])
+    params = SimpleNamespace(**cfg)
+    validate_reconstruction_size(params, spatial)
+    validate_calibration_size(params, spatial)
+    readouts = validate_sampling_size(params, cfg['N_SheppLogan'], cfg['Nz_SheppLogan'])
+    validate_motion_readout_count(params, readouts)
+
+
+def load_config(*, data_type, reconstruction_config,
+                shepp_logan_config=None, from_image_config=None, physiological_data_config=None,
+                polaris_config=None, physio_config=None, sampling_config=None,
+                motion_simulation_config=None, overrides=None):
+    """Load file-owned settings, apply overrides, then validate dependent sections."""
+    _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
+    root = Path(__file__).resolve().parents[2] / 'config'
+    cfg = _load_general_config(root)
+    cfg['data_type'] = data_type
+    cfg.update(_load_reconstruction_config(reconstruction_config))
+    cfg.update(_load_coil_sensitivity_config(root, cfg))
+    cfg.update(_load_source_config(
+        root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
+        physiological_data_config=physiological_data_config,
+        polaris_config=polaris_config, physio_config=physio_config))
+    cfg.update(_load_sampling_simulation_config(root, data_type, sampling_config, overrides))
+    cfg.update(_load_motion_simulation_config(root, data_type, motion_simulation_config))
+
+    _apply_overrides(cfg, overrides, _OVERRIDE_KEYS)
+    _require(cfg, {'kspace_sampling_type'}, 'sampling')
+    _validate_synthetic_data_settings(cfg)
+    _validate_general(cfg)
+    _validate_physiological_data(cfg)
+    _validate_csm(cfg)
+    _validate_source(cfg)
+    _validate_sampling(cfg)
+    _validate_motion(cfg)
+    _validate_reconstruction(cfg)
+    _validate_known_source_size(cfg)
+    _apply_notebook_logging(cfg, overrides)
+    return SimpleNamespace(**cfg)
+
+
+def validate_reconstruction_size(params, spatial_shape):
+    """Reject resolution levels that collapse a known image axis to zero."""
+    # downsample_data keeps a genuinely 3D volume at depth >= 2 even when
+    # its requested coarse depth rounds to zero or one. Only the other axes
+    # can therefore collapse; retain the existing checks for 2D inputs.
+    checked_shape = spatial_shape[:2] if len(spatial_shape) == 3 and spatial_shape[2] > 1 else spatial_shape
+    for level in params.ResolutionLevels:
+        if any(int(size * level) < 1 for size in checked_shape):
+            raise ValueError("ResolutionLevels would produce an empty spatial dimension.")
+
+
+def validate_calibration_size(params, spatial_shape):
+    """Validate requested calibration support against actual data dimensions."""
+    if params.coil_sensitivity_method == 'espirit':
+        if params.espirit_calibration_width > min(spatial_shape):
+            raise ValueError('espirit_calibration_width exceeds the smallest encoded spatial dimension.')
+
+
+def validate_motion_readout_count(params, readouts):
+    """Validate motion-state/event counts when acquisition size is known."""
+    if type(params.N_motion_states) is int and params.N_motion_states > readouts:
+        raise ValueError('N_motion_states cannot exceed the number of acquired readouts.')
+    if params.simulated_motion_type == 'rigid-per-readout' and params.num_motion_events > readouts:
+        raise ValueError('num_motion_events cannot exceed the number of acquired readouts.')

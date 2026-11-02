@@ -1,0 +1,16 @@
+[motion]
+# In-plane field of view for translation and center conversion; use any finite value > 0 mm.
+FoVxy_mm = 220.0
+# Shared in-plane rigid-motion limits.
+# Global rigid-motion amplitude scale; use any finite value >= 0, where 0 disables motion and 1 uses listed limits.
+rigid_motion_amplitude_scale = 1.0
+# Maximum absolute x-translation; use any finite value >= 0 mm, converted to pixels using FoVxy_mm.
+max_tx = 0.2
+# Maximum absolute y-translation; use any finite value >= 0 mm, converted to pixels using FoVxy_mm.
+max_ty = 2.0
+# Maximum absolute in-plane rotation; use any finite value >= 0 degrees.
+max_phi = 0.2
+# Fixed x-offset of the rotation center from image center; use any finite signed value in mm.
+max_center_x = 0
+# Fixed y-offset of the rotation center from image center; use any finite signed value in mm.
+max_center_y = 0

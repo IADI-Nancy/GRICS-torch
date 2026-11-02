@@ -1,0 +1,698 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+from types import SimpleNamespace
+
+from src.utils.ismrmrd_io import acquisition_header
+import numpy as np
+import torch
+
+
+
+def write_reconstruction_dicom(
+    image: Any,
+    output_path: str | Path,
+    raw_data: Any | None = None,
+    *,
+    ismrmrd_file: str | Path | None = None,
+    slice_index: int | None = None,
+    series_description: str = "GRICS reconstruction",
+    study_instance_uid: str | None = None,
+    series_instance_uid: str | None = None,
+    frame_of_reference_uid: str | None = None,
+    images_in_acquisition: int | None = None,
+    series_number: int | None = None,
+    reference_dicom_path: str | Path | None = None,
+    use_reference_geometry: bool = True,
+) -> Path:
+    """
+    Write a single-frame DICOM file for a reconstructed MR image.
+
+    Patient, study, scanner, sequence, and geometry fields are copied from the
+    raw-data ISMRMRD header when available. ``raw_data`` may be a DataPreparer
+    instance produced by this repository; otherwise pass ``ismrmrd_file``.
+
+    ``image`` must be a NumPy array or Torch tensor with shape ``[Nx, Ny]``.
+    Complex images are exported as magnitude. Set use_reference_geometry=False
+    to use acquisition geometry while copying other public metadata from a
+    DICOM donor.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    header = acquisition_header(raw_data, ismrmrd_file)
+    geometry = _require_slice_geometry(raw_data, slice_index)
+    pixels_float = _prepare_single_frame_image(image, geometry=geometry)
+    reference_dicom = _find_reference_dicom(reference_dicom_path, geometry, slice_index)
+    pixel_array = _scale_to_dicom_uint12(pixels_float, reference_dicom)
+
+    ds = _base_dataset(output_path)
+    if reference_dicom is not None:
+        _copy_reference_dicom_fields(ds, reference_dicom)
+        _validate_distinct_series_number(series_number, reference_dicom)
+    _copy_raw_header_fields(
+        ds,
+        header,
+        series_description,
+        study_instance_uid=study_instance_uid,
+        series_instance_uid=series_instance_uid,
+        frame_of_reference_uid=frame_of_reference_uid,
+        series_number=series_number,
+        only_missing=reference_dicom is not None,
+    )
+    if reference_dicom is None or not use_reference_geometry:
+        _copy_geometry_fields(ds, header, pixel_array.shape, slice_index, images_in_acquisition, raw_data, geometry)
+    else:
+        _set_reference_geometry_fields(ds, reference_dicom, pixel_array.shape, images_in_acquisition)
+    _set_pixel_fields(ds, pixel_array, reference_dicom)
+    _add_minimal_mr_fields(ds, header, only_missing=reference_dicom is not None)
+
+    ds.save_as(output_path, enforce_file_format=True)
+    return output_path
+
+
+
+def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
+                        reference_dicom_path=None):
+    """Export [Nx, Ny, Nz] as a single-frame MR series on its native grid.
+
+    Siemens 3D acquisition positions describe the slab center, not kz partitions.
+    Expand that center along slice_dir using encoded z FOV (no z crop is applied
+    by the reconstruction pipeline). Donors provide public metadata, while the
+    reconstructed grid supplies geometry, including when donor resolution differs.
+    """
+    import ismrmrd
+    from pydicom.uid import generate_uid
+
+    if image.ndim != 3 or any(size < 1 for size in image.shape) or image.shape[-1] < 2:
+        raise ValueError('Volume DICOM export requires [Nx, Ny, Nz] with Nz > 1.')
+    header = acquisition_header(raw_data)
+    enc = header.encoding[0]
+    slab_geometries = getattr(raw_data, '_input_slice_geometry', None)
+    if not slab_geometries:
+        raise ValueError('3D DICOM export requires raw slab geometry; none was loaded. '
+                         'Use raw input or preprocessed HDF5 containing slice_geometry and ismrmrd_header.')
+    slab = next(iter(slab_geometries.values()))
+    center = _vector(slab.get('position'), 3)
+    direction = _unit_vector(slab.get('slice_dir'), 3)
+    if center is None or direction is None:
+        raise ValueError('3D DICOM export requires a valid slab center and slice direction.')
+    for geometry in slab_geometries.values():
+        for key in ('position', 'read_dir', 'phase_dir', 'slice_dir'):
+            vector, reference = _vector(geometry.get(key), 3), _vector(slab.get(key), 3)
+            if vector is None or reference is None or not np.allclose(vector, reference, atol=1e-4, rtol=0):
+                raise ValueError('3D DICOM export requires one slab with consistent position and orientation.')
+    nz = image.shape[-1]
+    fov_z = float(enc.encodedSpace.fieldOfView_mm.z)
+    if not np.isfinite(fov_z) or fov_z <= 0:
+        raise ValueError('3D DICOM export requires a positive encoded z field of view.')
+    spacing = fov_z / nz
+    geometries = {
+        z: {**slab, 'position': (center + (z - (nz - 1) / 2) * spacing * direction).tolist(),
+            'slice_thickness': spacing}
+        for z in range(nz)
+    }
+    # Keep the loaded source unmodified and reuse the existing 2D export path.
+    volume_source = SimpleNamespace(ismrmrd_header=ismrmrd.xsd.ToXML(header),
+                                    _input_slice_geometry=geometries)
+    uids = {key: generate_uid() for key in
+            ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
+    paths = []
+    for z in range(nz):
+        path = Path(output_dir) / f'slice_{z + 1:03d}.dcm'
+        write_reconstruction_dicom(
+            image[..., z], path, raw_data=volume_source, slice_index=z,
+            series_description='GRICS reconstruction RESEARCH ONLY',
+            images_in_acquisition=nz, series_number=series_number,
+            reference_dicom_path=reference_dicom_path, use_reference_geometry=False,
+            **uids)
+        paths.append(path)
+    return paths, uids
+
+
+def _find_reference_dicom(
+    reference_dicom_path: str | Path | None,
+    geometry: Any,
+    slice_index: int | None,
+) -> Any | None:
+    if reference_dicom_path is None:
+        return None
+
+    _ensure_pydicom_available()
+    import pydicom
+
+    path = Path(reference_dicom_path)
+    if path.is_file():
+        return pydicom.dcmread(str(path), stop_before_pixels=True, force=True)
+    if not path.is_dir():
+        raise FileNotFoundError(f"Reference DICOM path does not exist: {path}")
+
+    current_location = _slice_location_from_geometry(geometry)
+    if current_location is None:
+        raise ValueError("Cannot match reference DICOM: source slice geometry has no valid slice location.")
+
+    candidates = []
+    for candidate in sorted(p for p in path.rglob("*") if p.is_file()):
+        try:
+            ds = pydicom.dcmread(str(candidate), stop_before_pixels=True, force=True)
+        except Exception:
+            continue
+        if getattr(ds, "Modality", None) != "MR":
+            continue
+        if not hasattr(ds, "SliceLocation"):
+            continue
+        candidates.append((abs(float(ds.SliceLocation) - current_location), candidate, ds))
+
+    if not candidates:
+        raise ValueError(f"No MR DICOM files with SliceLocation found below: {path}")
+
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][2]
+
+
+def _copy_reference_dicom_fields(ds: Any, reference: Any) -> None:
+    for elem in reference:
+        if elem.tag.is_private or elem.keyword in _REFERENCE_DICOM_SKIP_KEYWORDS:
+            continue
+        ds.add(deepcopy(elem))
+
+
+def _validate_distinct_series_number(series_number: int | None, reference: Any) -> None:
+    if series_number is None or not hasattr(reference, "SeriesNumber"):
+        return
+    if int(series_number) == int(reference.SeriesNumber):
+        raise ValueError(
+            "Output series number must be different from the reference Siemens series number: "
+            f"{series_number}. Pass a different --dicom-series-number."
+        )
+
+
+def _set_reference_geometry_fields(
+    ds: Any,
+    reference: Any,
+    shape: tuple[int, int],
+    images_in_acquisition: int | None,
+) -> None:
+    rows, cols = int(shape[0]), int(shape[1])
+    ds.Rows = rows
+    ds.Columns = cols
+    if images_in_acquisition is not None:
+        ds.ImagesInAcquisition = int(images_in_acquisition)
+
+    required = ("PixelSpacing", "ImageOrientationPatient", "ImagePositionPatient")
+    missing = [name for name in required if not hasattr(reference, name)]
+    if missing:
+        raise ValueError(f"Reference DICOM is missing required geometry fields: {missing}")
+
+    ds.PixelSpacing = [float(v) for v in reference.PixelSpacing]
+    ds.ImageOrientationPatient = [float(v) for v in reference.ImageOrientationPatient]
+    ds.ImagePositionPatient = [float(v) for v in reference.ImagePositionPatient]
+    _copy_if_present(ds, reference, "InstanceNumber")
+    _copy_if_present(ds, reference, "SliceLocation")
+    _copy_if_present(ds, reference, "SliceThickness")
+    _copy_if_present(ds, reference, "SpacingBetweenSlices")
+    _copy_if_present(ds, reference, "PatientPosition")
+    _copy_if_present(ds, reference, "PositionReferenceIndicator")
+
+
+_REFERENCE_DICOM_SKIP_KEYWORDS = {
+    "PixelData",
+    "FloatPixelData",
+    "DoubleFloatPixelData",
+    "OverlayData",
+    "SOPClassUID",
+    "SOPInstanceUID",
+    "MediaStorageSOPClassUID",
+    "MediaStorageSOPInstanceUID",
+    "TransferSyntaxUID",
+    "ImplementationClassUID",
+    "SeriesInstanceUID",
+    "SeriesNumber",
+    "SeriesDescription",
+    "ImageType",
+    "ConversionType",
+    "ContentDate",
+    "ContentTime",
+    "InstanceCreationDate",
+    "InstanceCreationTime",
+    "InstanceNumber",
+    "Rows",
+    "Columns",
+    "SamplesPerPixel",
+    "PhotometricInterpretation",
+    "BitsAllocated",
+    "BitsStored",
+    "HighBit",
+    "PixelRepresentation",
+    "SmallestImagePixelValue",
+    "LargestImagePixelValue",
+    "WindowCenter",
+    "WindowWidth",
+    "RescaleIntercept",
+    "RescaleSlope",
+    "RescaleType",
+}
+
+
+def _ensure_pydicom_available() -> None:
+    try:
+        import pydicom  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "write_reconstruction_dicom requires pydicom. Install the repo pip "
+            "requirements or run `pip install pydicom`."
+        ) from exc
+
+
+def _prepare_single_frame_image(image: Any, geometry: Any | None = None) -> np.ndarray:
+    if isinstance(image, torch.Tensor):
+        arr = image.detach().cpu().numpy()
+    else:
+        arr = np.asarray(image)
+
+    if arr.ndim != 2:
+        raise ValueError(f"DICOM export requires a spatial 2D image, got shape {arr.shape}.")
+
+    if np.iscomplexobj(arr):
+        arr = np.abs(arr)
+    # Magic flip to match Siemens DICOM export orientation. This is not documented anywhere.
+    arr = np.flip(arr, axis=(0, 1))
+    arr = np.asarray(arr, dtype=np.float64)
+    return np.nan_to_num(arr, copy=False)
+
+
+def _dicom_matrix_shape(header: Any) -> tuple[int, int] | None:
+    enc = _first_present(header, "encoding", index=0)
+    recon = _get(enc, "reconSpace")
+    matrix = _get(recon, "matrixSize")
+    x = _get(matrix, "x")
+    y = _get(matrix, "y")
+    if x and y:
+        return int(x), int(y)
+    return None
+
+
+def _scale_to_dicom_uint12(image: np.ndarray, reference_dicom: Any | None = None) -> np.ndarray:
+    image = image - float(np.min(image))
+    vmax = float(np.max(image))
+    if vmax <= 0.0:
+        return np.zeros(image.shape, dtype=np.uint16)
+
+    target_max = _reference_pixel_ceiling(reference_dicom)
+    scale = float(target_max) / vmax
+    return np.clip(np.rint(image * scale), 0, target_max).astype(np.uint16)
+
+
+def _reference_pixel_ceiling(reference_dicom: Any | None = None) -> int:
+    hard_ceiling = 2**12 - 1
+    if reference_dicom is None:
+        return hard_ceiling
+
+    center = _first_number(getattr(reference_dicom, "WindowCenter", None))
+    width = _first_number(getattr(reference_dicom, "WindowWidth", None))
+    if center is None or width is None:
+        raise ValueError("Reference DICOM scaling requires WindowCenter and WindowWidth.")
+
+    upper_window_value = int(round(center + 0.5 * width))
+    if upper_window_value <= 0:
+        raise ValueError(
+            "Reference DICOM WindowCenter/WindowWidth imply a non-positive upper window value: "
+            f"center={center}, width={width}."
+        )
+    return max(1, min(hard_ceiling, upper_window_value))
+
+
+def _base_dataset(output_path: Path):
+    _ensure_pydicom_available()
+    from pydicom.dataset import FileDataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, MRImageStorage, generate_uid
+
+    now = datetime.now()
+    file_meta = FileMetaDataset()
+    file_meta.FileMetaInformationVersion = b"\x00\x01"
+    file_meta.MediaStorageSOPClassUID = MRImageStorage
+    file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    file_meta.ImplementationClassUID = generate_uid()
+
+    ds = FileDataset(str(output_path), {}, file_meta=file_meta, preamble=b"\0" * 128)
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+    ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+    ds.Modality = "MR"
+    ds.ContentDate = now.strftime("%Y%m%d")
+    ds.ContentTime = now.strftime("%H%M%S.%f")
+    ds.ImageType = ["DERIVED", "PRIMARY", "M", "ND"]
+    ds.ConversionType = "WSD"
+    return ds
+
+
+def _copy_raw_header_fields(
+    ds: Any,
+    header: Any,
+    series_description: str,
+    *,
+    study_instance_uid: str | None = None,
+    series_instance_uid: str | None = None,
+    frame_of_reference_uid: str | None = None,
+    series_number: int | None = None,
+    only_missing: bool = False,
+) -> None:
+    from pydicom.uid import generate_uid
+
+    subject = _first_present(header, "subjectInformation")
+    study = _first_present(header, "studyInformation")
+    measurement = _first_present(header, "measurementInformation")
+    system = _first_present(header, "acquisitionSystemInformation")
+
+    _set_or_replace(ds, "PatientName", _get(subject, "patientName", "Anonymous"), only_missing)
+    _set_or_replace(ds, "PatientID", _get(subject, "patientID", "UNKNOWN"), only_missing)
+    _set_if_present(ds, "PatientBirthDate", _dicom_date(_get(subject, "patientBirthdate")), only_missing=only_missing)
+    _set_if_present(ds, "PatientSex", _patient_sex(_get(subject, "patientGender")), only_missing=only_missing)
+
+    _set_or_replace(ds, "StudyInstanceUID", study_instance_uid or generate_uid(), only_missing)
+    ds.SeriesInstanceUID = series_instance_uid or generate_uid()
+    _set_or_replace(ds, "FrameOfReferenceUID", frame_of_reference_uid or generate_uid(), only_missing)
+    if series_number is not None:
+        ds.SeriesNumber = int(series_number)
+    _set_if_present(ds, "StudyID", _get(study, "studyID"), only_missing=only_missing)
+    _set_if_present(ds, "AccessionNumber", _get(study, "accessionNumber"), only_missing=only_missing)
+    _set_if_present(ds, "ReferringPhysicianName", _get(study, "referringPhysicianName"), only_missing=only_missing)
+    _set_if_present(ds, "StudyDate", _dicom_date(_get(study, "studyDate")), only_missing=only_missing)
+    _set_if_present(ds, "StudyTime", _dicom_time(_get(study, "studyTime")), only_missing=only_missing)
+
+    protocol_name = _get(measurement, "protocolName")
+    raw_series_description = _get(measurement, "seriesDescription", "GRICS reconstruction")
+    ds.SeriesDescription = series_description or raw_series_description
+    _set_if_present(ds, "ProtocolName", protocol_name, only_missing=only_missing)
+    _set_if_present(ds, "SeriesDate", _dicom_date(_get(measurement, "seriesDate")), only_missing=only_missing)
+    _set_if_present(ds, "SeriesTime", _dicom_time(_get(measurement, "seriesTime")), only_missing=only_missing)
+    _set_if_present(ds, "Manufacturer", _get(system, "systemVendor"), only_missing=only_missing)
+    _set_if_present(ds, "ManufacturerModelName", _get(system, "systemModel"), only_missing=only_missing)
+    _set_if_present(ds, "InstitutionName", _get(system, "institutionName"), only_missing=only_missing)
+    _set_if_present(ds, "StationName", _get(system, "stationName"), only_missing=only_missing)
+    _set_if_present(ds, "DeviceSerialNumber", _get(system, "systemSerialNumber"), only_missing=only_missing)
+
+def _copy_geometry_fields(
+    ds: Any,
+    header: Any,
+    shape: tuple[int, int],
+    slice_index: int | None,
+    images_in_acquisition: int | None,
+    raw_data: Any | None,
+    geometry: Any | None = None,
+) -> None:
+    enc = _first_present(header, "encoding", index=0)
+    recon = _get(enc, "reconSpace")
+    fov = _get(recon, "fieldOfView_mm")
+    matrix = _get(recon, "matrixSize")
+
+    rows, cols = int(shape[0]), int(shape[1])
+    ds.Rows = rows
+    ds.Columns = cols
+    if images_in_acquisition is not None:
+        ds.ImagesInAcquisition = int(images_in_acquisition)
+
+    fov_y = _get(fov, "y")
+    fov_x = _get(fov, "x")
+    if fov_y is None or fov_x is None:
+        raise ValueError("DICOM export requires reconSpace fieldOfView_mm x and y.")
+    ds.PixelSpacing = [float(fov_x) / float(rows), float(fov_y) / float(cols)]
+
+    if geometry is None:
+        geometry = _require_slice_geometry(raw_data, slice_index)
+    _set_instance_number(ds, raw_data, geometry, slice_index)
+    _set_slice_geometry_fields(ds, header, fov, raw_data, geometry)
+    _set_scanner_geometry(ds, geometry, rows, cols)
+
+
+def _set_instance_number(ds: Any, raw_data: Any | None, geometry: Any, slice_index: int | None) -> None:
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None) if raw_data is not None else None
+    current_location = _slice_location_from_geometry(geometry)
+    if geometry_by_slice and current_location is not None:
+        locations = []
+        for other_geometry in geometry_by_slice.values():
+            location = _slice_location_from_geometry(other_geometry)
+            if location is not None:
+                locations.append(location)
+        if locations:
+            ordered_locations = sorted(locations, reverse=True)
+            ds.InstanceNumber = min(
+                range(len(ordered_locations)),
+                key=lambda idx: abs(ordered_locations[idx] - current_location),
+            ) + 1
+            return
+    ds.InstanceNumber = 1 if slice_index is None else int(slice_index) + 1
+
+
+def _set_slice_geometry_fields(ds: Any, header: Any, fov: Any, raw_data: Any | None, geometry: Any) -> None:
+    fov_z = geometry.get("slice_thickness", _get(fov, "z"))
+    if fov_z is not None:
+        ds.SliceThickness = float(fov_z)
+
+    patient_position = geometry.get("patient_position")
+    if patient_position is None:
+        measurement = _first_present(header, "measurementInformation")
+        raw_patient_position = _get(measurement, "patientPosition")
+        if raw_patient_position is not None:
+            patient_position = str(raw_patient_position).split(".")[-1]
+    _set_if_present(ds, "PatientPosition", patient_position)
+
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None) if raw_data is not None else None
+    spacing = _slice_spacing_from_geometry(geometry_by_slice)
+    if spacing is not None:
+        ds.SpacingBetweenSlices = float(spacing)
+
+
+def _slice_location_from_geometry(geometry: Any) -> float | None:
+    position = _vector(geometry.get("position"), 3)
+    slice_dir = _unit_vector(geometry.get("slice_dir"), 3)
+    if position is None or slice_dir is None:
+        return None
+    return float(np.dot(position, slice_dir))
+
+
+def _slice_spacing_from_geometry(geometry_by_slice: Any | None) -> float | None:
+    if not geometry_by_slice or len(geometry_by_slice) < 2:
+        return None
+
+    slice_locations = []
+    for geometry in geometry_by_slice.values():
+        location = _slice_location_from_geometry(geometry)
+        if location is not None:
+            slice_locations.append(location)
+
+    if len(slice_locations) < 2:
+        return None
+    slice_locations = np.sort(np.asarray(slice_locations, dtype=np.float64))
+    diffs = np.diff(slice_locations)
+    diffs = np.abs(diffs[diffs != 0.0])
+    if diffs.size == 0:
+        return None
+    return float(np.median(diffs))
+
+
+def _require_slice_geometry(raw_data: Any | None, slice_index: int | None) -> Any:
+    if raw_data is None:
+        raise ValueError("DICOM export requires raw_data with Siemens slice geometry.")
+    if slice_index is None:
+        raise ValueError("DICOM export requires slice_index so slice geometry can be selected.")
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None)
+    if not geometry_by_slice:
+        raise ValueError("DICOM export requires raw slice geometry; none was loaded from the raw data.")
+    geometry = geometry_by_slice.get(int(slice_index))
+    if geometry is None:
+        raise ValueError(f"DICOM export missing raw geometry for slice {int(slice_index)}.")
+    return geometry
+
+
+def _set_scanner_geometry(ds: Any, geometry: Any, rows: int, cols: int) -> None:
+    position = _vector(geometry.get("position"), 3)
+    read_dir = _unit_vector(geometry.get("read_dir"), 3)
+    phase_dir = _unit_vector(geometry.get("phase_dir"), 3)
+    slice_dir = _unit_vector(geometry.get("slice_dir"), 3)
+    if position is None:
+        raise ValueError("DICOM export requires a valid 3D ImagePositionPatient source position.")
+    if read_dir is None or phase_dir is None:
+        raise ValueError("DICOM export requires valid read and phase directions from the raw data.")
+    if slice_dir is None:
+        raise ValueError("DICOM export requires a valid slice direction from the raw data.")
+
+    row_spacing = _first_float(_get(ds, "PixelSpacing"), 0)
+    col_spacing = _first_float(_get(ds, "PixelSpacing"), 1)
+    row_cosine = phase_dir
+    column_cosine = read_dir
+    ipp = position - 0.5 * float(cols - 1) * col_spacing * row_cosine - 0.5 * float(rows - 1) * row_spacing * column_cosine
+
+    ds.ImageOrientationPatient = [float(v) for v in np.concatenate([row_cosine, column_cosine])]
+    ds.ImagePositionPatient = [float(v) for v in ipp]
+    ds.SliceLocation = float(np.dot(position, slice_dir))
+
+
+def _vector(value: Any, length: int) -> np.ndarray | None:
+    if value is None:
+        return None
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.size != length:
+        return None
+    return arr.reshape(length)
+
+
+def _unit_vector(value: Any, length: int) -> np.ndarray | None:
+    arr = _vector(value, length)
+    if arr is None:
+        return None
+    norm = float(np.linalg.norm(arr))
+    if norm <= 0.0:
+        return None
+    return arr / norm
+
+
+def _first_float(value: Any, index: int) -> float:
+    try:
+        return float(value[index])
+    except (TypeError, IndexError, ValueError) as exc:
+        raise ValueError("DICOM export requires a valid two-value PixelSpacing.") from exc
+
+
+def _set_pixel_fields(ds: Any, pixel_array: np.ndarray, reference_dicom: Any | None = None) -> None:
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated = 16
+    ds.BitsStored = 12
+    ds.HighBit = 11
+    ds.PixelRepresentation = 0
+    ds.SmallestImagePixelValue = int(pixel_array.min())
+    ds.LargestImagePixelValue = int(pixel_array.max())
+    ds.RescaleIntercept = 0
+    ds.RescaleSlope = 1
+    ds.RescaleType = "US"
+
+    if reference_dicom is not None:
+        if not hasattr(reference_dicom, "WindowCenter") or not hasattr(reference_dicom, "WindowWidth"):
+            raise ValueError("Reference DICOM pixel fields require WindowCenter and WindowWidth.")
+        ds.WindowCenter = deepcopy(reference_dicom.WindowCenter)
+        ds.WindowWidth = deepcopy(reference_dicom.WindowWidth)
+    else:
+        window_width = int(pixel_array.max()) if int(pixel_array.max()) > 0 else 1
+        ds.WindowCenter = float(window_width) / 2.0
+        ds.WindowWidth = float(window_width)
+
+    ds.PixelData = pixel_array.astype("<u2", copy=False).tobytes()
+    ds["PixelData"].VR = "OW"
+
+
+def _mr_acquisition_type(header: Any) -> str:
+    enc = _first_present(header, "encoding", index=0)
+    limits = _get(enc, "encodingLimits")
+    recon = _get(enc, "reconSpace")
+    encoded = _get(enc, "encodedSpace")
+    recon_matrix = _get(recon, "matrixSize")
+    encoded_matrix = _get(encoded, "matrixSize")
+
+    n_slices = _encoding_limit_size(_get(limits, "slice"))
+    n_kz = _encoding_limit_size(_get(limits, "kspace_encoding_step_2"))
+    recon_z = int(_get(recon_matrix, "z", 1) or 1)
+    encoded_z = int(_get(encoded_matrix, "z", 1) or 1)
+
+    if n_kz > 1 or recon_z > 1 or encoded_z > 1:
+        return "3D"
+    if n_slices > 1 or n_kz == 1:
+        return "2D"
+    raise ValueError("Unable to determine MR acquisition type from ISMRMRD encoding limits.")
+
+
+def _encoding_limit_size(limit_obj: Any) -> int:
+    if limit_obj is None:
+        return 1
+    maximum = _get(limit_obj, "maximum")
+    if maximum is None:
+        return 1
+    return int(maximum) + 1
+
+def _add_minimal_mr_fields(ds: Any, header: Any, *, only_missing: bool = False) -> None:
+    seq = _first_present(header, "sequenceParameters")
+    _set_if_present(ds, "RepetitionTime", _first_number(_get(seq, "TR")), only_missing=only_missing)
+    _set_if_present(ds, "EchoTime", _first_number(_get(seq, "TE")), only_missing=only_missing)
+    _set_if_present(ds, "InversionTime", _first_number(_get(seq, "TI")), only_missing=only_missing)
+    _set_if_present(ds, "FlipAngle", _first_number(_get(seq, "flipAngle_deg")), only_missing=only_missing)
+    _set_or_replace(ds, "ScanningSequence", "RM", only_missing)
+    _set_or_replace(ds, "SequenceVariant", "NONE", only_missing)
+    _set_or_replace(ds, "ScanOptions", "", only_missing)
+    _set_or_replace(ds, "MRAcquisitionType", _mr_acquisition_type(header), only_missing)
+    from pydicom.sequence import Sequence
+
+    if not only_missing or not hasattr(ds, "ReferencedImageSequence"):
+        ds.ReferencedImageSequence = Sequence([])
+
+
+def _first_present(obj: Any, attr: str, index: int | None = None) -> Any:
+    value = _get(obj, attr)
+    if index is not None and isinstance(value, (list, tuple)) and len(value) > index:
+        return value[index]
+    return value
+
+
+def _get(obj: Any, attr: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    value = getattr(obj, attr, default)
+    return default if value is None else value
+
+
+def _set_if_present(ds: Any, name: str, value: Any, *, only_missing: bool = False) -> None:
+    if value not in (None, ""):
+        _set_or_replace(ds, name, value, only_missing)
+
+
+def _set_or_replace(ds: Any, name: str, value: Any, only_missing: bool) -> None:
+    if only_missing and hasattr(ds, name):
+        return
+    setattr(ds, name, value)
+
+
+def _copy_if_present(ds: Any, source: Any, name: str) -> None:
+    if hasattr(source, name):
+        setattr(ds, name, deepcopy(getattr(source, name)))
+
+
+def _first_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return None
+        value = value[0]
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dicom_date(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).replace("-", "")
+    return text[:8] if len(text) >= 8 else None
+
+
+def _dicom_time(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).replace(":", "").replace(".", "")
+    return text[:6] if len(text) >= 6 else None
+
+
+def _patient_sex(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip().upper()
+    if text.startswith("M"):
+        return "M"
+    if text.startswith("F"):
+        return "F"
+    if text.startswith("O"):
+        return "O"
+    return None

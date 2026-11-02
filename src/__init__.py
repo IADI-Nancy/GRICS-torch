@@ -6,22 +6,15 @@ import numpy as np
 
 
 def _setup_env_guards():
-    # Keep Jupyter/IPython writable paths inside the workspace by default.
-    repo_root = Path(__file__).resolve().parents[1]
-    jupyter_root = Path(os.environ.get("JUPYTER_LOCAL_ROOT", repo_root / ".jupyter_local"))
-    os.environ.setdefault("JUPYTER_CONFIG_DIR", str(jupyter_root / "config"))
-    os.environ.setdefault("JUPYTER_DATA_DIR", str(jupyter_root / "data"))
-    os.environ.setdefault("JUPYTER_RUNTIME_DIR", str(jupyter_root / "runtime"))
-    os.environ.setdefault("IPYTHONDIR", str(jupyter_root))
-    (jupyter_root / "config").mkdir(parents=True, exist_ok=True)
-    (jupyter_root / "data").mkdir(parents=True, exist_ok=True)
-    (jupyter_root / "runtime").mkdir(parents=True, exist_ok=True)
+    """Set only cache locations that project imports require.
 
-    # Ensure numba caching has a writable location before sigpy/numba import.
+    Jupyter owns its own configuration and runtime directories. Changing them
+    from an imported package can disrupt an already-running kernel.
+    """
     cache_dir = Path(os.environ.get("NUMBA_CACHE_DIR", "/tmp/numba_cache"))
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("NUMBA_CACHE_DIR", str(cache_dir))
-    # Needed for deterministic PyTorch ops that route through CuBLAS.
+    # Needed for deterministic PyTorch operations that route through CuBLAS.
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 

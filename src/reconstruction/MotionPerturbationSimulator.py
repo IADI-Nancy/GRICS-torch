@@ -16,15 +16,39 @@ where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives
 """
 
 class MotionPerturbationSimulator:
-    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator):
+    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator,
+                 gradient_boundary="one_sided"):
         self.device = smaps.device
         self.SensitivityMaps = smaps
         self.Nex = Nex
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.image = image
+        if gradient_boundary not in ("zero", "one_sided"):
+            raise ValueError('gradient_boundary must be "zero" or "one_sided".')
+        self.gradient_boundary = gradient_boundary
+        expected_ndim = 3 if int(smaps.shape[-1]) > 1 else 2
+        if image.ndim != expected_ndim:
+            raise ValueError(
+                f"Motion optimization requires a {expected_ndim}D shared image; "
+                f"got shape {tuple(image.shape)}.")
         self.motionOperator = motionOperator
-        self.Nalpha = motionOperator.alpha.shape[0]  # number of motion parameters (t_x, t_y, phi)
+        self.Nalpha = motionOperator.alpha.shape[0]  # number of displacement or rigid parameters
+        if motionOperator.motion_type == "non-rigid":
+            if getattr(motionOperator, "Nz", 1) > 1:
+                if motionOperator.alpha.ndim != 5:
+                    raise ValueError(
+                        "3D non-rigid alpha must have shape [Nalpha, Nx, Ny, Nz, Nsensor]. "
+                        f"Got {tuple(motionOperator.alpha.shape)}."
+                    )
+            elif motionOperator.alpha.ndim != 4:
+                raise ValueError(
+                    "2D non-rigid alpha must have shape [Nalpha, Nx, Ny, Nsensor]. "
+                    f"Got {tuple(motionOperator.alpha.shape)}."
+                )
+            self.Nphysio = int(motionOperator.alpha.shape[-1])
+        else:
+            self.Nphysio = 1
 
     def _gradient_2d(self, img):
         # Central differences in the interior, one-sided at boundaries.
@@ -41,6 +65,9 @@ class MotionPerturbationSimulator:
         gy[:, 0] = img[:, 1] - img[:, 0]
         gy[:, -1] = img[:, -1] - img[:, -2]
 
+        if self.gradient_boundary == "zero":
+            gx[0, :] = gx[-1, :] = 0
+            gy[:, 0] = gy[:, -1] = 0
         return gx, gy
 
     def _gradient_3d(self, img):
@@ -64,6 +91,10 @@ class MotionPerturbationSimulator:
         gz[:, :, 0] = img[:, :, 1] - img[:, :, 0]
         gz[:, :, -1] = img[:, :, -1] - img[:, :, -2]
 
+        if self.gradient_boundary == "zero":
+            gx[0, :, :] = gx[-1, :, :] = 0
+            gy[:, 0, :] = gy[:, -1, :] = 0
+            gz[:, :, 0] = gz[:, :, -1] = 0
         return gx, gy, gz
 
     def forward(self, MotionModelPerturbation):
@@ -75,14 +106,19 @@ class MotionPerturbationSimulator:
             MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, N_motion_states)
         else:
             if is_3d:
-                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, Nz)
+                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, Nz, self.Nphysio)
             else:
-                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny)
+                MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, Nx, Ny, self.Nphysio)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
                 device=self.device,
                 dtype=MotionModelPerturbation.dtype,
             )
+            if motion_signal.ndim != 2:
+                raise ValueError(
+                    "non-rigid motion_signal must have shape [Nstate, Nsensor]. "
+                    f"Got {tuple(motion_signal.shape)}."
+                )
         # output k-space residual
         ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
                                      dtype=torch.complex128,
@@ -97,12 +133,11 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
                 # 1) Warp the image using the motion operator
                 if is_3d:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny, Nz)
                 else:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
 
                 # 2) Spatial gradients
                 if is_3d:
@@ -118,10 +153,15 @@ class MotionPerturbationSimulator:
                         dux, duy = self.motionOperator._apply_J(MotionModelPerturbation[:, motion_state], motion_state)
                 else:
                     # Non-rigid model is modulated by the state-dependent motion signal.
-                    dux = MotionModelPerturbation[0] * motion_signal[motion_state]
-                    duy = MotionModelPerturbation[1] * motion_signal[motion_state]
                     if is_3d:
-                        duz = MotionModelPerturbation[2] * motion_signal[motion_state]
+                        weights = motion_signal[motion_state].reshape(1, 1, 1, -1)
+                        dux = torch.sum(MotionModelPerturbation[0] * weights, dim=-1)
+                        duy = torch.sum(MotionModelPerturbation[1] * weights, dim=-1)
+                        duz = torch.sum(MotionModelPerturbation[2] * weights, dim=-1)
+                    else:
+                        weights = motion_signal[motion_state].reshape(1, 1, -1)
+                        dux = torch.sum(MotionModelPerturbation[0] * weights, dim=-1)
+                        duy = torch.sum(MotionModelPerturbation[1] * weights, dim=-1)
 
                 # 4) optical-flow first-order perturbation
                 if is_3d:
@@ -172,14 +212,19 @@ class MotionPerturbationSimulator:
                                             device=self.device)
         else:
             if is_3d:
-                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, Nz), dtype=torch.complex128, device=self.device)
+                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, Nz, self.Nphysio), dtype=torch.complex128, device=self.device)
             else:
-                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny), dtype=torch.complex128, device=self.device)
+                MotionModelPerturbation = torch.zeros((self.Nalpha, Nx, Ny, self.Nphysio), dtype=torch.complex128, device=self.device)
             motion_signal = torch.as_tensor(
                 self.motionOperator.motion_signal,
                 device=self.device,
                 dtype=MotionModelPerturbation.dtype,
             )
+            if motion_signal.ndim != 2:
+                raise ValueError(
+                    "non-rigid motion_signal must have shape [Nstate, Nsensor]. "
+                    f"Got {tuple(motion_signal.shape)}."
+                )
 
         for motion_state in range(N_motion_states):
             
@@ -189,12 +234,11 @@ class MotionPerturbationSimulator:
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
                 if SamplingIndices.numel() == 0:
                     continue
-                image_nex = self.image[nex]
                 # 1) Warp image with motion state operator
                 if is_3d:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny, Nz)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny, Nz)
                 else:
-                    WarpedImage = (MotionOp @ image_nex.flatten()).reshape(Nx, Ny)
+                    WarpedImage = (MotionOp @ self.image.flatten()).reshape(Nx, Ny)
 
                 # 2) Gradients of warped image
                 if is_3d:
@@ -241,10 +285,15 @@ class MotionPerturbationSimulator:
                         MotionModelPerturbation[:, motion_state] += self.motionOperator._apply_JH(du_x, du_y, motion_state)
                 else:
                     # Adjoint of multiplication by motion_signal is multiplication by its complex conjugate.
-                    MotionModelPerturbation[0] += du_x * motion_signal[motion_state]
-                    MotionModelPerturbation[1] += du_y * motion_signal[motion_state]
                     if is_3d:
-                        MotionModelPerturbation[2] += du_z * motion_signal[motion_state]
+                        weights = motion_signal[motion_state].conj().reshape(1, 1, 1, -1)
+                        MotionModelPerturbation[0] += du_x.unsqueeze(-1) * weights
+                        MotionModelPerturbation[1] += du_y.unsqueeze(-1) * weights
+                        MotionModelPerturbation[2] += du_z.unsqueeze(-1) * weights
+                    else:
+                        weights = motion_signal[motion_state].conj().reshape(1, 1, -1)
+                        MotionModelPerturbation[0] += du_x.unsqueeze(-1) * weights
+                        MotionModelPerturbation[1] += du_y.unsqueeze(-1) * weights
             
         return MotionModelPerturbation.flatten()
     
