@@ -1,7 +1,10 @@
 [reconstruction]
 
 # Coil sensitivity method: "espirit" or "odille-spline".
-coil_sensitivity_config = "espirit"
+# Select the method here; its settings load automatically from config/coil_sensitivity_and_calibration/.
+# "odille-spline": tune odille_spline.toml; "espirit": tune espirit.toml.
+# Python overrides must contain settings for the selected method only.
+coil_sensitivity_config = "odille-spline"
 
 # --- Data and motion model ---
 # Data dimensionality for compatibility checks; choose "2D" or "3D" and match the input data.
@@ -27,7 +30,7 @@ motion_binning_mode = "kmeans"
 ResolutionLevels = [0.25, 0.5, 1.0]
 # Gauss-Newton iterations: one positive integer applies to every level,
 # or use a list with exactly one entry per ResolutionLevels value (coarse to fine).
-GN_iterations_per_level = [8, 3, 3]
+GN_iterations_per_level = [10, 4, 4]
 # Control the final GN motion update; true updates image and motion, false keeps the final iteration image-only.
 update_motion_on_final_iteration = false
 # Control GN early stopping; true stops when the image residual increases and false always runs configured iterations.
@@ -39,9 +42,9 @@ cg_stop_on_stagnation = true
 # Interval for recomputing the true CG residual; use any positive integer number of iterations.
 cg_true_residual_interval = 10
 # Tiny updates required to trigger the stagnation countdown; use any integer >= 0.
-cg_stagnation_consecutive_steps = 3
+cg_stagnation_consecutive_steps = 6
 # Stagnation countdown including the trigger; use any integer >= 0, where 0 or 1 stops immediately.
-cg_stagnation_countdown_steps = 0
+cg_stagnation_countdown_steps = 3
 
 # --- Regularization scaling ---
 # Regularization scaling: "direct" uses configured weights directly; "voxel_aware" scales them by resolution and voxel spacing.
@@ -51,8 +54,8 @@ regularization_scaling = "direct"
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.
 cg_use_reg_scale_proxy = true
 # Control calibration weighting; true solves x = C p and regularizes p, false solves directly for x.
-# Requires odille-spline coil sensitivities.
-use_calibration_weighted_image = false
+# Supports both coil methods; image smoothing is configured in config/coil_sensitivity_and_calibration/calibration_image.toml.
+use_calibration_weighted_image = true
 # Number of probes for the regularization scaling estimate; use any positive integer.
 # Required only when cg_use_reg_scale_proxy = true; omit otherwise.
 cg_reg_scale_num_probes = 8
@@ -61,14 +64,14 @@ cg_reg_scale_num_probes = 8
 # Image regularization weight; use a finite value >= 0 or one such value per resolution level.
 lambda_r = 5.0e-2
 # Maximum CG iterations per image update; use any positive integer.
-max_iter_recon = 96
+max_iter_recon = 160
 # Relative convergence tolerance for image updates; use any finite value > 0.
 tol_recon = 1.0e-3
 
 # --- Motion update ---
 # Motion regularization weight; use any finite value >= 0.
-lambda_m = 1.0e-1
+lambda_m = 2.0e-1
 # Maximum CG iterations per motion update; use any positive integer.
-max_iter_motion = 64
+max_iter_motion = 128
 # Relative convergence tolerance for motion updates; use any finite value > 0.
 tol_motion = 1.0e-3

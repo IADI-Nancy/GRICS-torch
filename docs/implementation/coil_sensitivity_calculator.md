@@ -47,13 +47,13 @@ $$
 D(r)=\begin{cases}\widetilde B(r),&\widetilde B(r)>0,\\ \epsilon_C,&\widetilde B(r)=0,\end{cases}\qquad S_c^0(r)=\frac{\widetilde A_c(r)e^{i\arg\widetilde P_c(r)}}{D(r)}.
 $$
 
-Finally, maps have global maximum magnitude one, while the calibration image $C$ used by `use_calibration_weighted_image` has mean magnitude one. Here $N$ is the full spatial voxel count, including z:
+Finally, maps have global maximum magnitude one:
 
 $$
-S_c(r)=\frac{S_c^0(r)}{\max_{d,r'}|S_d^0(r')|},\qquad C(r)=\frac{N\widetilde B(r)}{\sum_{r'}\widetilde B(r')}.
+S_c(r)=\frac{S_c^0(r)}{\max_{d,r'}|S_d^0(r')|}.
 $$
 
-Non-positive reference sum or map maximum raises an error. These conventions fix global scale; they do not impose voxel-wise sum-of-squares unity.
+A non-positive map maximum raises an error. This convention fixes global scale; it does not impose voxel-wise sum-of-squares unity. The reconstruction calibration image is prepared independently by `CalibrationImageCalculator`, using its own smoothing setting. See [calibration-weighted image configuration](../usage/configuration.md#calibration-weighted-image).
 
 ## Device and precision choices
 

@@ -2,5 +2,5 @@
 # Divide the final image by the smoothed GRICS reference-image magnitude; true enables and false disables it.
 # Applied after reconstruction by the breast pipeline; requires Odille spline coil maps.
 # When true, requires coil_sensitivity_method = "odille-spline" in the coil config.
-# Use coil_sensitivity/odille_spline.toml with all its required parameters.
+# Use coil_sensitivity_and_calibration/odille_spline.toml with all its required parameters.
 normalize_image_by_grics_reference = false

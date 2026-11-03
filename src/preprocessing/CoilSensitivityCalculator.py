@@ -3,7 +3,8 @@ import sigpy as sp
 import sigpy.mri as spmri
 import torch
 
-from src.utils.fftnc import fftnc, ifftnc
+from src.utils.fftnc import ifftnc
+from src.preprocessing.utils.spline import spline_fft_solver
 
 
 class CoilSensitivityCalculator:
@@ -129,43 +130,14 @@ class CoilSensitivityCalculator:
             espirit_maps[:, :, :, z] = self._run_espirit_calibration(kspace_calib[:, :, :, z], calib_width_eff, kernel_width_eff)
         return espirit_maps
 
-    @staticmethod
-    def _spline_weight(nx, ny, device, dtype):
-        if nx < 3 or ny < 3:
-            return torch.zeros((nx, ny), dtype=dtype, device=device)
-
-        ghg_x = torch.zeros(nx, dtype=dtype, device=device)
-        ghg_x[nx // 2 - 1] = -0.25
-        ghg_x[nx // 2] = 0.5
-        ghg_x[nx // 2 + 1] = -0.25
-
-        ghg_y = torch.zeros(ny, dtype=dtype, device=device)
-        mid_y = int(np.floor(ny / 2))
-        ghg_y[mid_y - 1] = -0.25
-        ghg_y[mid_y] = 0.5
-        ghg_y[mid_y + 1] = -0.25
-
-        f_x = fftnc(ghg_x, dims=(-1,)).real[:, None]
-        f_y = fftnc(ghg_y, dims=(-1,)).real[None, :]
-        return (f_x + f_y) * 16.0
-
-    def _spline_fft_solver(self, y, regularization_weight):
-        if regularization_weight <= 0:
-            return y
-
-        nx, ny = y.shape[-2:]
-        weight = self._spline_weight(nx, ny, y.device, y.real.dtype)
-        denominator = 1.0 + float(regularization_weight) * weight
-        y_fft = fftnc(y, dims=(-2, -1))
-        smoothed = ifftnc(y_fft / denominator, dims=(-2, -1))
-        return smoothed
-
     def calculate_odille_spline(self, kspace, reference_kspace=None):
         del reference_kspace
         kspace_calib = self._average_repetitions(kspace).to(torch.complex64)
         coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
 
         surface_abs = torch.abs(coil_images)
+        if not torch.isfinite(surface_abs).all() or surface_abs.max() <= 0:
+            raise ValueError("Odille-spline coil images must be finite with positive magnitude; check imaging k-space.")
         reference_abs = torch.sqrt(torch.sum(surface_abs ** 2, dim=0).clamp_min(0.0))
 
         # Stabilize phase estimation in low-signal regions by flooring coil
@@ -178,24 +150,17 @@ class CoilSensitivityCalculator:
         lambda_phase = float(self.params.spline_phase_smoothing)
 
         if lambda_magnitude > 0:
-            surface_abs = self._spline_fft_solver(
+            surface_abs = spline_fft_solver(
                 surface_abs.permute(0, 3, 1, 2).to(torch.complex128),
                 lambda_magnitude,
             ).abs().permute(0, 2, 3, 1)
-            reference_abs = self._spline_fft_solver(
+            reference_abs = spline_fft_solver(
                 reference_abs.permute(2, 0, 1).to(torch.complex128),
                 lambda_magnitude,
             ).abs().permute(1, 2, 0)
 
-        reference_sum = torch.sum(torch.abs(reference_abs))
-        if float(reference_sum.real.item()) <= 0.0:
-            raise ValueError("GRICS reference image has non-positive sum; cannot normalize.")
-        self.grics_reference_image = reference_abs * (
-            float(reference_abs.numel()) / float(reference_sum.real.item())
-        )
-
         if lambda_phase > 0:
-            surface_phase = self._spline_fft_solver(
+            surface_phase = spline_fft_solver(
                 surface_phase.permute(0, 3, 1, 2),
                 lambda_phase,
             ).permute(0, 2, 3, 1)

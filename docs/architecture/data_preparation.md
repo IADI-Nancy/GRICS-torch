@@ -9,6 +9,7 @@ volume. Source loading belongs to [InputDataLoader](input_data_loading.md).
 flowchart TD
     Loader[InputDataLoader] -->|"In: configured input source and parameters<br/>Out: imaging and optional reference k-space, matrix dimensions,<br/>readout indices, initial sampling layout and optional per-readout motion signal"| Preparer[DataPreparer]
     CSM[CoilSensitivityCalculator] -->|"In: imaging and optional reference k-space<br/>Out: coil sensitivity maps"| Preparer
+    Calibration[CalibrationImageCalculator] -->|"In: imaging k-space<br/>Out: mean-one magnitude reference image"| Preparer
     Simulator[MotionSimulator] -->|"In: coil-combined input image, coil sensitivity maps,<br/>readout indices and initial sampling layout<br/>Out: corrupted k-space, corrupted image and per-readout motion signal"| Preparer
     Sampling[MotionSamplingPreparer] -->|"In: optional per-readout motion signal, readout indices,<br/>matrix dimensions and prepared k-space<br/>Out: optional representative motion signal and motion labels,<br/>plus binned sampling indices"| Preparer
     Binner[MotionBinner] -.->|"In: per-readout motion signal, readout indices and optional prepared k-space<br/>Out: representative motion signal and motion labels"| Sampling
@@ -16,7 +17,7 @@ flowchart TD
     classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     class Preparer coordinator
-    class Loader,CSM,Simulator,Sampling,Binner pythonClass
+    class Loader,CSM,Calibration,Simulator,Sampling,Binner pythonClass
 ```
 
 `In` and `Out` refer to the source class of each arrow. `DataPreparer` passes
@@ -62,3 +63,5 @@ own their acquisition arrays. API usage is in the
 
 The resulting tensors and sampling layout are consumed by
 [joint reconstruction](reconstruction.md).
+
+`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [calibration-weighted image configuration](../usage/configuration.md#calibration-weighted-image) for its preparation and use.

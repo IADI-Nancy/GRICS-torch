@@ -1,0 +1,4 @@
+[calibration_image]
+# In-plane smoothing of the imaging-k-space RSS reference; finite number >= 0 (0 disables smoothing).
+# Used for calibration-weighted reconstruction and reference normalization, independently of coil-map smoothing.
+calibration_image_smoothing = 1000.0

@@ -158,7 +158,7 @@ def grics_reference_image_for_normalization(data: DataPreparer, image: torch.Ten
     if reference_image is None:
         raise ValueError(
             "GRICS reference normalization requires the smoothed reference image "
-            "calculated together with the coil sensitivity maps."
+            "prepared independently by CalibrationImageCalculator."
         )
     reference_image = reference_image.to(device=image.device)
 
