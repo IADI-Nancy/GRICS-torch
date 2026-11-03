@@ -64,6 +64,7 @@ _POLARIS_KEYS = {'polaris_channel_mode', 'polaris_lowpass_cutoff_hz'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
+_CALIBRATION_IMAGE_KEYS = {'calibration_image_smoothing'}
 _RECONSTRUCTION_KEYS = {
     'reconstruction_dimension', 'reconstruction_motion_type', 'N_motion_states',
     'coil_sensitivity_config',
@@ -95,8 +96,9 @@ _FILE_SCHEMAS = {
     'motion': {'motion': _MOTION_KEYS},
     'postprocessing': {'postprocessing': {'normalize_image_by_grics_reference'}},
     'coil_sensitivity': {'coil_sensitivity': _CSM_KEYS},
+    'calibration_image': {'calibration_image': _CALIBRATION_IMAGE_KEYS},
 }
-_OVERRIDE_KEYS = (_PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
+_OVERRIDE_KEYS = (_CALIBRATION_IMAGE_KEYS | _PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
                   (_RECONSTRUCTION_KEYS - {'coil_sensitivity_config'}) | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
                   _MOTION_KEYS | _PHYSIOLOGICAL_DATA_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
 _BOOL_KEYS = {
@@ -252,7 +254,16 @@ def _validate_csm(cfg):
     if supplied != expected:
         missing = sorted(expected - supplied)
         irrelevant = sorted(supplied - expected)
-        raise ValueError(f'coil sensitivity config for {method!r} must contain exactly {sorted(expected)}; missing={missing}, irrelevant={irrelevant}.')
+        settings_file = 'espirit.toml' if method == 'espirit' else 'odille_spline.toml'
+        raise ValueError(
+            f"Invalid settings for coil sensitivity method {method!r}. "
+            f"Missing settings: {missing}. Settings belonging to another method: {irrelevant}. "
+            f"Select coil_sensitivity_config = \"{method}\" in your reconstruction TOML "
+            f"(config/reconstruction/), and configure this method in "
+            f"config/coil_sensitivity_and_calibration/{settings_file}. "
+            "Remove settings belonging to the other method from the coil-sensitivity TOML "
+            "and from the Python load_config(overrides=...) dictionary; "
+            "changing the TOML selection alone does not remove explicit Python overrides.")
     if method == 'espirit':
         for key in ('espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'):
             _integer(cfg[key], key)
@@ -413,8 +424,6 @@ def _validate_reconstruction(cfg):
     _choice(cfg['motion_gradient_boundary'], 'motion_gradient_boundary', {'zero', 'one_sided'})
     if type(cfg['use_calibration_weighted_image']) is not bool:
         raise ValueError('use_calibration_weighted_image must be a boolean.')
-    if cfg['use_calibration_weighted_image'] and cfg['coil_sensitivity_method'] != 'odille-spline':
-        raise ValueError('Calibration-weighted images require odille-spline coil sensitivities.')
     levels = cfg['ResolutionLevels']
     if not isinstance(levels, list) or not levels:
         raise ValueError('ResolutionLevels must be a nonempty list.')
@@ -511,7 +520,7 @@ def _load_coil_sensitivity_config(root, cfg):
     csm_files = {'espirit': 'espirit.toml', 'odille-spline': 'odille_spline.toml'}
     if not isinstance(csm_method, str) or csm_method not in csm_files:
         raise ValueError('coil_sensitivity_config must be espirit or odille-spline.')
-    return _load_toml_flat(root / 'coil_sensitivity' / csm_files[csm_method], 'coil_sensitivity')
+    return _load_toml_flat(root / 'coil_sensitivity_and_calibration' / csm_files[csm_method], 'coil_sensitivity')
 
 
 def _load_physiological_data_config(root, data_type, *, physiological_data_config,
@@ -625,6 +634,7 @@ def load_config(*, data_type, reconstruction_config,
     cfg['data_type'] = data_type
     cfg.update(_load_reconstruction_config(reconstruction_config))
     cfg.update(_load_coil_sensitivity_config(root, cfg))
+    cfg.update(_load_toml_flat(root / 'coil_sensitivity_and_calibration' / 'calibration_image.toml', 'calibration_image'))
     cfg.update(_load_source_config(
         root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
         physiological_data_config=physiological_data_config,
@@ -638,6 +648,8 @@ def load_config(*, data_type, reconstruction_config,
     _validate_general(cfg)
     _validate_physiological_data(cfg)
     _validate_csm(cfg)
+    _require(cfg, _CALIBRATION_IMAGE_KEYS, 'calibration_image')
+    _number(cfg['calibration_image_smoothing'], 'calibration_image_smoothing', minimum=0)
     _validate_source(cfg)
     _validate_sampling(cfg)
     _validate_motion(cfg)

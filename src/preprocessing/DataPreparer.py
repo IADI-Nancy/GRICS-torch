@@ -10,6 +10,7 @@ from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import ifftnc
 from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculator
+from src.preprocessing.CalibrationImageCalculator import CalibrationImageCalculator
 from src.preprocessing.utils.reconstructor_input_preparation import (
     ensure_input_loaded_and_reconstruction_not_prepared,
     record_preprocessing_start_if_configured,
@@ -114,6 +115,7 @@ class DataPreparer:
         record_preprocessing_start_if_configured(self.params, self.filename, self.slice_idx)
         self._normalize_kspace_if_enabled()
         self._compute_coil_sensitivity_maps()
+        self._compute_calibration_image()
         self._compute_ifft_image_from_input_kspace()
         # Import recorded motion or simulate motion and corrupt the input data.
         motionSimulator = self._apply_or_import_motion()
@@ -131,7 +133,7 @@ class DataPreparer:
         return self
 
     def _compute_coil_sensitivity_maps(self):
-        """Estimate coil maps and retain an optional GRICS calibration image."""
+        """Estimate coil sensitivity maps using the selected method."""
         method = self.params.coil_sensitivity_method
         slice_label = "all" if self.slice_idx is None else f"{self.slice_idx + 1:03d}"
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -144,7 +146,11 @@ class DataPreparer:
         self.smaps = calculator.calculate(
             self.kspace, reference_kspace=self.reference_kspace,
         )
-        self.grics_reference_image = getattr(calculator, "grics_reference_image", None)
+
+    def _compute_calibration_image(self):
+        """Prepare the image prior independently of the coil sensitivity method."""
+        calculator = CalibrationImageCalculator(self.params)
+        self.grics_reference_image = calculator.calculate(self.kspace)
 
     def _compute_ifft_image_from_input_kspace(self):
         """Inverse FFT and coil-combine the loaded input k-space."""

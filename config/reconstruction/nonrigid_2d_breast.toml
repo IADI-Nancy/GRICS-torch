@@ -58,7 +58,7 @@ regularization_scaling = "voxel_aware"
 # When false, omit cg_reg_scale_num_probes; the config loader rejects it.
 cg_use_reg_scale_proxy = false
 # Control calibration weighting; true solves x = C p and regularizes p, false solves directly for x.
-# Requires odille-spline coil sensitivities.
+# Supports both coil methods; image smoothing is configured in config/coil_sensitivity_and_calibration/calibration_image.toml.
 use_calibration_weighted_image = true
 
 # --- Image update ---

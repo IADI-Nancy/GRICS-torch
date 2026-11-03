@@ -11,7 +11,7 @@ from src.preprocessing.GRICSPreparerAPI import GRICSPreparerAPI
 
 preparer = GRICSPreparerAPI(
     reconstruction_config,
-    "config/coil_sensitivity/odille_spline.toml",
+    "config/coil_sensitivity_and_calibration/odille_spline.toml",
     data_type="preprocessed-real",
     overrides=runtime_overrides,
 )
@@ -59,12 +59,14 @@ reconstructor = JointReconstructor(
     KspaceData, smaps, SamplingIndices, motion_signal, params,
     kspace_scale=1.0, motion_plot_context=None,
     initial_image=None, initial_motion=None,
-    external_image_regularizer=None,
+    external_image_regularizer=None, calibration_image_prior=None,
 )
 image, motion_model = reconstructor.run()
 ```
 
 For `params`, use `data.params` from `DataLoader` or `prepared.params` from `GRICSPreparerAPI`. When using normalized k-space from `DataLoader`, pass `kspace_scale=data.kspace_scale` to restore the image scale in `run()` outputs.
+
+When `use_calibration_weighted_image` is enabled, pass `data.grics_reference_image` from `DataPreparer` as `calibration_image_prior`, or supply your own real, finite, nonnegative image matching the reconstruction dimensions. Both coil sensitivity methods support this option.
 
 ## Full-resolution iteration and prediction APIs
 

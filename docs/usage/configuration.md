@@ -4,7 +4,8 @@ Configuration is loaded through `load_config(...)`; internal ownership and
 merge order are documented in the [configuration architecture](../architecture/configuration.md).
 
 - `config/general.toml`: paths, runtime flags, and k-space normalization; loaded automatically
-- `config/coil_sensitivity/*.toml`: settings for the coil-sensitivity method named by `coil_sensitivity_config` in the reconstruction TOML; loaded automatically
+- `config/coil_sensitivity_and_calibration/*.toml`: settings for the coil-sensitivity method named by `coil_sensitivity_config` in the reconstruction TOML; loaded automatically
+- `config/coil_sensitivity_and_calibration/calibration_image.toml`: imaging-k-space reference smoothing, independent of the coil method; loaded automatically
 - `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; always required
 - `config/synthetic_data/*.toml`: Shepp-Logan phantom or image-source generation settings (only if synthetic data is used)
 - `config/physiological_data/`: configurations for physiological input processing
@@ -22,3 +23,9 @@ Use `load_config(...)` with a `data_type` and a path to a
 requirements are documented under [input formats](input_formats.md),
 [sampling](sampling.md), and [motion](motion.md). Use `overrides={...}` for
 run-specific settings.
+
+## Calibration-weighted image
+
+Set `use_calibration_weighted_image = true` in the reconstruction TOML with either `espirit` or `odille-spline`. Set `calibration_image_smoothing` in `config/coil_sensitivity_and_calibration/calibration_image.toml` (finite number >= 0; zero disables smoothing). This setting is independent of `spline_magnitude_smoothing`, which controls Odille coil maps. The default 1000 preserves the previous calibration image when Odille magnitude smoothing was 1000. If you previously changed that value, use the same value here to preserve the previous image prior.
+
+`DataPreparer` builds the reference from repetition-averaged imaging k-space before simulated motion, using root-sum-of-squares coil combination, in-plane smoothing, and mean-one normalization. It does not use separate reference k-space or estimated coil maps. Pass `data.grics_reference_image` as `calibration_image_prior` to `JointReconstructor`; the demos and pipelines do this automatically. This image is also available for reference normalization when calibration weighting is disabled.
