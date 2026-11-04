@@ -4,7 +4,7 @@
 # Select the method here; its settings load automatically from config/coil_sensitivity_and_calibration/.
 # "odille-spline": tune odille_spline.toml; "espirit": tune espirit.toml.
 # Python overrides must contain settings for the selected method only.
-coil_sensitivity_config = "odille-spline"
+coil_sensitivity_config = "espirit"
 
 # --- Data and motion model ---
 # Data dimensionality for compatibility checks; choose "2D" or "3D" and match the input data.

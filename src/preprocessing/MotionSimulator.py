@@ -90,10 +90,10 @@ class MotionSimulator:
     # =============================================================================
 
     # ---------------------------------------------------------------------------
-    # ------------------------ RIGID: REALISTIC CURVES --------------------------
+    # ------------------------ RIGID: PER-READOUT CURVES --------------------------
     # ---------------------------------------------------------------------------
 
-    def _create_realistic_motion_curves_2d(self):
+    def _create_per_readout_motion_curves_2d(self):
         # Time axis: one value per k-space line (Ny)
         total_lines = num_motion_readouts(self.ky_idx)
         n_events = int(require_motion_param(self.params, "num_motion_events"))
@@ -139,7 +139,7 @@ class MotionSimulator:
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
 
-    def _create_realistic_motion_curves_3d(self):
+    def _create_per_readout_motion_curves_3d(self):
         # Time axis: one value per acquired 3D readout.
         n_states = num_motion_readouts(self.ky_idx)
         n_events = int(require_motion_param(self.params, "num_motion_events"))
@@ -214,7 +214,7 @@ class MotionSimulator:
             centers = build_rigid_rotation_centers(lim, n_states, device=self.t_device, Nx=self.Nx, Ny=self.Ny, Nz=self.Nz)
         else:
             # 2D realistic rigid (existing behavior).
-            self.navigator, self.tx, self.ty, self.phi = self._create_realistic_motion_curves_2d()
+            self.navigator, self.tx, self.ty, self.phi = self._create_per_readout_motion_curves_2d()
 
             alpha = torch.zeros(3, n_states, device=self.t_device)
             alpha[0, :] = self.tx
@@ -339,7 +339,7 @@ class MotionSimulator:
     # This block handles non-rigid-motion simulation:
     # 1) shared spatial alpha-field generators
     # 2) discrete non-rigid simulation
-    # 3) realistic non-rigid simulation
+    # 3) per-readout non-rigid simulation
     # =============================================================================
 
     # ---------------------------------------------------------------------------
@@ -462,10 +462,10 @@ class MotionSimulator:
         self.navigator = expanded_curves["navigator"].reshape(-1, 1)
 
     # ---------------------------------------------------------------------------
-    # ------------------ NON-RIGID: REALISTIC SIMULATION  -----------------------
+    # ------------------ NON-RIGID: PER-READOUT SIMULATION  -----------------------
     # ---------------------------------------------------------------------------
 
-    def _create_realistic_non_rigid_motion_curve(self):
+    def _create_per_readout_non_rigid_motion_curve(self):
         """
         Create a respiratory-like sinusoidal motion curve with unit amplitude.
         Frequency (cycles per image/Nex block) and phase are randomized.
@@ -500,7 +500,7 @@ class MotionSimulator:
         alpha_maps = (alpha_maps * amp).unsqueeze(-1)
         self.alpha_maps = alpha_maps
 
-        self.navigator = self._create_realistic_non_rigid_motion_curve().reshape(-1, 1)
+        self.navigator = self._create_per_readout_non_rigid_motion_curve().reshape(-1, 1)
         self._apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
         if self.params.save_debug_plots:

@@ -249,29 +249,58 @@ def _normalize_per_volume(vol, p_low=2.0, p_high=98.0):
     return torch.clamp((vol - lo) / (hi - lo), 0.0, 1.0)
 
 
-def display_3d_image_matrix(image_uncorrected, image_corrected, image_gt):
-    vols = [
-        _normalize_per_volume(torch.abs(image_uncorrected).detach().cpu()),
-        _normalize_per_volume(torch.abs(image_corrected).detach().cpu()),
-        _normalize_per_volume(torch.abs(image_gt).detach().cpu()),
-    ]
-    col_titles = ["Uncorrected", "Motion-corrected", "Ground truth"]
-    row_titles = ["Mid-axial (XY)", "Mid-coronal (XZ)", "Mid-sagittal (YZ)"]
+def _image_comparison_figure(image_uncorrected, image_corrected, image_gt):
+    """Build the shared demo/validation layout from magnitude images.
 
-    fig, axes = plt.subplots(3, 3, figsize=(12, 12), gridspec_kw={"wspace": 0.02, "hspace": 0.08})
-    for col, vol in enumerate(vols):
-        planes = _central_planes_3d(vol)
-        for row in range(3):
+    Each image uses its own 2nd–98th percentile display window, as in the
+    3D demos. This display normalization does not change similarity metrics.
+    """
+    images = [torch.abs(image).detach().cpu() for image in
+              (image_uncorrected, image_corrected, image_gt)]
+    shape = images[0].shape
+    if len(shape) not in (2, 3) or any(image.shape != shape for image in images):
+        raise ValueError("Comparison images must share the same 2D or 3D shape.")
+    images = [_normalize_per_volume(image) for image in images]
+    is_3d = len(shape) == 3
+    row_titles = ["Mid-axial (XY)", "Mid-coronal (XZ)", "Mid-sagittal (YZ)"] if is_3d else [""]
+    col_titles = ["Corrupted", "Corrected", "Ground truth"]
+    fig, axes = plt.subplots(len(row_titles), 3, squeeze=False, figsize=(12, 12 if is_3d else 4),
+                             gridspec_kw={"wspace": 0.02, "hspace": 0.08})
+    for col, image in enumerate(images):
+        planes = _central_planes_3d(image) if is_3d else (image,)
+        for row, plane in enumerate(planes):
             ax = axes[row, col]
-            ax.imshow(torch.flipud(planes[row]).numpy(), cmap="gray", vmin=0.0, vmax=1.0)
-            ax.axis("off")
+            # The 3D notebook matrix historically displays central planes with
+            # a vertical flip. Standard 2D plots use their native orientation.
+            displayed_plane = torch.flipud(plane) if is_3d else plane
+            ax.imshow(displayed_plane.numpy(), cmap="gray", vmin=0.0, vmax=1.0)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
             if row == 0:
                 ax.set_title(col_titles[col], fontsize=11, pad=8)
             if col == 0:
                 ax.set_ylabel(row_titles[row], fontsize=10)
+    fig.suptitle("3D Image Comparison" if is_3d else "Image Comparison", fontsize=12, y=0.995)
+    return fig
 
-    fig.suptitle("3D Image Comparison", fontsize=12, y=0.995)
+
+def display_3d_image_matrix(image_uncorrected, image_corrected, image_gt):
+    fig = _image_comparison_figure(image_uncorrected, image_corrected, image_gt)
     plt.show()
+    plt.close(fig)
+
+
+def save_image_comparison(image_uncorrected, image_corrected, image_gt, output_path):
+    """Save a demo-style comparison PNG without opening an interactive figure."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig = _image_comparison_figure(image_uncorrected, image_corrected, image_gt)
+    try:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    finally:
+        plt.close(fig)
 
 
 def display_logs_and_motion_same_as_2d(params):

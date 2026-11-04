@@ -2,6 +2,7 @@ import math
 import torch
 from dataclasses import dataclass
 
+from src.preprocessing.CalibrationImageCalculator import CalibrationImageCalculator
 from src.reconstruction.joint_reconstructor_utils.resampling import (
     downsample_data, upsample_data,
 )
@@ -47,11 +48,38 @@ class _GaussNewtonIterationResult:
 # --------------------------------------------------------------------------
 class JointReconstructor:
 
+    @classmethod
+    def from_prepared_data(cls, data, *, kspace_scale=None, initial_image=None, initial_motion=None, external_image_regularizer=None):
+        """Build a solver from DataPreparer after prepare_reconstructor_inputs().
+
+        Reuse the prepared tensors, calibration image, and encoded voxel spacing.
+        Output magnitude defaults to the acquisition scale stored by the preparer.
+        """
+        if not data._reconstruction_data_prepared:
+            raise ValueError("Call data.load_input_data() and data.prepare_reconstructor_inputs() before JointReconstructor.from_prepared_data(data).")
+
+        calibration_image_prior = None
+        if data.params.use_calibration_weighted_image:
+            calibration_image_prior = data.grics_reference_image
+            if calibration_image_prior is None:
+                raise ValueError("Prepared data has no calibration image; prepare it with calibration weighting enabled.")
+
+        return cls(
+            data.kspace, data.smaps, data.sampling_idx, data.motion_signal, data.params,
+            kspace_scale=data.kspace_scale if kspace_scale is None else kspace_scale,
+            motion_plot_context=data.motion_plot_context, initial_image=initial_image, initial_motion=initial_motion,
+            external_image_regularizer=external_image_regularizer, calibration_image_prior=calibration_image_prior,
+            voxel_spacing_mm=data.reconstruction_voxel_spacing())
+
     def __init__(
         self, KspaceData, smaps, SamplingIndices, motion_signal, params,
         kspace_scale=1.0, motion_plot_context=None, initial_image=None, initial_motion=None,
         external_image_regularizer=None, calibration_image_prior=None, voxel_spacing_mm=None):
-        """Initialize joint reconstruction.
+        """Initialize joint reconstruction from explicit acquisition tensors.
+
+        Use ``from_prepared_data(data)`` to construct from a DataPreparer.
+        Calibration is required only when weighting is enabled; this constructor
+        computes it from imaging k-space if no calibration image is supplied.
 
         Args:
             KspaceData: Complex ``[Nc, Ne, Nx, Ny, Nz]`` tensor.
@@ -61,7 +89,8 @@ class JointReconstructor:
             motion_signal: Real ``[Nm, Ns]`` tensor.
             params: Validated flat configuration from ``data.params`` or
                 ``prepared.params``; do not pass a dict or TOML filename.
-            kspace_scale: Scalar used to restore output-image magnitude.
+            kspace_scale: Output magnitude scale; defaults to 1.0. Pass the
+                preprocessing normalization divisor to restore acquisition units.
             motion_plot_context: Optional plotting metadata.
             initial_image: Optional complex ``[Nx, Ny, (Nz)]`` shared image.
             initial_motion: Optional real ``[Nalpha, Nm]`` rigid tensor or
@@ -73,6 +102,12 @@ class JointReconstructor:
             voxel_spacing_mm: Full-resolution encoded voxel spacing in x/y[/z]
                 order. Required when regularization_scaling is "voxel_aware".
         """
+        if not isinstance(KspaceData, torch.Tensor):
+            raise TypeError("KspaceData must be a torch.Tensor; use from_prepared_data(data) for prepared data.")
+        if params.use_calibration_weighted_image and calibration_image_prior is None:
+            if external_image_regularizer is not None:
+                raise ValueError("Calibration-weighted images cannot be combined with an external image regularizer.")
+            calibration_image_prior = CalibrationImageCalculator(params).calculate(KspaceData)
         Ncoils, Nx_full, Ny_full, Nz_full = smaps.shape
 
         # Parameters constant for all resolutions        
@@ -546,6 +581,7 @@ class JointReconstructor:
             "SamplingIndices": self.Data_full["SamplingIndices"] if sampling_indices is None else sampling_indices,
             "MotionSignal": self.motion_signal, "ReconstructedImage": image,
             "MotionModel": torch.as_tensor(motion, device=self.device),
+            "CalibrationImagePrior": self.calibration_image_prior,
         }
 
     def full_resolutions_gauss_newton_iteration_api(

@@ -30,7 +30,9 @@ class DataPreparer:
 
     InputDataLoader owns source loading and slice selection. This class applies
     normalization, coil-map estimation, motion import or simulation, and motion
-    binning before reconstruction.
+    binning before reconstruction. Comparison images (image_no_moco and simulated
+    image_ground_truth) use restored acquisition units, matching JointReconstructor.run().
+    Working k-space and input_ifft_image remain in preprocessing units.
     """
 
     def __init__(self, params, sp_device=None, t_device=None,
@@ -132,6 +134,17 @@ class DataPreparer:
         self._reconstruction_data_prepared = True
         return self
 
+    def reconstruction_voxel_spacing(self):
+        """Return encoded spacing for voxel-aware reconstruction; otherwise None."""
+        if self.params.regularization_scaling != "voxel_aware":
+            return None
+        from src.utils.ismrmrd_io import acquisition_header
+
+        encoding = acquisition_header(self).encoding[0].encodedSpace
+        matrix, fov = encoding.matrixSize, encoding.fieldOfView_mm
+        axes = ("x", "y", "z") if self.params.data_dimension == "3D" else ("x", "y")
+        return tuple(float(getattr(fov, axis)) / int(getattr(matrix, axis)) for axis in axes)
+
     def _compute_coil_sensitivity_maps(self):
         """Estimate coil sensitivity maps using the selected method."""
         method = self.params.coil_sensitivity_method
@@ -226,18 +239,20 @@ class DataPreparer:
         return motion_simulator
 
     def _apply_or_import_motion(self):
+        # Expose comparison images in acquisition units without rescaling the
+        # working images used by motion simulation or the normalized k-space.
         # Real motion case
         if self.params.simulated_motion_type == 'as-it-is':
             self._motion_curve_for_binning = self.motion_data
-            self.image_no_moco = self.input_ifft_image
+            self.image_no_moco = self.input_ifft_image * self.kspace_scale
             return None
 
         # Only a simulated-motion workflow treats the input IFFT image as its ground truth.
-        self.image_ground_truth = self.input_ifft_image
+        self.image_ground_truth = self.input_ifft_image * self.kspace_scale
         motionSimulator = self._simulate_motion_with_cpu_fallback()
 
         self.kspace = motionSimulator.get_corrupted_kspace().to(self.t_device)
-        self.image_no_moco = motionSimulator.get_corrupted_image().to(self.t_device)
+        self.image_no_moco = motionSimulator.get_corrupted_image().to(self.t_device) * self.kspace_scale
         if hasattr(motionSimulator, "alpha_maps"):
             self.alpha_maps_ground_truth = motionSimulator.alpha_maps.to(self.t_device)
 

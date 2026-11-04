@@ -35,7 +35,7 @@ slice; preparation copies the loader before selecting that slice.
 Tensors initially share the loader's storage. Normalization and simulation
 replace the preparer's working k-space without modifying the retained
 acquisition. Imaging and reference k-space use the same normalization divisor,
-stored in `kspace_scale` for reconstruction.
+stored in `kspace_scale` for reconstruction. Working k-space and `input_ifft_image` remain in preprocessing units; the exposed comparison images `image_no_moco` and simulated `image_ground_truth` use restored acquisition units, matching `JointReconstructor.run()` outputs.
 
 `DataPreparer` computes the coil-combined input image from repetition-averaged
 k-space and the estimated coil sensitivity maps. Recorded motion bypasses
@@ -65,3 +65,5 @@ The resulting tensors and sampling layout are consumed by
 [joint reconstruction](reconstruction.md).
 
 `DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [calibration-weighted image configuration](../usage/configuration.md#calibration-weighted-image) for its preparation and use.
+
+`JointReconstructor.from_prepared_data(data)` maps the prepared `DataPreparer` to the solver's explicit tensor constructor without copying tensors. See the [integration API guide](../usage/api.md#standard-reconstruction-entry-point).

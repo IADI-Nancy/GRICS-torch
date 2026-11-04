@@ -11,7 +11,6 @@ from src.preprocessing.GRICSPreparerAPI import GRICSPreparerAPI
 
 preparer = GRICSPreparerAPI(
     reconstruction_config,
-    "config/coil_sensitivity_and_calibration/odille_spline.toml",
     data_type="preprocessed-real",
     overrides=runtime_overrides,
 )
@@ -35,7 +34,7 @@ The preparer supports externally defined undersampling through `sampling_masks`.
 phase_encode_mask = make_phase_encode_mask(Ny, acceleration, calibration_lines)
 retained_readouts = phase_encode_mask[ky_indices]
 prepared = preparer.prepare_acquisition(
-    motion_data, ky_indices, nex_indices, Nx=Nx, Ny=Ny,
+    motion_data, ky_indices, nex_indices, Nx=Nx, Ny=Ny, Nz=Nz,
     sampling_masks={
         "retained": retained_readouts,
         "heldout": ~retained_readouts,
@@ -50,7 +49,16 @@ heldout_sampling_indices = prepared.sampling_indices["heldout"]
 
 ## Standard reconstruction entry point
 
-`JointReconstructor.run()` executes the complete configured multi-resolution reconstruction.
+`JointReconstructor.run()` executes the complete configured multi-resolution reconstruction. Internal workflows use the named factory for a fully prepared `DataPreparer`:
+
+```python
+reconstructor = JointReconstructor.from_prepared_data(data)
+image, motion_model = reconstructor.run()
+```
+
+Call `data.load_input_data()` and `data.prepare_reconstructor_inputs()` first. The factory maps the prepared tensors, configuration, plotting context, enabled calibration image, and required encoded voxel spacing to the explicit constructor. It restores output magnitude automatically. The returned image, `data.image_no_moco`, and simulated `data.image_ground_truth` all use the same acquisition intensity scale, so plots and similarity metrics need no scale argument. Working k-space and `data.input_ifft_image` remain in preprocessing units; the single-iteration and prediction APIs still operate in those working units. The factory accepts keyword options for output scale, initial image, initial motion, and an external image regularizer.
+
+External callers can supply each acquisition field directly:
 
 ```python
 from src.reconstruction.JointReconstructor import JointReconstructor
@@ -64,9 +72,9 @@ reconstructor = JointReconstructor(
 image, motion_model = reconstructor.run()
 ```
 
-For `params`, use `data.params` from `DataLoader` or `prepared.params` from `GRICSPreparerAPI`. When using normalized k-space from `DataLoader`, pass `kspace_scale=data.kspace_scale` to restore the image scale in `run()` outputs.
+For `params`, use `prepared.params` from `GRICSPreparerAPI`. Choose the appropriate named sampling layout explicitly, such as `prepared.sampling_indices["retained"]`. Explicit tensor inputs are retained without copying or detaching. Output scaling defaults to 1.0; pass the normalization divisor as `kspace_scale` if output magnitude must be restored. Supply `voxel_spacing_mm` when using voxel-aware regularization.
 
-When `use_calibration_weighted_image` is enabled, pass `data.grics_reference_image` from `DataPreparer` as `calibration_image_prior`, or supply your own real, finite, nonnegative image matching the reconstruction dimensions. Both coil sensitivity methods support this option.
+When `use_calibration_weighted_image` is enabled, the explicit form accepts `calibration_image_prior` or calculates it from the supplied imaging k-space using `calibration_image_smoothing`. For held-out sampling experiments, supply a calibration image prepared from the intended calibration data to avoid including held-out measurements. When weighting is disabled, no calibration image is required or calculated by the constructor. Both coil methods support weighting; combining it with an external image regularizer is rejected.
 
 ## Full-resolution iteration and prediction APIs
 

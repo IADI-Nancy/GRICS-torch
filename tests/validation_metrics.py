@@ -60,10 +60,11 @@ def summarize_similarity(results):
 
 def print_similarity_summary(summary):
     """Print all SSIM results first, then all NRMSE results."""
+    prefix = "Rigid-aligned " if summary.get("metric_space") == "globally rigid-aligned magnitude images" else ""
     for metric in ("ssim", "nrmse"):
         for comparison, label in (("uncorrected_vs_ground_truth", "Uncorrected"), ("corrected_vs_ground_truth", "Corrected")):
             values = summary[comparison][metric]
-            print(f"{label} {metric.upper()}: {values['median']:.6f} [{values['q1']:.6f}, {values['q3']:.6f}]", flush=True)
+            print(f"{prefix}{label} {metric.upper()}: {values['median']:.6f} [{values['q1']:.6f}, {values['q3']:.6f}]", flush=True)
         stats = summary["paired_statistics"][metric]
         values = stats["relative_improvement_percent"]
         improvement = "undefined (all baselines are zero)" if values is None else (

@@ -12,15 +12,18 @@ Pipeline messages, warnings, and device fallback notices are saved in each
 simulation's console log. The terminal prints one reconstruction-start line
 per simulation, then SSIM and NRMSE median [Q1, Q3], relative improvement,
 and paired two-sided Wilcoxon p-values. Individual results stay in subfolders.
-SSIM and NRMSE compare image magnitudes without registration. Completion checks
+SSIM and NRMSE compare magnitudes after independent global rigid alignment to
+ground truth (no spatial or intensity scaling). Raw metrics and transforms are
+also saved in simulation_metrics.json. Completion checks
 finite outputs and valid shapes; quality improvement is reported separately.
+Each simulation also saves image_comparison.png: corrupted, corrected, ground
+truth, with three central orthogonal planes for 3D and a single row for 2D.
 """
 
 import argparse
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime
 import sys
-import tomllib
 from pathlib import Path
 
 import numpy as np
@@ -30,11 +33,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.preprocessing.DataPreparer import DataPreparer
+from src.utils.notebook_display import save_image_comparison
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import execution_scope, write_json, write_reconstruction
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
 from validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary
+from validation_alignment import align_rigid_to_reference
 
 
 def sample_parameters(rng):
@@ -46,27 +51,18 @@ def build_config(run_number, device, output_root, sampled_parameters):
     # Select "odille-spline" or "espirit" via coil_sensitivity_config in this file.
     # Tune spline settings in config/coil_sensitivity_and_calibration/odille_spline.toml.
     reconstruction_config = ROOT / "config/reconstruction/rigid_3d.toml"
-    with reconstruction_config.open("rb") as config_file:
-        coil_sensitivity_config = tomllib.load(config_file)["reconstruction"]["coil_sensitivity_config"]
-    # Compact acquisition: four coils, one repetition, four random-order shots.
-    # The short two-level solver schedule is a functional check, not a tuned
-    # image-quality benchmark. Preserve it when comparing different devices.
+    # Phantom dimensions, coil count, and fill fraction come from the demo TOML.
+    # Coil calibration also uses its selected TOML without compact-size overrides.
+    # Reconstruction and sampling settings also come unchanged from their TOMLs.
+    # Only randomized motion, seeds, and batch execution/output controls are overridden.
     overrides = {
         "workflow_label": f"simulation_{run_number:03d}", "output_root": str(output_root),
         "runtime_device": device, "seed_enabled": True, "seed": 20261101 + run_number,
-        "use_deterministic_algorithms": True, "save_debug_plots": False,
+        "save_debug_plots": False,
         "save_reconstruction_logs": True, "save_reconstruction_tensors": True,
         "verbose": False, "print_to_console": False, "jupyter_notebook_flag": False,
-        "N_SheppLogan": 32, "Nz_SheppLogan": 32,
-        "Nex": 1, "NshotsPerNex": 4, "calibration_lines": 24,
-        "ResolutionLevels": [0.5, 1.0], "GN_iterations_per_level": [2, 3],
-        "max_iter_recon": 12, "max_iter_motion": 8, "cg_reg_scale_num_probes": 2,
         **sampled_parameters,
     }
-    # These compact-phantom settings apply only to ESPIRiT.
-    # Odille-spline loads its own settings without ESPIRiT overrides.
-    if coil_sensitivity_config == "espirit":
-        overrides.update(espirit_calibration_width=24, espirit_kernel_width=6)
     return load_config(
         data_type="shepp-logan",
         shepp_logan_config=str(ROOT / "config/synthetic_data/shepp_logan_3d.toml"),
@@ -93,11 +89,7 @@ def run_simulation(run_number, device, output_root, console):
         if torch.linalg.vector_norm(data.image_ground_truth).item() == 0:
             raise AssertionError("Coil combination produced an empty ground-truth image")
 
-        reconstructor = JointReconstructor(
-            data.kspace, data.smaps, data.sampling_idx, motion_signal=data.motion_signal,
-            params=params, motion_plot_context=data.motion_plot_context,
-            calibration_image_prior=data.grics_reference_image,
-        )
+        reconstructor = JointReconstructor.from_prepared_data(data)
         print(f"Simulation {run_number:03d}: reconstruction starting", file=console, flush=True)
         corrected_image, reconstructed_motion = reconstructor.run()
 
@@ -109,9 +101,19 @@ def run_simulation(run_number, device, output_root, console):
         # The motion diagnostic measures update size, not ground-truth error.
         logger = reconstructor._run_logger.run_log
         # The reference is the coil-combined image actually used by the motion
-        # simulator. Keep all images in that same normalized intensity scale.
-        uncorrected_metrics = image_metrics(data.image_ground_truth, data.image_no_moco)
-        corrected_metrics = image_metrics(data.image_ground_truth, corrected_image)
+        # simulator. All comparison images and outputs use restored acquisition units.
+        raw_uncorrected_metrics = image_metrics(data.image_ground_truth, data.image_no_moco)
+        raw_corrected_metrics = image_metrics(data.image_ground_truth, corrected_image)
+        # Evaluate both images in the reference coordinate frame. A single
+        # global rigid transform changes pose only; it cannot correct local
+        # motion artifacts. Keep raw scores and fitted transforms for review.
+        voxel_spacing = (params.FoVxy_mm / data.Nx, params.FoVxy_mm / data.Ny, params.FoVz_mm / data.Nz)
+        aligned_uncorrected, uncorrected_alignment = align_rigid_to_reference(
+            data.image_ground_truth, data.image_no_moco, voxel_spacing)
+        aligned_corrected, corrected_alignment = align_rigid_to_reference(
+            data.image_ground_truth, corrected_image, voxel_spacing)
+        uncorrected_metrics = image_metrics(data.image_ground_truth, aligned_uncorrected)
+        corrected_metrics = image_metrics(data.image_ground_truth, aligned_corrected)
         metrics = {
             "case": "rigid_3d", "run": run_number, "seed": seed, "device": str(t_device),
             "motion_type": "rigid-per-shot", "sampled_parameters": sampled_parameters,
@@ -119,11 +121,21 @@ def run_simulation(run_number, device, output_root, console):
             "motion_residual_final_level": summarize_residuals(logger["motion_residuals_by_level"][-1]),
             "uncorrected_vs_ground_truth": uncorrected_metrics,
             "corrected_vs_ground_truth": corrected_metrics,
+            "metric_space": "globally rigid-aligned magnitude images",
+            "raw_uncorrected_vs_ground_truth": raw_uncorrected_metrics,
+            "raw_corrected_vs_ground_truth": raw_corrected_metrics,
+            "global_alignment": {"uncorrected": uncorrected_alignment, "corrected": corrected_alignment},
             "quality_change": {"nrmse_improved": corrected_metrics["nrmse"] < uncorrected_metrics["nrmse"],
                                "ssim_improved": corrected_metrics["ssim"] > uncorrected_metrics["ssim"]},
         }
         if not metrics["motion_residual_final_level"]["count"]:
             raise AssertionError("Final resolution had no motion update")
+        # Save the same central-plane comparison used by the demos, even when
+        # debug plots are disabled. 2D cases use one row of three images.
+        # The PNG shows the aligned images used for metrics; the saved
+        # reconstruction tensor retains the solver's original coordinate frame.
+        save_image_comparison(aligned_uncorrected, aligned_corrected, data.image_ground_truth,
+                              Path(params.run_folder) / "image_comparison.png")
         write_reconstruction(params, corrected_image, reconstructed_motion)
         write_json(Path(params.run_folder) / "simulation_metrics.json", metrics)
         reconstructor.finish_run()
@@ -133,7 +145,7 @@ def run_simulation(run_number, device, output_root, console):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=20, help="Number of simulations (default: 20)")
-    parser.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
+    parser.add_argument("--device", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--output-root", type=Path, default=ROOT / "runs")
     args = parser.parse_args()
     if args.runs < 1:
@@ -154,6 +166,7 @@ def main():
             raise RuntimeError(f"Simulation {run_number} failed: {error}\nDetails: {log_path}") from error
 
     summary = summarize_similarity(results)
+    summary["metric_space"] = "globally rigid-aligned magnitude images"
     write_json(batch_folder / "similarity_summary.json", summary)
     print_similarity_summary(summary)
 
