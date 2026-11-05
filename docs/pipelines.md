@@ -34,6 +34,35 @@ See [configuration](architecture/configuration.md),
 [data preparation](architecture/data_preparation.md), and
 [reconstruction](architecture/reconstruction.md) for component boundaries.
 
+## Standard reconstruction
+
+After creating `data = DataPreparer(...)` with the configured parameters and
+runtime devices, load the acquisition and prepare the selected slice or volume:
+
+```python
+from src.reconstruction.JointReconstructor import JointReconstructor
+
+data.load_input_data()
+data.prepare_reconstructor_inputs()
+reconstructor = JointReconstructor.from_prepared_data(data)
+image, motion_model = reconstructor.run()
+reconstructor.finish_run()
+```
+
+`from_prepared_data(data)` supplies the prepared tensors, configuration,
+plotting context, calibration image when enabled, and encoded voxel spacing.
+`run()` executes the configured multi-resolution reconstruction and restores
+the acquisition intensity scale. The returned image, `data.image_no_moco`,
+and simulated `data.image_ground_truth` therefore use the same units. Working
+k-space and `data.input_ifft_image` remain in preprocessing units.
+
+For a 2D acquisition containing several slices, pass `slice_idx` to
+`prepare_reconstructor_inputs(slice_idx=...)` on a separate copy of the loaded
+preparer and its parameters for each slice. See the demos for complete
+configuration and runtime setup, and the [output guide](usage/outputs.md) for
+saving results. Call `finish_run()` after the chosen output step to complete
+the solver's timing log and residual plots.
+
 ## Preimplemented pipelines
 
 `siemens_breast_T2.py` and `siemens_breast_3d_lowres.py` coordinate the shared

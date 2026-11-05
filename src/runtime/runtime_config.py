@@ -523,60 +523,35 @@ def _load_coil_sensitivity_config(root, cfg):
     return _load_toml_flat(root / 'coil_sensitivity_and_calibration' / csm_files[csm_method], 'coil_sensitivity')
 
 
-def _load_physiological_data_config(root, data_type, *, physiological_data_config,
-                                    polaris_config, physio_config):
-    """Load sensor files selected from config/physiological_data."""
-    cfg = {}
-    saec_data = data_type in {'ismrmrd-saec', 'siemens-saec'}
-    if physiological_data_config is not None and not saec_data:
-        raise ValueError('physiological_data_config is only valid for ISMRMRD or Siemens SAEC data.')
-    if saec_data:
-        if physiological_data_config is None:
-            raise ValueError(f'{data_type} requires a physiological_data_config.')
-        cfg.update(_load_toml_flat(physiological_data_config, 'physiological_data'))
-    polaris_data = data_type in {'ismrmrd-polaris', 'siemens-polaris'}
-    if polaris_config is not None and not polaris_data:
-        raise ValueError('polaris_config is only valid for ISMRMRD or Siemens Polaris data.')
-    if polaris_data:
-        if polaris_config is None:
-            raise ValueError(f'{data_type} requires a polaris_config.')
-        cfg.update(_load_toml_flat(polaris_config, 'polaris'))
-    generic_physio_data = data_type in {
-        f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
-        for kind in ('physio_text', 'physio_array')
-    }
-    if physio_config is not None and not generic_physio_data:
-        raise ValueError('physio_config is only valid for physiological text or array inputs.')
-    if generic_physio_data:
-        cfg.update(_load_toml_flat(
-            physio_config if physio_config is not None else root / 'physiological_data' / f"{data_type.split('-', 1)[1]}.toml", 'physio'))
-    return cfg
+def _load_physiological_data_config(root, data_type):
+    """Load the physiological-data file selected automatically by data_type."""
+    if data_type not in ISMRMRD_READER_DATA_TYPES:
+        return {}
+    physio_type = data_type.split('-', 1)[1]
+    physio_kinds = {'saec': 'physiological_data', 'polaris': 'polaris', 'physio_text': 'physio', 'physio_array': 'physio'}
+    return _load_toml_flat(root / 'physiological_data' / f'{physio_type}.toml', physio_kinds[physio_type])
 
 
-def _load_synthetic_data_config(data_type, *, shepp_logan_config, from_image_config):
-    """Load the selected source from config/synthetic_data."""
-    cfg = {}
-    if data_type in SYNTHETIC_DATA_TYPES:
-        path = shepp_logan_config if data_type == 'shepp-logan' else from_image_config
-        if path is None:
-            raise ValueError(f'{data_type} requires its source configuration file.')
-        cfg.update(_load_toml_flat(path, data_type))
-    return cfg
+def _load_synthetic_data_config(root, cfg):
+    """Load the synthetic-source file selected by data type and reconstruction dimension."""
+    data_type = cfg['data_type']
+    if data_type not in SYNTHETIC_DATA_TYPES:
+        return {}
+    if data_type == 'shepp-logan':
+        _require(cfg, {'reconstruction_dimension'}, 'reconstruction')
+        dimension = cfg['reconstruction_dimension']
+        _choice(dimension, 'reconstruction_dimension', {'2D', '3D'})
+        filename = f'shepp_logan_{dimension.lower()}.toml'
+    else:
+        filename = 'from_image.toml'
+    return _load_toml_flat(root / 'synthetic_data' / filename, data_type)
 
 
-def _load_source_config(root, data_type, *, shepp_logan_config, from_image_config,
-                        physiological_data_config, polaris_config, physio_config):
-    """Select source files and reject configuration paths for other data types."""
-    if shepp_logan_config is not None and data_type != 'shepp-logan':
-        raise ValueError('shepp_logan_config is only valid for shepp-logan data.')
-    if from_image_config is not None and data_type != 'from_image':
-        raise ValueError('from_image_config is only valid for from_image data.')
-    cfg = _load_physiological_data_config(
-        root, data_type, physiological_data_config=physiological_data_config,
-        polaris_config=polaris_config, physio_config=physio_config)
-    cfg.update(_load_synthetic_data_config(
-        data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config))
-    return cfg
+def _load_source_config(root, cfg):
+    """Load source files selected automatically from the accumulated settings."""
+    source_cfg = _load_physiological_data_config(root, cfg['data_type'])
+    source_cfg.update(_load_synthetic_data_config(root, cfg))
+    return source_cfg
 
 
 def _load_sampling_simulation_config(root, data_type, sampling_config, overrides):
@@ -623,10 +598,7 @@ def _validate_known_source_size(cfg):
     validate_motion_readout_count(params, readouts)
 
 
-def load_config(*, data_type, reconstruction_config,
-                shepp_logan_config=None, from_image_config=None, physiological_data_config=None,
-                polaris_config=None, physio_config=None, sampling_config=None,
-                motion_simulation_config=None, overrides=None):
+def load_config(*, data_type, reconstruction_config, sampling_config=None, motion_simulation_config=None, overrides=None):
     """Load file-owned settings, apply overrides, then validate dependent sections."""
     _choice(data_type, 'data_type', REAL_DATA_TYPES | SYNTHETIC_DATA_TYPES)
     root = Path(__file__).resolve().parents[2] / 'config'
@@ -635,10 +607,7 @@ def load_config(*, data_type, reconstruction_config,
     cfg.update(_load_reconstruction_config(reconstruction_config))
     cfg.update(_load_coil_sensitivity_config(root, cfg))
     cfg.update(_load_toml_flat(root / 'coil_sensitivity_and_calibration' / 'calibration_image.toml', 'calibration_image'))
-    cfg.update(_load_source_config(
-        root, data_type, shepp_logan_config=shepp_logan_config, from_image_config=from_image_config,
-        physiological_data_config=physiological_data_config,
-        polaris_config=polaris_config, physio_config=physio_config))
+    cfg.update(_load_source_config(root, cfg))
     cfg.update(_load_sampling_simulation_config(root, data_type, sampling_config, overrides))
     cfg.update(_load_motion_simulation_config(root, data_type, motion_simulation_config))
 

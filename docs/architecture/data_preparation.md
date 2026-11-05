@@ -57,13 +57,9 @@ Without a motion signal, each readout becomes its own state within its
 repetition; labels and the representative signal are absent. Energy-based
 binning additionally requires prepared k-space.
 
-`GRICSPreparerAPI` reuses `MotionSamplingPreparer` for applications that already
-own their acquisition arrays. API usage is in the
-[integration API guide](../usage/api.md#data-preparation-api).
-
 The resulting tensors and sampling layout are consumed by
 [joint reconstruction](reconstruction.md).
 
-`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [calibration-weighted image configuration](../usage/configuration.md#calibration-weighted-image) for its preparation and use.
+`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [configuration guide](../usage/configuration.md) for its preparation and use.
 
-`JointReconstructor.from_prepared_data(data)` maps the prepared `DataPreparer` to the solver's explicit tensor constructor without copying tensors. See the [integration API guide](../usage/api.md#standard-reconstruction-entry-point).
+`JointReconstructor.from_prepared_data(data)` maps the prepared `DataPreparer` to the solver's explicit tensor constructor without copying tensors. See the [standard reconstruction workflow](../pipelines.md#standard-reconstruction).

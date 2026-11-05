@@ -3,7 +3,7 @@
 `JointReconstructor` owns the multi-resolution image and motion solve for one
 prepared slice or volume. Its input contract comes from
 [data preparation](data_preparation.md); notebook and pipeline usage is in the
-[integration API guide](../usage/api.md#standard-reconstruction-entry-point).
+[standard reconstruction workflow](../pipelines.md#standard-reconstruction).
 
 ## Data flow
 
@@ -64,4 +64,4 @@ regularization scaling requires encoded voxel spacing from the caller.
 `run()` returns the image and motion model; the caller owns postprocessing and
 final export. The usage documentation describes
 [output files](../usage/outputs.md) and
-[integration entry points](../usage/api.md).
+[standard reconstruction workflow](../pipelines.md#standard-reconstruction).

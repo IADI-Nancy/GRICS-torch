@@ -70,7 +70,6 @@ def build_config(run_number, device, output_root, sampled_parameters):
     }
     return load_config(
         data_type="shepp-logan",
-        shepp_logan_config=str(ROOT / "config/synthetic_data/shepp_logan_2d.toml"),
         reconstruction_config=str(reconstruction_config),
         sampling_config=str(ROOT / "config/sampling_simulation/random.toml"),
         motion_simulation_config=str(ROOT / "config/motion_simulation/rigid_per_readout_2d.toml"),

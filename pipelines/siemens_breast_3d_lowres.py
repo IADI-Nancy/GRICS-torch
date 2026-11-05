@@ -80,7 +80,6 @@ def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
     params = load_config(
         data_type=data_type,
         reconstruction_config=REPO_ROOT / reconstruction_config,
-        physiological_data_config=REPO_ROOT / "config/physiological_data/saec.toml" if raw_input else None,
         overrides=reconstruction_overrides(
             output_root, device, overrides, save_reconstruction_logs=save_reconstruction_logs,
             save_reconstruction_tensors=save_reconstruction_tensors),

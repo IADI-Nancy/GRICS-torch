@@ -10,7 +10,6 @@ This documentation provides details regarding the core algorithm, implementation
 - [Motion](usage/motion.md)
 - [Outputs](usage/outputs.md)
 - [Tests and simulation validation](usage/tests.md)
-- [Integration APIs](usage/api.md)
 
 Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).
 

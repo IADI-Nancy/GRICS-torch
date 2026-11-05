@@ -87,8 +87,8 @@ class JointReconstructor:
             SamplingIndices: Nested ``[Ne][Nm]`` lists of 1D flattened
                 integer k-space-index tensors.
             motion_signal: Real ``[Nm, Ns]`` tensor.
-            params: Validated flat configuration from ``data.params`` or
-                ``prepared.params``; do not pass a dict or TOML filename.
+            params: Validated flat configuration from ``load_config`` or
+                ``data.params``; do not pass a dict or TOML filename.
             kspace_scale: Output magnitude scale; defaults to 1.0. Pass the
                 preprocessing normalization divisor to restore acquisition units.
             motion_plot_context: Optional plotting metadata.
@@ -561,70 +561,3 @@ class JointReconstructor:
         """Log elapsed time and write residual plots after the caller's chosen output step."""
         self._run_logger.run_finished()
         del self._run_logger
-
-    # ----------------------------------------------------------------------
-    # External integration API
-    # ----------------------------------------------------------------------
-    def _full_resolution_iteration_data(self, image, motion, sampling_indices=None):
-        spatial_shape = ((self.Data_full["Nx"], self.Data_full["Ny"], self.Data_full["Nz"])
-                         if self.Nz_full > 1 else (self.Data_full["Nx"], self.Data_full["Ny"]))
-        image = torch.as_tensor(image, device=self.device)
-        if tuple(image.shape) != spatial_shape:
-            raise ValueError(f"image must have shape {spatial_shape}; got {tuple(image.shape)}.")
-
-        self._current_level_idx = len(self.params.ResolutionLevels) - 1
-        return {
-            "Nx": self.Data_full["Nx"], "Ny": self.Data_full["Ny"], "Nz": self.Data_full["Nz"],
-            "SensitivityMaps": self.Data_full["SensitivityMaps"],
-            "KspaceData": self.Data_full["KspaceData"].reshape(self.Ncoils, self.params.Nex, -1),
-            "Nsamples": self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"],
-            "SamplingIndices": self.Data_full["SamplingIndices"] if sampling_indices is None else sampling_indices,
-            "MotionSignal": self.motion_signal, "ReconstructedImage": image,
-            "MotionModel": torch.as_tensor(motion, device=self.device),
-            "CalibrationImagePrior": self.calibration_image_prior,
-        }
-
-    def full_resolutions_gauss_newton_iteration_api(
-        self, image, motion, *, image_regularizer=None, regularization_weight=None,
-        update_motion=True, image_cg_iterations=None, motion_cg_iterations=None) -> tuple[torch.Tensor, torch.Tensor]:
-        """Perform one full-resolution image update and optional motion update.
-
-        Args:
-            image: Complex ``[Nx, Ny, (Nz)]`` shared image.
-            motion: Real ``[Nalpha, Nm]`` rigid tensor or
-                ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
-            image_regularizer: Optional same-shape image-prior callable.
-            regularization_weight: Non-negative prior weight, or ``None`` for
-                configured ``lambda_r``.
-            update_motion: Whether to run motion after the image step.
-            image_cg_iterations: Positive limit, or ``None`` for the config.
-            motion_cg_iterations: Positive limit, or ``None`` for the config.
-        """
-        input_image_dtype = torch.as_tensor(image).dtype
-        data = self._full_resolution_iteration_data(image, motion)
-        result = self.gauss_newton_iteration(
-            data, image_regularizer=image_regularizer, regularization_weight=regularization_weight,
-            update_motion=update_motion, image_cg_iterations=image_cg_iterations,
-            motion_cg_iterations=motion_cg_iterations)
-        return result.image.to(input_image_dtype), result.motion
-
-    def predict_kspace_api(self, image, motion, *, sampling_indices=None) -> torch.Tensor:
-        """Return flattened complex predicted k-space.
-
-        Args:
-            image: Complex ``[Nx, Ny, (Nz)]`` shared image.
-            motion: Real ``[Nalpha, Nm]`` rigid tensor or
-                ``[Nalpha, Nx, Ny, (Nz), Ns]`` non-rigid tensor.
-            sampling_indices: Optional nested ``[Ne][Nm]`` lists of 1D integer
-                tensors; ``None`` reuses the constructor layout.
-
-        Returns:
-            Complex vector with ``Nc * Ne * Nx * Ny * Nz`` elements.
-        """
-        data = self._full_resolution_iteration_data(image, motion, sampling_indices)
-        data["MotionModel"] = data["MotionModel"].detach()
-        data["MotionOperator"] = build_motion_operator(data, self.params)
-        data["E"] = build_encoding_operator(data, self.params)
-        prediction = data["E"].forward(data["ReconstructedImage"].to(torch.complex128).flatten())
-        remove_temporary_operators(data)
-        return prediction
