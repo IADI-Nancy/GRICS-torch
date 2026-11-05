@@ -28,7 +28,7 @@ Please cite the GRICS paper if you use this code for your research work.
 
 A Dockerfile is provided in `build/`, and the built image is available from the [GitHub container registry](https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch). The image uses CUDA 12.1. GPU execution requires a compatible NVIDIA driver and the NVIDIA Container Toolkit on the host; the CUDA toolkit itself is included in the image.
 
-To run the included examples your computer should have at least 16GB of VRAM and 64GB of RAM. An NVIDIA GPU is not required, but CPU reconstruction is much slower. For CPU-only execution, disable the active `GPU=( --gpus ... )` line and enable `GPU=( )` in `docker.sh`, then set `runtime_device = "cpu"` in `config/general.toml`.
+To run the included examples in native configuration your computer should have at least 16GB of VRAM and 64GB of RAM. An NVIDIA GPU is not required, but CPU reconstruction is much slower. If VRAM is not sufficient, the code will automatically switch to CPU execution. If there is no GPU on your workstation, disable the active `GPU=( --gpus ... )` line and enable `GPU=( )` in `docker.sh`, then set `runtime_device = "cpu"` in `config/general.toml`.
 
 You can use `docker.sh` from the repository to start and manage the container:
 ```bash
@@ -39,7 +39,7 @@ You can use `docker.sh` from the repository to start and manage the container:
 ./docker.sh rm                  # Remove the stopped container
 ```
 
-By default, the script mounts the **parent directory of this repository** at `/home/pyuser/wkdir` inside the container so this repository will be in `/home/pyuser/wkdir/GRICS-torch` (or the repository's actual directory name). For example, if you checkout this repository in the parent folder of your data and your project directories, they will be available under `/home/pyuser/wkdir/`. The script also mounts the host `~/.gitconfig`. By default it runs on GPU 0; set `IMAGE_NAME` or `EXTRA_MOUNTS` in the environment to change the image or add Docker mount arguments. `IMAGE_VERSION` selects the container-image tag; dependency versions are pinned in the files under `build/` and are not derived from that tag. Use `./docker.sh build` to build the image locally from `build/Dockerfile`.
+By default, the script mounts the **parent directory of this repository** at `/home/pyuser/wkdir` inside the container so this repository will be in `/home/pyuser/wkdir/GRICS-torch` (or the repository's actual directory name). For example, if you checkout this repository in the parent folder of your data and your project directories, they will be available under `/home/pyuser/wkdir/`. The script also mounts the host `~/.gitconfig`. `IMAGE_VERSION` selects the container-image tag; dependency versions are pinned in the files under `build/` and are not derived from that tag. Use `./docker.sh build` to build the image locally from `build/Dockerfile`.
 
 After `./docker.sh run`, open the VS Code Command Palette and select **Dev Containers: Open Container Configuration File**. Paste the JSON printed by `docker.sh` into that file and save it, then connect to the running container. This makes VS Code use the container user created with the host user's UID and GID, so files created inside the mounted workspace belong to the actual host user instead of `root`.
 

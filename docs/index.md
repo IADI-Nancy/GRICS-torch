@@ -1,6 +1,20 @@
 # Documentation
 
-Start with the [pipeline architecture](pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
+This documentation provides details regarding the core algorithm, implementation details, software usage, conventions and architecture.
+
+## Usage
+
+- [Configuration](usage/configuration.md)
+- [Input formats](usage/input_formats.md)
+- [Sampling](usage/sampling.md)
+- [Motion](usage/motion.md)
+- [Outputs](usage/outputs.md)
+- [Tests and simulation validation](usage/tests.md)
+- [Integration APIs](usage/api.md)
+
+Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).
+
+Check [pipeline architecture](pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
 
 ## Shared conventions
 
@@ -25,14 +39,4 @@ Start with the [pipeline architecture](pipelines.md) for the reconstruction data
 - [MotionPerturbationSimulator: Jacobian approximation and boundary gradients](implementation/motion_perturbation_simulator.md)
 - [PseudoGaussSeidelMotionPreconditioner: local factors and CPU execution](implementation/motion_preconditioner.md)
 
-## Usage
 
-- [Configuration](usage/configuration.md)
-- [Input formats](usage/input_formats.md)
-- [Sampling](usage/sampling.md)
-- [Motion](usage/motion.md)
-- [Outputs](usage/outputs.md)
-- [Tests and simulation validation](usage/tests.md)
-- [Integration APIs](usage/api.md)
-
-Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).

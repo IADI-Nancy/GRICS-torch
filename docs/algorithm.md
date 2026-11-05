@@ -23,6 +23,8 @@ GRICS jointly estimates an image and a motion model from acquired k-space and mo
 
 The figure shows non-rigid motion regularization, which encourages a smooth updated field through $\|\nabla(\alpha + \delta\alpha)\|_2^2$. For rigid motion, the solver instead penalizes the increment magnitude $\|\delta\alpha\|_2^2$. Image and motion estimates initialize the next, finer resolution. See [reconstruction architecture](architecture/reconstruction.md) for component responsibilities and state ownership.
 
+# CODEX TODO: explain what is the motion model for rigid and non-rigid cases, how it is modeled, write equations, etc.
+
 ## Implementation details
 
 - [JointReconstructor](implementation/joint_reconstructor.md): alternating updates, resolution levels, and regularization normalization.
@@ -31,6 +33,3 @@ The figure shows non-rigid motion regularization, which encourages a smooth upda
 - [MotionOperator](implementation/motion_operator.md): rigid and non-rigid coordinates, interpolation, and boundaries.
 - [MotionPerturbationSimulator](implementation/motion_perturbation_simulator.md): motion Jacobian approximation and image gradients.
 - [PseudoGaussSeidelMotionPreconditioner](implementation/motion_preconditioner.md): local motion-system approximation and triangular solves.
-- [CoilSensitivityCalculator](implementation/coil_sensitivity_calculator.md): coil calibration, smoothing, and map normalization.
-- [MotionBinner](implementation/motion_binner.md): physiological state grouping and k-space energy selection.
-- [MotionSimulator](implementation/motion_simulator.md): synthetic motion curves, displacement fields, and corrupted acquisitions.
