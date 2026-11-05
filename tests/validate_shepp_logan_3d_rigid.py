@@ -9,10 +9,13 @@ Run from the repository root:
 Each invocation groups its simulations under
 runs/simulation_validation/shepp_logan_3d_rigid/<batch timestamp>/.
 Pipeline messages, warnings, and device fallback notices are saved in each
-simulation's console log. The terminal prints one reconstruction-start line
-per simulation, then SSIM and NRMSE median [Q1, Q3], relative improvement,
-and paired two-sided Wilcoxon p-values. Individual results stay in subfolders.
-SSIM and NRMSE compare magnitudes after independent global rigid alignment to
+simulation's console log. Each progress line reports reconstruction SUCCESS
+and evaluation/output PASSED. The final summary prints SSIM and NRMSE median
+[Q1, Q3], relative improvement, and paired two-sided Wilcoxon p-values with
+reference limits and verdicts. Limits are derived and documented in
+utils/validation_quality.py; a reference quality verdict requires 20 simulations
+and matching reference settings. Individual results stay in subfolders.
+SSIM and NRMSE compare magnitudes after independent global rigid registration to
 ground truth (no spatial or intensity scaling). Raw metrics and transforms are
 also saved in simulation_metrics.json. Completion checks
 finite outputs and valid shapes; quality improvement is reported separately.
@@ -38,8 +41,9 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import execution_scope, write_json, write_reconstruction
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
-from validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary
-from validation_alignment import align_rigid_to_reference
+from utils.validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary
+from utils.validation_quality import assess_quality, validation_settings
+from utils.validation_registration import register_rigid_to_reference
 
 
 def sample_parameters(rng):
@@ -90,11 +94,14 @@ def run_simulation(run_number, device, output_root, console):
             raise AssertionError("Coil combination produced an empty ground-truth image")
 
         reconstructor = JointReconstructor.from_prepared_data(data)
-        print(f"Simulation {run_number:03d}: reconstruction starting", file=console, flush=True)
+        print(f"Simulation {run_number:03d}: reconstruction starting ... ", end="", file=console, flush=True)
         corrected_image, reconstructed_motion = reconstructor.run()
 
         if not (torch.isfinite(corrected_image).all() and torch.isfinite(reconstructed_motion).all()):
             raise AssertionError("Reconstructed image or motion model contains non-finite values")
+        if corrected_image.shape != data.image_ground_truth.shape:
+            raise AssertionError("Reconstructed image shape differs from ground truth")
+        print("SUCCESS; evaluation and output ... ", end="", file=console, flush=True)
         # Histories compare endpoints only at the final spatial resolution.
         # Image: ||measured - predicted k-space|| / ||measured k-space||.
         # Motion: ||motion update|| / (||updated motion|| + 1e-12).
@@ -108,23 +115,24 @@ def run_simulation(run_number, device, output_root, console):
         # global rigid transform changes pose only; it cannot correct local
         # motion artifacts. Keep raw scores and fitted transforms for review.
         voxel_spacing = (params.FoVxy_mm / data.Nx, params.FoVxy_mm / data.Ny, params.FoVz_mm / data.Nz)
-        aligned_uncorrected, uncorrected_alignment = align_rigid_to_reference(
+        registered_uncorrected, uncorrected_registration = register_rigid_to_reference(
             data.image_ground_truth, data.image_no_moco, voxel_spacing)
-        aligned_corrected, corrected_alignment = align_rigid_to_reference(
+        registered_corrected, corrected_registration = register_rigid_to_reference(
             data.image_ground_truth, corrected_image, voxel_spacing)
-        uncorrected_metrics = image_metrics(data.image_ground_truth, aligned_uncorrected)
-        corrected_metrics = image_metrics(data.image_ground_truth, aligned_corrected)
+        uncorrected_metrics = image_metrics(data.image_ground_truth, registered_uncorrected)
+        corrected_metrics = image_metrics(data.image_ground_truth, registered_corrected)
         metrics = {
+            "validation_settings": validation_settings(params),
             "case": "rigid_3d", "run": run_number, "seed": seed, "device": str(t_device),
             "motion_type": "rigid-per-shot", "sampled_parameters": sampled_parameters,
             "image_residual_final_level": summarize_residuals(logger["recon_residuals_by_level"][-1]),
             "motion_residual_final_level": summarize_residuals(logger["motion_residuals_by_level"][-1]),
             "uncorrected_vs_ground_truth": uncorrected_metrics,
             "corrected_vs_ground_truth": corrected_metrics,
-            "metric_space": "globally rigid-aligned magnitude images",
+            "metric_space": "globally rigid-registered magnitude images",
             "raw_uncorrected_vs_ground_truth": raw_uncorrected_metrics,
             "raw_corrected_vs_ground_truth": raw_corrected_metrics,
-            "global_alignment": {"uncorrected": uncorrected_alignment, "corrected": corrected_alignment},
+            "global_registration": {"uncorrected": uncorrected_registration, "corrected": corrected_registration},
             "quality_change": {"nrmse_improved": corrected_metrics["nrmse"] < uncorrected_metrics["nrmse"],
                                "ssim_improved": corrected_metrics["ssim"] > uncorrected_metrics["ssim"]},
         }
@@ -132,9 +140,9 @@ def run_simulation(run_number, device, output_root, console):
             raise AssertionError("Final resolution had no motion update")
         # Save the same central-plane comparison used by the demos, even when
         # debug plots are disabled. 2D cases use one row of three images.
-        # The PNG shows the aligned images used for metrics; the saved
+        # The PNG shows the registered images used for metrics; the saved
         # reconstruction tensor retains the solver's original coordinate frame.
-        save_image_comparison(aligned_uncorrected, aligned_corrected, data.image_ground_truth,
+        save_image_comparison(registered_uncorrected, registered_corrected, data.image_ground_truth,
                               Path(params.run_folder) / "image_comparison.png")
         write_reconstruction(params, corrected_image, reconstructed_motion)
         write_json(Path(params.run_folder) / "simulation_metrics.json", metrics)
@@ -162,11 +170,14 @@ def main():
             # Preserve library progress, warnings, and fallback notices on disk.
             with log_path.open("w") as log, redirect_stdout(log), redirect_stderr(log):
                 results.append(run_simulation(run_number, args.device, batch_folder, console))
+            print("PASSED", file=console, flush=True)
         except Exception as error:
+            print(f"FAILED (simulation {run_number:03d})", file=console, flush=True)
             raise RuntimeError(f"Simulation {run_number} failed: {error}\nDetails: {log_path}") from error
 
     summary = summarize_similarity(results)
-    summary["metric_space"] = "globally rigid-aligned magnitude images"
+    summary["metric_space"] = "globally rigid-registered magnitude images"
+    assess_quality(summary, results, "rigid_3d")
     write_json(batch_folder / "similarity_summary.json", summary)
     print_similarity_summary(summary)
 

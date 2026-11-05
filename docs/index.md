@@ -32,6 +32,7 @@ Start with the [pipeline architecture](pipelines.md) for the reconstruction data
 - [Sampling](usage/sampling.md)
 - [Motion](usage/motion.md)
 - [Outputs](usage/outputs.md)
+- [Tests and simulation validation](usage/tests.md)
 - [Integration APIs](usage/api.md)
 
 Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).

@@ -1,4 +1,4 @@
-"""Global rigid alignment for simulation evaluation, independent of reconstruction."""
+"""Global rigid registration for simulation evaluation, independent of reconstruction."""
 
 import numpy as np
 import torch
@@ -7,8 +7,8 @@ from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
 
 
-def align_rigid_to_reference(reference, candidate, voxel_spacing=None):
-    """Return an aligned magnitude image and the fitted transform metadata.
+def register_rigid_to_reference(reference, candidate, voxel_spacing=None):
+    """Return a registered magnitude image and the fitted transform metadata.
 
     Fit only a single global translation and rotation: no spatial scaling,
     deformation, intensity normalization, or modification of reconstruction data.
@@ -28,11 +28,11 @@ def align_rigid_to_reference(reference, candidate, voxel_spacing=None):
     moving = candidate.detach().abs().cpu().numpy().astype(np.float64)
     ndim = fixed.ndim
     if ndim not in (2, 3) or fixed.shape != moving.shape:
-        raise ValueError("Rigid alignment requires matching 2D or 3D images.")
+        raise ValueError("Rigid registration requires matching 2D or 3D images.")
     if not np.isfinite(fixed).all() or not np.isfinite(moving).all():
-        raise ValueError("Rigid alignment requires finite images.")
+        raise ValueError("Rigid registration requires finite images.")
     if np.linalg.norm(fixed) == 0 or np.linalg.norm(moving) == 0:
-        raise ValueError("Rigid alignment requires nonzero images.")
+        raise ValueError("Rigid registration requires nonzero images.")
     spacing = np.ones(ndim) if voxel_spacing is None else np.asarray(voxel_spacing, dtype=float)
     if spacing.shape != (ndim,) or not np.isfinite(spacing).all() or np.any(spacing <= 0):
         raise ValueError("voxel_spacing must contain one positive finite value per image axis.")
@@ -73,19 +73,19 @@ def align_rigid_to_reference(reference, candidate, voxel_spacing=None):
         result = minimize(objective, parameters, method="Powell", bounds=bounds,
                           options={"xtol": 1e-4, "ftol": 1e-6, "maxiter": 200})
         if not result.success or not np.isfinite(result.fun):
-            raise RuntimeError(f"Global rigid alignment failed: {result.message}")
+            raise RuntimeError(f"Global rigid registration failed: {result.message}")
         parameters = result.x
         optimizations.append({"max_axis_samples": max_axis_samples, "iterations": int(result.nit)})
 
     matrix, offset = sampling_transform(parameters)
-    aligned = affine_transform(coefficients, matrix, offset, output_shape=fixed.shape,
-                               order=3, mode="constant", cval=0., prefilter=False)
-    aligned = np.maximum(aligned, 0.)
+    registered = affine_transform(coefficients, matrix, offset, output_shape=fixed.shape,
+                                  order=3, mode="constant", cval=0., prefilter=False)
+    registered = np.maximum(registered, 0.)
     # Identity is a valid rigid transform. Keep it explicitly if the sampled
     # fit would increase full-grid error; record this decision in the JSON.
     selected = "fitted"
-    if np.sum((aligned - fixed) ** 2) >= np.sum((moving - fixed) ** 2):
-        aligned = moving.copy()
+    if np.sum((registered - fixed) ** 2) >= np.sum((moving - fixed) ** 2):
+        registered = moving.copy()
         parameters = np.zeros_like(parameters)
         matrix, offset = sampling_transform(parameters)
         selected = "identity (fitted transform did not improve full-grid error)"
@@ -98,4 +98,4 @@ def align_rigid_to_reference(reference, candidate, voxel_spacing=None):
         "at_search_bound": bool(np.any(np.isclose(np.abs(parameters), np.r_[limits, [10.] * angle_count], atol=1e-3))),
         "optimization": optimizations,
     }
-    return torch.from_numpy(aligned), metadata
+    return torch.from_numpy(registered), metadata

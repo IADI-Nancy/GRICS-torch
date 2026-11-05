@@ -11,9 +11,16 @@ import torch
 from skimage.metrics import structural_similarity
 from scipy.stats import wilcoxon
 
+from .validation_quality import quality_suffix
+
 
 def print_step(label, boundary, step):
     print(f"[{label}] {boundary} {step}", flush=True)
+
+
+def print_validation_separator(label):
+    """Separate terminal sections emitted by a simulation validation batch."""
+    print(f"\n{'=' * 20} {label} {'=' * 20}", flush=True)
 
 
 def summarize_similarity(results):
@@ -60,19 +67,28 @@ def summarize_similarity(results):
 
 def print_similarity_summary(summary):
     """Print all SSIM results first, then all NRMSE results."""
-    prefix = "Rigid-aligned " if summary.get("metric_space") == "globally rigid-aligned magnitude images" else ""
+    assessment = summary["quality_assessment"]
+    print(f"Quality reference: {assessment['reference_batch']} (20 simulations)", flush=True)
+    print("Values are median [Q1, Q3]. Limits: bootstrap bounds plus engineering margins; see validation_quality.py.", flush=True)
+    for reason in assessment["reasons"]:
+        print(f"INCONCLUSIVE: {reason}", flush=True)
+    prefix = "Rigid-registered " if summary.get("metric_space") == "globally rigid-registered magnitude images" else ""
     for metric in ("ssim", "nrmse"):
+        print_validation_separator(f"{metric.upper()} statistics")
         for comparison, label in (("uncorrected_vs_ground_truth", "Uncorrected"), ("corrected_vs_ground_truth", "Corrected")):
             values = summary[comparison][metric]
-            print(f"{prefix}{label} {metric.upper()}: {values['median']:.6f} [{values['q1']:.6f}, {values['q3']:.6f}]", flush=True)
+            suffix = quality_suffix(summary, f"{metric.upper()}_ref", ">=" if metric == "ssim" else "<=") if comparison == "corrected_vs_ground_truth" else ""
+            print(f"{prefix}{label} {metric.upper()}: {values['median']:.6f} [{values['q1']:.6f}, {values['q3']:.6f}]{suffix}", flush=True)
         stats = summary["paired_statistics"][metric]
         values = stats["relative_improvement_percent"]
         improvement = "undefined (all baselines are zero)" if values is None else (
             f"{values['median']:.2f}% [{values['q1']:.2f}%, {values['q3']:.2f}%]")
         excluded = stats["zero_baselines_excluded"]
         note = f" ({excluded} zero baselines excluded)" if excluded else ""
-        print(f"{metric.upper()} relative improvement: {improvement}{note}", flush=True)
-        print(f"{metric.upper()} paired Wilcoxon p-value (two-sided): {stats['wilcoxon_p_value']:.6g}", flush=True)
+        print(f"{metric.upper()} relative improvement: {improvement}{note}" + quality_suffix(summary, f"{metric.upper()}_imp_ref", ">=", percent=True), flush=True)
+        print(f"{metric.upper()} paired Wilcoxon p-value (two-sided): {stats['wilcoxon_p_value']:.6g}" + quality_suffix(summary, f"{metric.upper()}_p_ref", "<"), flush=True)
+    print_validation_separator("Overall quality")
+    print(f"Overall quality: {assessment['status']}", flush=True)
 
 
 def summarize_residuals(values):

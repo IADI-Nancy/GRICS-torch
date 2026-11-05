@@ -3,9 +3,6 @@ import math
 
 import torch
 
-"""
-Source: ChatGPT + Wikipedia
-"""
 class ConjugateGradientSolver:
     """
     CG and PCG solver for equations of the form:

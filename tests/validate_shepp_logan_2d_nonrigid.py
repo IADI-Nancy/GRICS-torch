@@ -9,9 +9,12 @@ Run from the repository root:
 Each invocation groups its simulations under
 runs/simulation_validation/shepp_logan_2d_nonrigid/<batch timestamp>/.
 Pipeline messages, warnings, and device fallback notices are saved in each
-simulation's console log. The terminal prints one reconstruction-start line
-per simulation, then SSIM and NRMSE median [Q1, Q3], relative improvement,
-and paired two-sided Wilcoxon p-values. Individual results stay in subfolders.
+simulation's console log. Each progress line reports reconstruction SUCCESS
+and evaluation/output PASSED. The final summary prints SSIM and NRMSE median
+[Q1, Q3], relative improvement, and paired two-sided Wilcoxon p-values with
+reference limits and verdicts. Limits are derived and documented in
+utils/validation_quality.py; a reference quality verdict requires 20 simulations
+and matching reference settings. Individual results stay in subfolders.
 SSIM and NRMSE compare image magnitudes without registration. Completion checks
 finite outputs and valid shapes; quality improvement is reported separately.
 Each simulation also saves image_comparison.png: corrupted, corrected, ground
@@ -36,7 +39,8 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import execution_scope, write_json, write_reconstruction
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
-from validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary
+from utils.validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary
+from utils.validation_quality import assess_quality, validation_settings
 
 
 def sample_parameters(rng):
@@ -90,11 +94,14 @@ def run_simulation(run_number, device, output_root, console):
             raise AssertionError("Coil combination produced an empty ground-truth image")
 
         reconstructor = JointReconstructor.from_prepared_data(data)
-        print(f"Simulation {run_number:03d}: reconstruction starting", file=console, flush=True)
+        print(f"Simulation {run_number:03d}: reconstruction starting ... ", end="", file=console, flush=True)
         corrected_image, reconstructed_motion = reconstructor.run()
 
         if not (torch.isfinite(corrected_image).all() and torch.isfinite(reconstructed_motion).all()):
             raise AssertionError("Reconstructed image or motion model contains non-finite values")
+        if corrected_image.shape != data.image_ground_truth.shape:
+            raise AssertionError("Reconstructed image shape differs from ground truth")
+        print("SUCCESS; evaluation and output ... ", end="", file=console, flush=True)
         # Histories compare endpoints only at the final spatial resolution.
         # Image: ||measured - predicted k-space|| / ||measured k-space||.
         # Motion: ||motion update|| / (||updated motion|| + 1e-12).
@@ -105,6 +112,7 @@ def run_simulation(run_number, device, output_root, console):
         uncorrected_metrics = image_metrics(data.image_ground_truth, data.image_no_moco)
         corrected_metrics = image_metrics(data.image_ground_truth, corrected_image)
         metrics = {
+            "validation_settings": validation_settings(params),
             "case": "nonrigid_2d", "run": run_number, "seed": seed, "device": str(t_device),
             "motion_type": "non-rigid-per-readout", "sampled_parameters": sampled_parameters,
             "image_residual_final_level": summarize_residuals(logger["recon_residuals_by_level"][-1]),
@@ -146,10 +154,13 @@ def main():
             # Preserve library progress, warnings, and fallback notices on disk.
             with log_path.open("w") as log, redirect_stdout(log), redirect_stderr(log):
                 results.append(run_simulation(run_number, args.device, batch_folder, console))
+            print("PASSED", file=console, flush=True)
         except Exception as error:
+            print(f"FAILED (simulation {run_number:03d})", file=console, flush=True)
             raise RuntimeError(f"Simulation {run_number} failed: {error}\nDetails: {log_path}") from error
 
     summary = summarize_similarity(results)
+    assess_quality(summary, results, "nonrigid_2d")
     write_json(batch_folder / "similarity_summary.json", summary)
     print_similarity_summary(summary)
 

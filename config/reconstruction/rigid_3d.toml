@@ -55,7 +55,7 @@ regularization_scaling = "direct"
 cg_use_reg_scale_proxy = true
 # Control calibration weighting; true solves x = C p and regularizes p, false solves directly for x.
 # Supports both coil methods; image smoothing is configured in config/coil_sensitivity_and_calibration/calibration_image.toml.
-use_calibration_weighted_image = false
+use_calibration_weighted_image = true
 # Number of probes for the regularization scaling estimate; use any positive integer.
 # Required only when cg_use_reg_scale_proxy = true; omit otherwise.
 cg_reg_scale_num_probes = 8
