@@ -99,7 +99,7 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT, max_worke
         vars(params).update(result.pop("_configuration"))
         dicom_path = Path(data.params.run_folder) / "exports/dicom" / f"slice_{result['slice_idx'] + 1:03d}.dcm"
         result["dicom_file"] = write_reconstruction_dicom(
-            result["image"], dicom_path, raw_data=data, slice_index=result["slice_idx"],
+            result["image"], dicom_path, raw_data=data.input_loader, slice_index=result["slice_idx"],
             series_description="GRICS reconstruction RESEARCH ONLY", images_in_acquisition=len(indices),
             series_number=dicom_series_number, reference_dicom_path=dicom_header_dir, **uids)
         result.update(write_reconstruction(

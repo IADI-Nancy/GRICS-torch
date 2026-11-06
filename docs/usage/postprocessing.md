@@ -1,68 +1,44 @@
 # Postprocessing and export
 
-Postprocessing acts on the image returned by `JointReconstructor.run()`. It is
-optional and belongs to the calling notebook or pipeline; the solver returns
-its native reconstruction. Keep that native image if you need both versions in
-the output. The motion model remains on the reconstruction grid.
+`JointReconstructor.run()` returns the native image and motion model produced by the solver. Postprocessing is an optional calling-workflow step that turns that reconstruction into the image required for review, analysis, storage, or exchange. It stays outside `JointReconstructor` because its purpose and choices depend on the acquisition and the intended use of the result.
 
-## Siemens 2D T2 pipeline
+## Why postprocess
 
-The [2D T2 pipeline](../pipelines.md#2d-t2-pipeline) loads
-`config/postprocessing/nonrigid_2d_breast.toml` with
-`load_postprocessing_config(...)`. Its `normalize_image_by_grics_reference`
-setting controls whether the reconstructed image is divided by the magnitude of
-the prepared GRICS reference image. Enabling it requires Odille spline coil
-maps. The pipeline then zero-fills and crops the image to the target matrix
-size from the acquisition header. These steps affect the final image; the
-native image is captured before them.
+Reconstruction estimates an image on the solver grid and in its reconstructed intensity scale. A downstream workflow may need a different representation: for example, a magnitude image for display, a crop or zero-filled matrix for a requested field of view, intensity normalization for comparison, or a format-specific pixel array for export. These operations change how the image is interpreted or presented; they are not part of the joint image-and-motion optimization.
 
-To use the same steps in a custom workflow, apply
-`normalize_reconstruction_by_grics_reference(image, reference_image)` when
-enabled, then `zero_fill_loaded_reconstruction(image, target_shape,
-encoded_shape)` using the acquisition's matrix sizes. The pipeline provides
-`grics_reference_image_for_normalization(data, image)` and
-`grics_zero_fill_shapes(data.input_loader)` to validate and obtain those
-inputs. The helpers are defined in
-[postprocessing.py](../../pipelines/utils/postprocessing.py); see
-[siemens_breast_T2.py](../../pipelines/siemens_breast_T2.py) for the call sequence.
-The [3D low-resolution
-pipeline](../pipelines.md#3d-low-resolution-pipeline) does not apply these
-image steps.
+Postprocessing may change image values, shape, orientation, or intensity scale. Keep the native image whenever the final image is changed so that the solver result remains available for quality assessment, reproducibility, or a different downstream transformation. The returned motion model remains on the reconstruction grid; postprocessing an image does not transform its motion coordinates.
 
-With a prepared 2D T2 `data` object and the `image, motion` returned by
-`reconstructor.run()`, the image steps are:
+## Apply a workflow transformation
+
+Start from the image returned by `run()`. Preserve it before applying any operation that changes it, then use the transformed image as the final result. The transformation itself is owned by the notebook or pipeline.
 
 ```python
-from pipelines.utils.postprocessing import (
-    grics_reference_image_for_normalization, grics_zero_fill_shapes,
-    normalize_reconstruction_by_grics_reference, zero_fill_loaded_reconstruction,
-)
-from src.runtime.output_layout import write_reconstruction
-from src.runtime.runtime_config import load_postprocessing_config
+image, motion = reconstructor.run()
+native_image = image.clone()
 
-postprocessing = load_postprocessing_config("config/postprocessing/nonrigid_2d_breast.toml")
-native_image = image
-if postprocessing.normalize_image_by_grics_reference:
-    if data.params.coil_sensitivity_method != "odille-spline":
-        raise ValueError("Reference-image normalization requires Odille spline coil maps.")
-    reference_image = grics_reference_image_for_normalization(data, image)
-    image, _ = normalize_reconstruction_by_grics_reference(image, reference_image)
-target_shape, encoded_shape = grics_zero_fill_shapes(data.input_loader)
-image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
-write_reconstruction(data.params, image, motion, native_image=native_image, image_stage="after_postprocessing")
+# Apply the workflow's image transformation.
+image = transform_image(image)
 ```
 
-## Save the result
+`transform_image(...)` can be any explicit operation appropriate to the workflow. It should accept and return an image on a well-defined grid. If it changes the spatial shape, record the resulting stage as postprocessed and ensure any export geometry describes that final grid.
 
-After any image postprocessing, call `write_reconstruction(params, image,
-motion, native_image=native_image, image_stage="after_postprocessing")` from
-`src.runtime.output_layout` to save final tensors when tensor saving is enabled
-and record their metadata. If no postprocessing was applied, leave
-`image_stage` at its default, `"before_postprocessing"`. The [output guide](outputs.md)
-describes the saved files and flags.
+## Save the native and final results
 
-The Siemens pipelines always export DICOM using
-`write_reconstruction_dicom(...)`. The writer accepts a 2D image, converts
-complex values to magnitude, and requires source geometry and a slice index;
-see [outputs](outputs.md) and the [2D T2
-pipeline](../pipelines.md#2d-t2-pipeline).
+Call `write_reconstruction(...)` after the final image has been chosen. It saves the configured tensors and records metadata about the image stage. Pass `native_image` when postprocessing has changed the image; set `image_stage="after_postprocessing"` so the output metadata identifies the saved final image correctly.
+
+```python
+from src.runtime.output_layout import write_reconstruction
+
+write_reconstruction(
+    data.params, image, motion, native_image=native_image,
+    image_stage="after_postprocessing",
+)
+```
+
+When no image transformation is applied, save the image returned by `run()` and use the default `image_stage`, `"before_postprocessing"`. The [output guide](outputs.md) describes the output files and saving flags.
+
+## Export
+
+Export follows postprocessing because exported pixels should represent the final chosen image. An exporter may impose further requirements, such as a real-valued magnitude image, source geometry, spacing, orientation, or a slice index. Provide metadata that matches the final image grid rather than assuming that preprocessing geometry remains valid after resizing or cropping.
+
+The Siemens pipelines provide concrete normalization, zero-filling, and DICOM-export examples. See the [2D T2 pipeline](../pipelines.md#2d-t2-pipeline), the [3D low-resolution pipeline](../pipelines.md#3d-low-resolution-pipeline), and the [output guide](outputs.md).
