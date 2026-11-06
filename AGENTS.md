@@ -10,7 +10,7 @@ Never use a fallback that is hidden from the user. If a fallback is needed, make
 
 Do not modify README files unless a human explicitly asks you to modify them. A request to add a feature, fix code, or update documentation in general does not authorize README changes.
 
-Do not hard-wrap prose in README files. Keep each paragraph and list item on one source line unless a line break is required by Markdown structure, a table, or a code block.
+Do not hard-wrap prose in .md files. Keep each paragraph and list item on one source line unless a line break is required by Markdown structure, a table, or a code block.
 
 Give every TOML configuration setting an adjacent comment that explains its purpose and its allowed values, alternatives, or numeric range.
 

@@ -28,7 +28,7 @@ Please cite the GRICS paper if you use this code for your research work.
 
 A Dockerfile is provided in `build/`, and the built image is available from the [GitHub container registry](https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch). The image uses CUDA 12.1. GPU execution requires a compatible NVIDIA driver and the NVIDIA Container Toolkit on the host; the CUDA toolkit itself is included in the image.
 
-To run the included examples in native configuration your computer should have at least 16GB of VRAM and 64GB of RAM. An NVIDIA GPU is not required, but CPU reconstruction is much slower. If VRAM is not sufficient, the code will automatically switch to CPU execution. If there is no GPU on your workstation, disable the active `GPU=( --gpus ... )` line and enable `GPU=( )` in `docker.sh`, then set `runtime_device = "cpu"` in `config/general.toml`.
+To run the included examples in native configuration your computer should have at least 16GB of VRAM and 64GB of RAM. An NVIDIA GPU is not required, but CPU reconstruction is much slower. Motion simulation automatically retries on CPU if it runs out of CUDA memory; coil-map estimation and reconstruction do not retry on CPU after a CUDA memory error. To run the complete workflow on CPU, set `runtime_device = "cpu"` in `config/general.toml` and check for device overrides in the chosen notebook or script. If there is no GPU on your workstation, also disable the active `GPU=( --gpus ... )` line and enable `GPU=( )` in `docker.sh`.
 
 You can use `docker.sh` from the repository to start and manage the container:
 ```bash

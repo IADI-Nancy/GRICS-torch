@@ -14,7 +14,7 @@ flowchart TD
     Runtime --> Load
     Load -->|"In: acquisition and selected slice or volume<br/>Out: k-space, coil maps, motion signal and sampling layout"| Prepare[DataPreparer.prepare_reconstructor_inputs]
     Prepare -->|"In: prepared tensors and params<br/>Out: reconstructed image and motion model"| Reconstruct[JointReconstructor.run]
-    Reconstruct -->|"In: reconstruction results<br/>Out: saved results, metadata and completed logs"| Finalize[write_reconstruction and finish_run]
+    Reconstruct -->|"In: reconstruction results<br/>Out: saved results and metadata"| Finalize[write_reconstruction]
 
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef inputFile fill:#fef3c7,stroke:#d97706,color:#451a03
@@ -50,7 +50,6 @@ data.load_input_data()
 data.prepare_reconstructor_inputs()
 reconstructor = JointReconstructor.from_prepared_data(data)
 image, motion_model = reconstructor.run()
-reconstructor.finish_run()
 ```
 
 Omit `filename` for Shepp–Logan data. The returned `Runtime` contains
@@ -71,60 +70,26 @@ copy of the loaded preparer and its parameters for each slice. See
 [using DataPreparer](usage/data_preparer.md) for the full preparation sequence,
 [using JointReconstructor](usage/joint_reconstructor.md) for the solver calls,
 the demos for complete configuration and runtime setup, and the
-[output guide](usage/outputs.md) for saving results. Call `finish_run()` after
-the chosen output step to complete the solver's timing log and residual plots.
+[output guide](usage/outputs.md) for saving results.
 
 ## Preimplemented pipelines
 
-`siemens_breast_T2.py` and `siemens_breast_3d_lowres.py` coordinate the shared
-components in `src/`. Helpers used only by these entry points live in
-`pipelines/utils/`.
-
-### System interaction
-
-```mermaid
-flowchart TD
-    Inputs[resolve_input_files] ---|"In: raw MRI, SAEC and preprocessed file paths<br/>Out: selected input paths"| InputsGap[" "]
-    InputsGap --> Pipeline[run_pipeline]
-    Config[load_config] ---|"In: data type, TOML paths and overrides<br/>Out: validated params"| ConfigGap[" "]
-    ConfigGap --> Pipeline
-    Runtime[initialize_runtime] -->|"In: params<br/>Out: devices and initialized run state"| Pipeline
-    Preparer[DataPreparer] -->|"In: input paths, params and devices<br/>Out: prepared k-space, coil sensitivity maps,<br/>motion signal and sampling indices"| Pipeline
-    Solver[JointReconstructor] -.->|"In: prepared tensors, sampling indices and params<br/>Out: reconstructed image and motion model"| Execution[timed_reconstruction]
-    Execution -->|"In: prepared DataPreparer<br/>Out: reconstructed image, motion model and elapsed time"| Pipeline
-    Export[export_reconstruction] ---|"In: final image, native image, motion model and metadata<br/>Out: saved paths and updated result metadata"| ExportGap[" "]
-    ExportGap --> Pipeline
-    Finish[finish_run] -->|"In: results and timings<br/>Out: run folder, timings and reconstruction results"| Pipeline
-
-    %% Hidden route nodes keep selected labels on the upper edge segments.
-    InputsGap ~~~ Runtime
-    ConfigGap ~~~ Preparer
-    ExportGap ~~~ Finish
-
-    classDef coordinator fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#172554
-    classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
-    classDef layoutNode fill:transparent,stroke:transparent,color:transparent
-    class Pipeline coordinator
-    class Inputs,Config,Runtime,Preparer,Solver,Execution,Export,Finish pythonClass
-    class InputsGap,ConfigGap,ExportGap layoutNode
-```
-
-Arrow labels describe the source component's inputs and outputs.
-`run_pipeline` passes data between components; the dotted edge denotes the
-solver call inside `timed_reconstruction`. Workflow-specific postprocessing and
-optional DICOM export appear in the flows below.
+`siemens_breast_T2.py` and `siemens_breast_3d_lowres.py` accept a Siemens
+`.dat` file and its SAEC physiological file. Both use the same explicit
+configuration, runtime, preparation, reconstruction, and export calls as the
+demos. Siemens-to-ISMRMRD conversion remains part of input loading.
 
 ### Shared boundaries
 
-`pipelines/utils/inputs.py` owns file selection. An existing preprocessed file
-takes precedence; when it is absent, the pipeline announces its use of raw MRI
-and SAEC inputs. Publishing a preprocessing cache is atomic and does not
-overwrite an existing destination.
+`run_pipeline(...)` owns configuration and execution order.
+`JointReconstructor.from_prepared_data(data)` and `run()` are called
+directly. `write_reconstruction(...)` saves final tensors and metadata;
+both pipelines always export DICOMs using the acquisition geometry.
+`@managed_execution` finalizes the manifest and releases resources.
 
-`pipelines/utils/execution.py` adapts prepared data to the solver and output
-system. Pipeline-owned runtime overrides take precedence over caller values.
-`@managed_execution` surrounds the run to finalize success or failure and
-release registered resources.
+Both scripts take `raw_data_file`, `saec_file`, `--output-root`,
+`--dicom-header-dir`, and `--dicom-series-number`. The 2D pipeline runs
+all slices on CPU; the 3D pipeline uses its configured compute device.
 
 ### 2D T2 pipeline
 
@@ -132,49 +97,35 @@ release registered resources.
 sequenceDiagram
     participant P as siemens_breast_T2
     participant D as DataPreparer
-    participant W as Slice workers
+    participant W as CPU slice workers
     participant R as JointReconstructor
-    participant O as Output and DICOM utilities
 
     P->>D: load_input_data for all slices
-    P->>P: select and validate slice range
     P->>W: share loaded acquisition using fork
-    loop Each selected slice
-        W->>D: prepare_reconstructor_inputs(slice_idx)
-        D-->>W: k-space, maps, sampling, motion
-        W->>R: timed_reconstruction
+    loop Every slice
+        W->>D: copy preparer and params, prepare_reconstructor_inputs(slice_idx)
+        W->>R: from_prepared_data, run
         R-->>W: native image and motion
         W->>W: normalize and zero-fill image
-        W-->>P: NumPy result and configuration
+        W-->>P: image, native image, motion and configuration
     end
-    P->>P: order results by slice index
-    P->>O: optional DICOM and tensor export
-    O-->>P: paths and metadata
+    P->>P: DICOM export and write_reconstruction for each slice
 ```
 
-Each worker copies `DataPreparer` and `params`, selects its own slice, and binds
-separate output paths while retaining the shared loaded acquisition. CPU
-workers can use fork; CUDA execution requires one worker.
+`pipelines/utils/parallel.py` owns worker setup and NumPy result transport.
+Results retain acquisition slice order. Each worker's preparer and parameter
+copies share the loaded acquisition but own their slice selection and output
+paths. Only CPU execution is supported. Final exports begin after all slices
+succeed.
 
-NumPy result transport avoids PyTorch shared-memory lifetime issues. Final
-exports occur only after all selected slices succeed.
+`pipelines/utils/postprocessing.py` owns reference-image normalization and
+header-based zero-filling and cropping.
 
 ### 3D low-resolution pipeline
 
-```mermaid
-flowchart LR
-    Load[Load complete acquisition] --> Prepare[Prepare complete volume]
-    Prepare --> Reconstruct[Joint reconstruction]
-    Reconstruct --> CPU[Transfer image and motion to CPU]
-    CPU --> DICOM[Optional volume DICOM series]
-    CPU --> Tensors[Optional tensor export]
-    DICOM --> Finish[Finalize manifest]
-    Tensors --> Finish
-```
-
-The complete volume stays active in one process. This path has no separate
-postprocessing configuration or zero-filling step, so the exported and native
-images refer to the same solver result.
+The 3D pipeline prepares and reconstructs the complete volume in one process,
+then saves tensors and exports a DICOM series. It has no separate
+postprocessing step, so the native and final images are the same solver result.
 
 Output names, flags, and cache lifetime are documented in the
 [output guide](usage/outputs.md).

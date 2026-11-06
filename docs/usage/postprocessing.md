@@ -22,8 +22,10 @@ enabled, then `zero_fill_loaded_reconstruction(image, target_shape,
 encoded_shape)` using the acquisition's matrix sizes. The pipeline provides
 `grics_reference_image_for_normalization(data, image)` and
 `grics_zero_fill_shapes(data.input_loader)` to validate and obtain those
-inputs. See [siemens_breast_T2.py](../../pipelines/siemens_breast_T2.py) for
-the call sequence. The [3D low-resolution
+inputs. The helpers are defined in
+[postprocessing.py](../../pipelines/utils/postprocessing.py); see
+[siemens_breast_T2.py](../../pipelines/siemens_breast_T2.py) for the call sequence.
+The [3D low-resolution
 pipeline](../pipelines.md#3d-low-resolution-pipeline) does not apply these
 image steps.
 
@@ -31,7 +33,7 @@ With a prepared 2D T2 `data` object and the `image, motion` returned by
 `reconstructor.run()`, the image steps are:
 
 ```python
-from pipelines.siemens_breast_T2 import (
+from pipelines.utils.postprocessing import (
     grics_reference_image_for_normalization, grics_zero_fill_shapes,
     normalize_reconstruction_by_grics_reference, zero_fill_loaded_reconstruction,
 )
@@ -48,7 +50,6 @@ if postprocessing.normalize_image_by_grics_reference:
 target_shape, encoded_shape = grics_zero_fill_shapes(data.input_loader)
 image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
 write_reconstruction(data.params, image, motion, native_image=native_image, image_stage="after_postprocessing")
-reconstructor.finish_run()
 ```
 
 ## Save the result
@@ -57,12 +58,10 @@ After any image postprocessing, call `write_reconstruction(params, image,
 motion, native_image=native_image, image_stage="after_postprocessing")` from
 `src.runtime.output_layout` to save final tensors when tensor saving is enabled
 and record their metadata. If no postprocessing was applied, leave
-`image_stage` at its default, `"before_postprocessing"`. Call
-`reconstructor.finish_run()` after the chosen output step to complete timing
-and residual logging. The [output guide](outputs.md) describes the saved files
-and flags.
+`image_stage` at its default, `"before_postprocessing"`. The [output guide](outputs.md)
+describes the saved files and flags.
 
-The Siemens pipelines can also export DICOM using
+The Siemens pipelines always export DICOM using
 `write_reconstruction_dicom(...)`. The writer accepts a 2D image, converts
 complex values to magnitude, and requires source geometry and a slice index;
 see [outputs](outputs.md) and the [2D T2

@@ -490,8 +490,8 @@ class JointReconstructor:
         """Return ``(image, motion)`` from the configured multi-resolution run.
 
         Call ``write_reconstruction`` after any postprocessing to save final tensors.
-        Call ``finish_run()`` at the end of the interval to include in the run log.
-        Solver logs, metadata and final image/motion plots are produced during this run.
+        Solver logs, metadata, residual plots, and final image/motion plots are
+        produced during this run.
 
         The shared image is ``[Nx, Ny, (Nz)]``. Motion is ``[Nalpha, Nm]`` for
         rigid or ``[Nalpha, Nx, Ny, (Nz), Ns]`` for non-rigid reconstruction.
@@ -554,10 +554,6 @@ class JointReconstructor:
 
         image_unscaled = final_image * self.kspace_scale
         logger.finish_reconstruction(image_unscaled, final_motion)
+        logger.run_finished()
         self._run_logger = logger
         return image_unscaled, final_motion
-
-    def finish_run(self):
-        """Log elapsed time and write residual plots after the caller's chosen output step."""
-        self._run_logger.run_finished()
-        del self._run_logger

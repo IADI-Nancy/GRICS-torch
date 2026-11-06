@@ -12,10 +12,10 @@ runs/<workflow_label>/<YYYY-MM-DD_HH-MM-SS-ffffff>/
 ├── results/                   # Final image, motion tensors and previews
 ├── diagnostics/               # Resolution-level and postprocessing plots
 ├── reconstruction.log         # When text logging is enabled
-└── exports/dicom/             # When DICOM export is requested
+└── exports/dicom/             # Always written by the Siemens pipelines
 ```
 
-When a pipeline reconstructs multiple slices in one run, each slice's `preprocessing/`, `results/`, `diagnostics/` and `reconstruction.log` are placed under `slice_001/`, `slice_002/`, and so on at the run root. The manifest, resolved configuration and optional DICOM exports remain at the run root.
+When a pipeline reconstructs multiple slices in one run, each slice's `preprocessing/`, `results/`, `diagnostics/` and `reconstruction.log` are placed under `slice_001/`, `slice_002/`, and so on at the run root. The manifest, resolved configuration and DICOM exports remain at the run root.
 
 In notebooks and direct solver runs, `image_reconstructed.pt` is the complex
 reconstruction before reference-image normalization and zero-filling, preserving
@@ -44,23 +44,18 @@ save_debug_plots = true
 - `save_debug_plots`: save preprocessing, per-level, residual, and final preview/motion figures, independently of logs and tensors.
 
 All three flags can be set through `load_config(overrides={...})` in notebooks
-and scripts. `JointReconstructor.run()` reads these settings directly. The old
-combined `save_reconstruction_outputs` setting has been removed; migrate custom
-configuration files to the common flags above. The pipeline-only `save_outputs`
-argument has likewise been replaced with `save_reconstruction_tensors`.
+and scripts. They control preparation plots, solver logging and plots, and
+final tensor saving.
 
-The Siemens pipelines disable plots and defer tensor exports until computation
-finishes by calling `JointReconstructor.run(defer_tensor_export=True)`. This
-execution option leaves the common saving flags unchanged, so the text log,
-resolved configuration, and metadata agree. The log explicitly identifies
-deferred exports; metadata records `tensor_export` as `deferred` until the
-pipeline takes responsibility for export (`pipeline`), or `disabled` when tensor
-saving is off. Direct solver exports use `solver`. Enabled text logs are still written inside the measured reconstruction
-call. Their `return_tensors` option controls returning tensors in memory, separately
-from saving them to disk. Run/configuration metadata and explicitly requested
-DICOM exports have their own lifecycle. Preprocessing and reconstruction metadata
-are recorded regardless of the log/tensor/plot flags, including when all three
-are disabled. Metadata writes inside reconstruction are included in its timing.
+The Siemens pipelines accept only Siemens raw `.dat` and SAEC inputs.
+They call `JointReconstructor.run()` directly, then save tensors with
+`write_reconstruction(...)`. The 2D pipeline waits for all slice workers
+before exporting final results. Plot, log, and tensor flags are read from the
+configuration; callable pipelines also accept `overrides={...}`.
+The 3D pipeline returns its CPU image, motion, and output paths; the 2D
+pipeline returns an ordered `reconstructions` list with those values per slice.
+Both Siemens pipelines always export DICOMs, independently of tensor saving. Metadata is recorded
+even when logs, tensors, and plots are disabled.
 
 `check_simulated_motion_consistency` controls the simulated-motion numerical check;
 its figure additionally requires `save_debug_plots=true`.

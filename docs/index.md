@@ -2,7 +2,7 @@
 
 ## How to use the software
 
-Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).
+Installation and and get started are described in the [Readme](../Readme.md).
 
 Each reconstruction follows these steps:
 
@@ -15,16 +15,16 @@ Each reconstruction follows these steps:
 ## Usage
 
 - [Configuration](usage/configuration/configuration.md)
+    - [Input formats](usage/configuration/input_formats.md)
+    - [Sampling](usage/configuration/sampling.md)
+    - [Motion](usage/configuration/motion.md)
 - [Using DataPreparer](usage/data_preparer.md)
 - [Using JointReconstructor](usage/joint_reconstructor.md)
 - [Postprocessing and export](usage/postprocessing.md)
-- [Input formats](usage/configuration/input_formats.md)
-- [Sampling](usage/configuration/sampling.md)
-- [Motion](usage/configuration/motion.md)
+
 - [Outputs](usage/outputs.md)
 - [Tests and simulation validation](usage/tests.md)
-
-Check [pipeline architecture](pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
+- [Pipeline architecture](pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
 
 ## Shared conventions
 

@@ -145,7 +145,6 @@ def run_simulation(run_number, device, output_root, console):
                               Path(params.run_folder) / "image_comparison.png")
         write_reconstruction(params, corrected_image, reconstructed_motion)
         write_json(Path(params.run_folder) / "simulation_metrics.json", metrics)
-        reconstructor.finish_run()
     return metrics
 
 
