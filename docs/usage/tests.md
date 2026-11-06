@@ -53,7 +53,7 @@ settings from the normal TOML files; they do not use a reduced solver schedule.
 They override motion samples, execution controls, and the seed
 (`20261101 + run_number`). Reconstruction logs and tensors are enabled, while
 debug plots are disabled. The comparison PNG is always saved separately.
-See [configuration](configuration.md) for configuration ownership and overrides.
+See [configuration](configuration/configuration.md) for configuration ownership and overrides.
 
 ## Progress and verdicts
 

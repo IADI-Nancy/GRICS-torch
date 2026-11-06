@@ -28,6 +28,8 @@ and zero-filling; its native image includes neither operation. DICOM export
 uses the magnitude of the repetition mean with DICOM intensity scaling. Motion
 maps retain the reconstruction grid.
 
+See [postprocessing and export](postprocessing.md) for the calls that produce the final and native images in the 2D T2 pipeline.
+
 Common output flags are defined under `[runtime]` in `config/general.toml` and
 validated by `load_config` for all entry points:
 

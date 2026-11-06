@@ -43,7 +43,7 @@ in the current crop; non-rigid reconstruction can additionally merge states.
 Rigid state IDs connect the compact per-level motion model to retained transforms
 in the original state order. The next level receives image and motion estimates
 with this mapping; temporary operators are released. Initialization and output
-semantics are in the [motion guide](../usage/motion.md#motion-binning-and-reconstruction-states).
+semantics are in the [motion guide](../usage/configuration/motion.md#motion-binning-and-reconstruction-states).
 
 Within a Gauss–Newton iteration, fixed motion defines the encoding operator
 for the image solve. The updated image produces a k-space residual, which the

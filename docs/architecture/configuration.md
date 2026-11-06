@@ -58,4 +58,4 @@ state independently of configuration loading. It returns a `Runtime` that owns
 the resolved SigPy and PyTorch devices and is passed to `DataPreparer`.
 
 File choices and usage examples are in the
-[configuration guide](../usage/configuration.md).
+[configuration guide](../usage/configuration/configuration.md).

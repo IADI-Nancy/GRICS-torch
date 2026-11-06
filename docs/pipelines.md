@@ -66,12 +66,13 @@ and simulated `data.image_ground_truth` therefore use the same units. Working
 k-space and `data.input_ifft_image` remain in preprocessing units.
 
 For 2D real data, select the target with `prepare_reconstructor_inputs(slice_idx=...)`
-after loading; do not pass a slice index to the constructor. For an acquisition
-containing several slices, prepare a separate copy of the loaded preparer and
-its parameters for each slice. See the demos for complete
-configuration and runtime setup, and the [output guide](usage/outputs.md) for
-saving results. Call `finish_run()` after the chosen output step to complete
-the solver's timing log and residual plots.
+after loading. For an acquisition containing several slices, prepare a separate
+copy of the loaded preparer and its parameters for each slice. See
+[using DataPreparer](usage/data_preparer.md) for the full preparation sequence,
+[using JointReconstructor](usage/joint_reconstructor.md) for the solver calls,
+the demos for complete configuration and runtime setup, and the
+[output guide](usage/outputs.md) for saving results. Call `finish_run()` after
+the chosen output step to complete the solver's timing log and residual plots.
 
 ## Preimplemented pipelines
 

@@ -56,4 +56,4 @@ Constructors configure the input source without selecting a slice.
 multi-slice pipelines reuse the acquisition without reading source files again.
 
 Input formats and stored array shapes are in the
-[input data guide](../usage/input_formats.md).
+[input data guide](../usage/configuration/input_formats.md).

@@ -1,28 +1,28 @@
 # Documentation
 
-This documentation provides details regarding the core algorithm, implementation details, software usage, conventions and architecture.
+## How to use the software
 
-## Every reconstruction
+Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).
 
 Each reconstruction follows these steps:
 
-1. Select the input `data_type`, reconstruction TOML, and any required sampling or motion TOMLs with [`load_config(...)`](usage/configuration.md). The [input data types](usage/input_formats.md), [sampling](usage/sampling.md), and [motion](usage/motion.md) guides define the valid combinations.
-2. Call `runtime = initialize_runtime(params)` to select compute devices and create the run state. The [pipeline workflow](pipelines.md#basic-pipeline) shows where runtime initialization belongs.
-3. Create `DataPreparer(params=params, runtime=runtime, filename=...)` with the validated parameters, initialized runtime, and input filename (omit the filename for Shepp–Logan data). It converts the selected source into the acquisition interface described by [input data loading](architecture/input_data_loading.md).
-4. Call `data.load_input_data()` once, then `data.prepare_reconstructor_inputs(slice_idx=...)` to select and prepare a 2D real-data slice, or omit `slice_idx` for a full 3D volume or synthetic data. Preparation estimates coil maps, applies or imports motion, and builds the sampling layout; see [data preparation](architecture/data_preparation.md).
-5. Create `JointReconstructor.from_prepared_data(data)` and call `run()` to perform the configured image and motion reconstruction. The [standard reconstruction workflow](pipelines.md#standard-reconstruction) provides the complete call sequence, and [reconstruction architecture](architecture/reconstruction.md) explains the solver.
-6. Write the resulting image and motion model, then call `finish_run()` after the chosen output step. See [outputs](usage/outputs.md) for the run layout and saved files.
+1. Configuration. This step loads the config files and selects the input data type. The corresponding command is [`load_config(...)`](usage/configuration/configuration.md).
+2. Runime setup. This step  is needed to select compute devices and create the run state. Call `runtime = initialize_runtime(params)`.
+3. Data preparation. On this step, managed with [DataPreparer class](usage/data_preparer.md), the data is created or loaded from a specified file, and processed in order to extract all necessary variables needed for the joint reconstruction. Those include the binned k-space and motion data, coil sensitivity maps. If the synthetic input data was selected, DataPreparer also handles the sampling and motion simulation.
+5. Joint reconstruction. [JointReconstructor](usage/joint_reconstructor.md) is the class running the GRICS reconstruction itself. It returns motion-corrected image or volume and estimated motion model. It automatically generates some outputs. See [outputs](usage/outputs.md) for the run layout and saved files.
+6. Optional post-processing or dicomization (see [post-processing](usage/postprocessing.md)).
 
 ## Usage
 
-- [Configuration](usage/configuration.md)
-- [Input formats](usage/input_formats.md)
-- [Sampling](usage/sampling.md)
-- [Motion](usage/motion.md)
+- [Configuration](usage/configuration/configuration.md)
+- [Using DataPreparer](usage/data_preparer.md)
+- [Using JointReconstructor](usage/joint_reconstructor.md)
+- [Postprocessing and export](usage/postprocessing.md)
+- [Input formats](usage/configuration/input_formats.md)
+- [Sampling](usage/configuration/sampling.md)
+- [Motion](usage/configuration/motion.md)
 - [Outputs](usage/outputs.md)
 - [Tests and simulation validation](usage/tests.md)
-
-Installation and the shortest path to a first reconstruction remain in the [Readme](../Readme.md).
 
 Check [pipeline architecture](pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
 

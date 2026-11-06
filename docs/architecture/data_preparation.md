@@ -1,7 +1,6 @@
 # Data preparation architecture
 
-`DataPreparer` coordinates reconstruction preparation for one loaded slice or
-volume. Source loading belongs to [InputDataLoader](input_data_loading.md).
+`DataPreparer` coordinates reconstruction preparation for one loaded slice or volume. Source loading belongs to [InputDataLoader](input_data_loading.md). 
 
 ## Data flow
 
@@ -62,6 +61,6 @@ binning additionally requires prepared k-space.
 The resulting tensors and sampling layout are consumed by
 [joint reconstruction](reconstruction.md).
 
-`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [configuration guide](../usage/configuration.md) for its preparation and use.
+`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [configuration guide](../usage/configuration/configuration.md) for its preparation and use.
 
 `JointReconstructor.from_prepared_data(data)` maps the prepared `DataPreparer` to the solver's explicit tensor constructor without copying tensors. See the [standard reconstruction workflow](../pipelines.md#standard-reconstruction).

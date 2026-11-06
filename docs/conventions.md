@@ -2,7 +2,7 @@
 
 These conventions form the shared contract between data loading, preparation,
 and reconstruction. File-level input formats are described in the
-[input data guide](usage/input_formats.md).
+[input data guide](usage/configuration/input_formats.md).
 
 ## Symbols
 
