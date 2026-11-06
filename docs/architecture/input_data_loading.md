@@ -49,8 +49,9 @@ describe the active slice or volume. Selecting a 2D slice retains a singleton
 spatial `z` axis and flattens motion and indices into chronological readouts;
 3D keeps the full volume.
 
-`DataPreparer.load_input_data()` loads once, and
-`prepare_reconstructor_inputs(...)` requests slice selection before
+Constructors configure the input source without selecting a slice.
+`DataPreparer.load_input_data()` loads the complete acquisition once, and
+`prepare_reconstructor_inputs(slice_idx=...)` requests 2D slice selection before
 [reconstruction preparation](data_preparation.md). This separation lets
 multi-slice pipelines reuse the acquisition without reading source files again.
 

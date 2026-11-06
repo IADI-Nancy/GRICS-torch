@@ -129,11 +129,10 @@ def load_all_slices(raw_data_file: Path, saec_file: Path | None = None, *, outpu
     postprocessing = load_postprocessing_config(REPO_ROOT / postprocessing_config)
     if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
         raise ValueError("Reference-image normalization requires coil_sensitivity_method='odille-spline'.")
-    sp_device, t_device = initialize_runtime(params)
+    runtime = initialize_runtime(params)
     data = DataPreparer(
         params=params,
-        t_device=t_device,
-        sp_device=sp_device,
+        runtime=runtime,
         filename=(str(raw_data_file), str(saec_file)) if raw_input else str(raw_data_file),
     )
     data.postprocessing = postprocessing

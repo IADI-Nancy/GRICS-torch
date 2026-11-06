@@ -83,9 +83,9 @@ def run_simulation(run_number, device, output_root, console):
     with execution_scope():
         params = build_config(run_number, device, output_root, sampled_parameters)
 
-        sp_device, t_device = initialize_runtime(params)
+        runtime = initialize_runtime(params)
 
-        data = DataPreparer(params=params, t_device=t_device, sp_device=sp_device)
+        data = DataPreparer(params=params, runtime=runtime)
         data.load_input_data()
 
         data.prepare_reconstructor_inputs()
@@ -112,7 +112,7 @@ def run_simulation(run_number, device, output_root, console):
         corrected_metrics = image_metrics(data.image_ground_truth, corrected_image)
         metrics = {
             "validation_settings": validation_settings(params),
-            "case": "nonrigid_2d", "run": run_number, "seed": seed, "device": str(t_device),
+            "case": "nonrigid_2d", "run": run_number, "seed": seed, "device": str(runtime.t_device),
             "motion_type": "non-rigid-per-readout", "sampled_parameters": sampled_parameters,
             "image_residual_final_level": summarize_residuals(logger["recon_residuals_by_level"][-1]),
             "motion_residual_final_level": summarize_residuals(logger["motion_residuals_by_level"][-1]),

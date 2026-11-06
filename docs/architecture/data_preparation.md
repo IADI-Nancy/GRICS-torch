@@ -28,7 +28,9 @@ directly to one another. The dotted edge is internal delegation from
 ## Preparation state
 
 Loading and preparation are separate phases. `load_input_data()` must precede
-`prepare_reconstructor_inputs(...)`, which can succeed only once per preparer.
+`prepare_reconstructor_inputs(...)`, which selects the reconstruction target
+and can succeed only once per preparer. Slice selection belongs to this phase;
+constructors only configure the input source.
 Multi-slice pipelines copy the loaded preparer and its parameters for each
 slice; preparation copies the loader before selecting that slice.
 

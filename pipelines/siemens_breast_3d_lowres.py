@@ -84,14 +84,14 @@ def load_volume(raw_data_file: Path, saec_file: Path | None = None, *,
             output_root, device, overrides, save_reconstruction_logs=save_reconstruction_logs,
             save_reconstruction_tensors=save_reconstruction_tensors),
     )
-    sp_device, t_device = initialize_runtime(params)
+    runtime = initialize_runtime(params)
     params._run_outputs.manifest["inputs"] = {
         "raw_data_file": str(raw_data_file.resolve()),
         "saec_file": str(saec_file.resolve()) if saec_file is not None else None,
     }
     params._run_outputs.flush()
     data = DataPreparer(
-        params=params, t_device=t_device, sp_device=sp_device,
+        params=params, runtime=runtime,
         filename=(str(raw_data_file), str(saec_file)) if raw_input else str(raw_data_file),
     )
     data.load_input_data()

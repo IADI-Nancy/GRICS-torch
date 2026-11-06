@@ -36,18 +36,27 @@ See [configuration](architecture/configuration.md),
 
 ## Standard reconstruction
 
-After creating `data = DataPreparer(...)` with the configured parameters and
-runtime devices, load the acquisition and prepare the selected slice or volume:
+After loading the configured parameters, initialize the runtime, load the
+acquisition, and prepare the selected slice or volume:
 
 ```python
 from src.reconstruction.JointReconstructor import JointReconstructor
+from src.preprocessing.DataPreparer import DataPreparer
+from src.runtime.runtime_setup import initialize_runtime
 
+runtime = initialize_runtime(params)
+data = DataPreparer(params=params, runtime=runtime, filename=input_file)
 data.load_input_data()
 data.prepare_reconstructor_inputs()
 reconstructor = JointReconstructor.from_prepared_data(data)
 image, motion_model = reconstructor.run()
 reconstructor.finish_run()
 ```
+
+Omit `filename` for Shepp–Logan data. The returned `Runtime` contains
+`sp_device` for SigPy and `t_device` for PyTorch; `DataPreparer` passes each
+device to the components that need it. The two backends can use different
+devices, and runtime setup announces any CPU fallback.
 
 `from_prepared_data(data)` supplies the prepared tensors, configuration,
 plotting context, calibration image when enabled, and encoded voxel spacing.
@@ -56,9 +65,10 @@ the acquisition intensity scale. The returned image, `data.image_no_moco`,
 and simulated `data.image_ground_truth` therefore use the same units. Working
 k-space and `data.input_ifft_image` remain in preprocessing units.
 
-For a 2D acquisition containing several slices, pass `slice_idx` to
-`prepare_reconstructor_inputs(slice_idx=...)` on a separate copy of the loaded
-preparer and its parameters for each slice. See the demos for complete
+For 2D real data, select the target with `prepare_reconstructor_inputs(slice_idx=...)`
+after loading; do not pass a slice index to the constructor. For an acquisition
+containing several slices, prepare a separate copy of the loaded preparer and
+its parameters for each slice. See the demos for complete
 configuration and runtime setup, and the [output guide](usage/outputs.md) for
 saving results. Call `finish_run()` after the chosen output step to complete
 the solver's timing log and residual plots.

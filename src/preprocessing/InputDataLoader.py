@@ -27,7 +27,7 @@ class InputDataLoader:
     decoding and physiological synchronization are delegated to dedicated classes.
     """
 
-    def __init__(self, params, t_device=None, filename=None, slice_idx=None):
+    def __init__(self, params, t_device=None, filename=None):
         self.params = params
         self.raw_data_cache = RawDataCache(
             params.cache_root, remove_on_release=params.remove_temporary_data_after_run)
@@ -40,7 +40,7 @@ class InputDataLoader:
         self.realworld_h5_path = None
         self.rawdata_filenames = None
         self.siemens_filenames = None
-        self.slice_idx = slice_idx
+        self.slice_idx = None
         self.motion_data = None
         self.reference_kspace = None
         self.ky_idx = None
@@ -68,33 +68,12 @@ class InputDataLoader:
         if self.params.data_type != "shepp-logan" and self.filename is None:
             raise ValueError("filename is required when data_type is not 'shepp-logan'.")
 
-        is_3d = self.params.data_dimension == "3D"
-        supports_slice_idx = self.params.data_type in REAL_DATA_TYPES
-
-        if self.slice_idx is not None:
-            self.slice_idx = int(self.slice_idx)
-
         if self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("ismrmrd-"):
             self.rawdata_filenames = self._resolve_rawdata_filenames()
         elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("siemens-"):
             self.siemens_filenames = self._resolve_siemens_filenames()
         if self.params.data_type.endswith("-saec") and not self.params.rawdata_sensor_type:
             raise ValueError(f"rawdata_sensor_type must be set for data_type={self.params.data_type!r}.")
-
-        if self.slice_idx is not None and not supports_slice_idx:
-            raise ValueError(
-                "slice_idx is only supported for 2D preprocessed-real or raw MRI/physiology inputs. "
-                f"Do not provide slice_idx when data_type='{self.params.data_type}'."
-            )
-
-        if self.slice_idx is not None and self.slice_idx < 0:
-            raise ValueError("slice_idx must be >= 0.")
-
-        if is_3d and self.slice_idx is not None:
-            raise ValueError(
-                "slice_idx is only supported for 2D preprocessed-real or raw MRI/physiology inputs. "
-                "Do not provide slice_idx when data_dimension='3D'."
-            )
 
     def load_input_data(self):
         if self._input_data_loaded:
@@ -129,16 +108,16 @@ class InputDataLoader:
                 Nz=self.params.Nz_SheppLogan, random_phase=True,
             ))
         elif self.params.data_type == 'preprocessed-real':
-            self._load_realworld_data(self.filename, slice_idx=self.slice_idx)
+            self._load_realworld_data(self.filename)
         elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("ismrmrd-"):
             path_to_ismrm, path_to_physiology = self.rawdata_filenames
             self.source_ismrmrd_file = path_to_ismrm
-            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology, slice_idx=self.slice_idx)
+            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology)
         elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("siemens-"):
             path_to_siemens, path_to_physiology = self.siemens_filenames
             path_to_ismrm = self._convert_siemens_to_ismrmrd(path_to_siemens)
             self.source_ismrmrd_file = path_to_ismrm
-            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology, slice_idx=self.slice_idx)
+            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology)
         elif self.params.data_type == 'from_image':
             generator = SyntheticDataGenerator(self.params, self.t_device)
             self._use_synthetic_data(generator.load_image(self.filename))
@@ -206,7 +185,7 @@ class InputDataLoader:
     def _convert_siemens_to_ismrmrd(self, path_to_siemens):
         return convert_siemens_to_ismrmrd(path_to_siemens, self.raw_data_cache)
 
-    def _initialize_realworld_data(self, data, slice_idx=None):
+    def _initialize_realworld_data(self, data):
         is_3d = self.params.data_dimension == "3D"
 
         self._input_kspace = torch.from_numpy(data['kspace']).to(self.t_device, dtype=torch.cdouble)
@@ -229,8 +208,6 @@ class InputDataLoader:
 
         if is_3d:
             self._prepare_3d_sampling_and_motion_inputs()
-        elif slice_idx is not None:
-            self._select_and_prepare_2d_slice(slice_idx)
 
     def _validate_and_set_kspace_dimensions(self):
         if self.kspace.ndim != 5 or any(size < 1 for size in self.kspace.shape):
@@ -273,6 +250,11 @@ class InputDataLoader:
         # Validate the acquisition, slice index, and recorded motion array shape.
         if self.params.data_dimension == "3D":
             raise ValueError("slice_idx must not be provided when data_dimension='3D'.")
+        if self.params.data_type not in REAL_DATA_TYPES:
+            raise ValueError(
+                "slice_idx is only supported for 2D preprocessed-real or raw MRI/physiology inputs. "
+                f"Do not provide slice_idx when data_type='{self.params.data_type}'."
+            )
         if self._input_kspace is None:
             raise RuntimeError("No loaded input k-space is available for slice selection.")
 
@@ -316,7 +298,7 @@ class InputDataLoader:
         self.nex_idx = self._input_idx_nex[slice_idx]
         self._configure_realworld_motion_inputs(motion_data, kz_all=None)
 
-    def _load_realworld_data_from_ismrm_and_physiology(self, path_to_ismrm, path_to_physiology, slice_idx=None):
+    def _load_realworld_data_from_ismrm_and_physiology(self, path_to_ismrm, path_to_physiology):
         # Resampled workflows need decoded MRI data but do not use recorded physiology.
         if self.params.kspace_sampling_type != "from-data":
             reader = ISMRMRDReader(path_to_ismrm, device="cpu")
@@ -326,7 +308,7 @@ class InputDataLoader:
                     "ismrmrd_header": raw_data.get("ismrmrd_header")}
             if raw_data["reference_kspace"] is not None:
                 data["reference_kspace"] = raw_data["reference_kspace"].cpu().numpy()
-            self._initialize_realworld_data(data, slice_idx=slice_idx)
+            self._initialize_realworld_data(data)
             return
         # From-data workflows synchronize the selected physiological source to MRI readouts.
         physiological_reader = self._create_physiological_reader()
@@ -340,7 +322,7 @@ class InputDataLoader:
         data = preparer.read_data(cache=cache)
         # Convert the complete prepared acquisition into the loader's tensor representation.
         self.realworld_h5_path = data.get("realworld_h5_path")
-        self._initialize_realworld_data(data, slice_idx=slice_idx)
+        self._initialize_realworld_data(data)
 
     def _create_physiological_reader(self):
         """Construct the physiological reader selected by the runtime configuration."""
@@ -357,8 +339,8 @@ class InputDataLoader:
             return PreprocessedPhysioReader(physiological_format)
         raise ValueError(f"Unsupported physiological format: {physiological_format!r}.")
 
-    def _load_realworld_data(self, path_to_data, slice_idx=None):
+    def _load_realworld_data(self, path_to_data):
         data = read_preprocessed_data(
             path_to_data, from_data=self.params.kspace_sampling_type == "from-data",
         )
-        self._initialize_realworld_data(data, slice_idx=slice_idx)
+        self._initialize_realworld_data(data)

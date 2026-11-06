@@ -35,9 +35,8 @@ class DataPreparer:
     Working k-space and input_ifft_image remain in preprocessing units.
     """
 
-    def __init__(self, params, sp_device=None, t_device=None,
-                 filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None,
-                 slice_idx=None):
+    def __init__(self, params, runtime,
+                 filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None):
         """
         Configure input loading and reconstruction preparation.
 
@@ -45,19 +44,16 @@ class DataPreparer:
 
         Args:
             params: Runtime/config parameters.
-            sp_device: SigPy device.
-            t_device: Torch device.
+            runtime: Initialized runtime containing SigPy and Torch devices.
             filename: Input path, or a pair (MRI file, physiological file) for raw data.
                 Dictionaries use ismrmrd_file or siemens_raw_file, plus saec_file,
                 polaris_file, or physio_file. Generic array input uses three paths:
                 (MRI file, timestamps .npy, values .npy), or dictionary keys
                 physio_timestamps_file and physio_values_file alongside the MRI key.
-            slice_idx: Slice/partition to load for 2D real-data inputs.
         """
-        self.input_loader = InputDataLoader(params, t_device=t_device, filename=filename, slice_idx=slice_idx)
+        self.input_loader = InputDataLoader(params, t_device=runtime.t_device, filename=filename)
         self.params = params
-        self.sp_device = sp_device
-        self.t_device = t_device
+        self.runtime = runtime
         self.filename = filename
         self.slice_idx = self.input_loader.slice_idx
         self.motion_plot_context = None
@@ -99,7 +95,7 @@ class DataPreparer:
             self.phantom_generated = loader.phantom_generated
 
     def prepare_reconstructor_inputs(self, slice_idx=None):
-        """Prepare reconstructor inputs for one selected slice or volume."""
+        """Select a 2D real-data slice, or use the full volume, and prepare reconstructor inputs."""
 
         ensure_input_loaded_and_reconstruction_not_prepared(self.input_loader, self._reconstruction_data_prepared)
         slice_idx = select_input_slice_if_needed(self.input_loader, self.params, slice_idx)
@@ -155,7 +151,7 @@ class DataPreparer:
             f"(method={method})",
             flush=True,
         )
-        calculator = CoilSensitivityCalculator(self.params, sp_device=self.sp_device)
+        calculator = CoilSensitivityCalculator(self.params, sp_device=self.runtime.sp_device)
         self.smaps = calculator.calculate(
             self.kspace, reference_kspace=self.reference_kspace,
         )
@@ -172,7 +168,7 @@ class DataPreparer:
         input_ifft_image = torch.sum(coil_ifft_images * self.smaps.conj(), dim=0)
         if self.params.data_dimension == "2D":
             input_ifft_image = input_ifft_image.squeeze(-1)
-        self.input_ifft_image = input_ifft_image.to(self.t_device)
+        self.input_ifft_image = input_ifft_image.to(self.runtime.t_device)
         del coil_ifft_images
 
     def _prepare_motion_simulator_inputs(self, motion_sim_device):
@@ -205,7 +201,7 @@ class DataPreparer:
             f"(type={self.params.simulated_motion_type}, device={motion_sim_device})...", flush=True)
         motion_simulator = MotionSimulator(input_ifft_image, smaps, ky_idx, nex_idx, ky_per_motion_state,
             kz_idx=kz_idx, kz_per_motion_state=kz_per_motion_state, params=self.params,
-            sp_device=self.sp_device, t_device=motion_sim_device)
+            sp_device=self.runtime.sp_device, t_device=motion_sim_device)
 
         simulation_methods = {
             "rigid-per-shot": motion_simulator.simulate_discrete_rigid_motion,
@@ -221,7 +217,7 @@ class DataPreparer:
         return isinstance(error, torch.cuda.OutOfMemoryError) or "cuda out of memory" in str(error).lower()
 
     def _simulate_motion_with_cpu_fallback(self):
-        motion_sim_device = torch.device(self.t_device)
+        motion_sim_device = torch.device(self.runtime.t_device)
         retry_on_cpu = False
         try:
             motion_simulator = self._simulate_motion_on_device(motion_sim_device)
@@ -251,10 +247,10 @@ class DataPreparer:
         self.image_ground_truth = self.input_ifft_image * self.kspace_scale
         motionSimulator = self._simulate_motion_with_cpu_fallback()
 
-        self.kspace = motionSimulator.get_corrupted_kspace().to(self.t_device)
-        self.image_no_moco = motionSimulator.get_corrupted_image().to(self.t_device) * self.kspace_scale
+        self.kspace = motionSimulator.get_corrupted_kspace().to(self.runtime.t_device)
+        self.image_no_moco = motionSimulator.get_corrupted_image().to(self.runtime.t_device) * self.kspace_scale
         if hasattr(motionSimulator, "alpha_maps"):
-            self.alpha_maps_ground_truth = motionSimulator.alpha_maps.to(self.t_device)
+            self.alpha_maps_ground_truth = motionSimulator.alpha_maps.to(self.runtime.t_device)
 
         if self.params.simulated_motion_type.startswith("rigid-"):
             if self.Nz > 1:
@@ -315,7 +311,7 @@ class DataPreparer:
     def _build_binned_sampling_indices(self):
         prepared = MotionSamplingPreparer.prepare(
             self._motion_curve_for_binning, self.ky_idx, self.kz_idx, self.nex_idx,
-            self.t_device, self.params, self.Nx, self.Ny, Nz=self.Nz,
+            self.runtime.t_device, self.params, self.Nx, self.Ny, Nz=self.Nz,
             kspace=self.kspace, y_limits=self._motion_plot_y_limits,
             plot_kwargs=self._motion_plot_kwargs,
         )

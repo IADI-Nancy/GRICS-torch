@@ -54,7 +54,8 @@ Caller-supplied paths resolve relative to the working directory unless absolute.
 
 `load_postprocessing_config(...)` validates a separate namespace owned by the
 pipeline. `initialize_runtime(params)` then handles device selection and run
-state independently of configuration loading.
+state independently of configuration loading. It returns a `Runtime` that owns
+the resolved SigPy and PyTorch devices and is passed to `DataPreparer`.
 
 File choices and usage examples are in the
 [configuration guide](../usage/configuration.md).
