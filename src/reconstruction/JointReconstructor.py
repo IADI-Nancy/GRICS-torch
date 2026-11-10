@@ -194,13 +194,14 @@ class JointReconstructor:
             reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                   if self.params.cg_use_reg_scale_proxy else None),
         )
-        # Reuse the level's scale so regularization stays consistent across solves.
-        _assign_cached_reg_scale(self.params, Data_res, "image", solver, b.flatten())
         if self.regularization_scaling == "voxel_aware":
             level_pixels = Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
             full_pixels = self.Data_full["Nx"] * self.Data_full["Ny"] * self.Data_full["Nz"]
             solver.reg_scale = ((level_pixels / full_pixels) ** 0.5
                                 * self.kspace_scale * torch.linalg.vector_norm(b.flatten()).item())
+        else:
+            # Reuse the direct-mode probe scale across solves at this level.
+            _assign_cached_reg_scale(self.params, Data_res, "image", solver, b.flatten())
 
         # A supplied prior implements lambda * ||x - prior||_2^2.
         if image_prior is not None:
@@ -293,10 +294,11 @@ class JointReconstructor:
             # the current field's penalty to the RHS. G is a spatial gradient.
             # _A(dm) = J^H J dm + mu * GhG(dm)
             # b     = J^H r    - mu * GhG(alpha_current)
-            _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
             if self.regularization_scaling == "voxel_aware":
                 solver.reg_scale = (sqrt_voxel_count_ratio * min(spacing) ** 4
                                     * torch.linalg.vector_norm(b_data.flatten()).item())
+            else:
+                _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
             if self.params.motion_preconditioner and torch.count_nonzero(b).item():
                 solver.preconditioner = self._build_pseudo_gauss_seidel_motion_preconditioner(J, solver, Data_res)
@@ -313,11 +315,12 @@ class JointReconstructor:
                 reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
                                   if self.params.cg_use_reg_scale_proxy else None),
             )
-            _assign_cached_reg_scale(self.params, Data_res, "motion_rigid", solver, b_data.flatten())
             if self.regularization_scaling == "voxel_aware":
                 spacing, sqrt_voxel_count_ratio = self._level_voxel_spacing_and_sqrt_voxel_count_ratio(Data_res)
                 solver.reg_scale = (sqrt_voxel_count_ratio * min(spacing) ** 4
                                     * torch.linalg.vector_norm(b_data.flatten()).item())
+            else:
+                _assign_cached_reg_scale(self.params, Data_res, "motion_rigid", solver, b_data.flatten())
             mot_pert_vec = solver.cg(
                 b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations,
                 tol=self.params.tol_motion)
@@ -480,6 +483,9 @@ class JointReconstructor:
 
                 logger.iteration_finished(
                     result, relative_residual, self._last_image_cg_info, self._last_motion_cg_info)
+                # Rollback uses the saved estimates and scalar residual above;
+                # release iteration-only tensors before starting the next solve.
+                del result
 
         return best_image, best_motion
 
