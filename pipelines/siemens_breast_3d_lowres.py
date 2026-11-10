@@ -59,8 +59,6 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT, device=RU
                    "verbose": False, "print_to_console": False, **(overrides or {})},
     )
     postprocessing = load_postprocessing_config(REPO_ROOT / postprocessing_config)
-    if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
-        raise ValueError("Reference-image normalization requires coil_sensitivity_method='odille-spline'.")
     runtime = initialize_runtime(params)
     data = DataPreparer(params=params, runtime=runtime, filename=(str(raw_data_file), str(saec_file)))
     data.load_input_data()

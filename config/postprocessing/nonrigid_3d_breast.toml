@@ -1,4 +1,4 @@
 [postprocessing]
 # Divide the reconstructed volume by the smoothed GRICS reference-image magnitude; true enables and false disables it.
-# Requires coil_sensitivity_method = "odille-spline" in the reconstruction config when enabled.
+# The calibration reference is prepared independently of the selected coil-map method.
 normalize_image_by_grics_reference = false

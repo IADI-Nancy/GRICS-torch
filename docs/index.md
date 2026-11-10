@@ -1,5 +1,8 @@
 # Documentation
 
+## What is GRICS-torch?
+This is a PyTorch implementation of the [GRICS algorithm](algorithm.md) for motion-corrected MRI reconstruction. This algorithm jointly estimates the image and the motion model, using physiological data surrogate and a bunch of assumtions. Please read the corresponding doc for the detailed description of the [algorithm](algorithm.md).
+
 ## How to use the software
 
 Installation and and get started are described in the [Readme](../Readme.md).
@@ -12,7 +15,7 @@ Each reconstruction follows these steps:
 5. Joint reconstruction. [JointReconstructor](usage/joint_reconstructor.md) is the class running the GRICS reconstruction itself. It returns motion-corrected image or volume and estimated motion model. It automatically generates some outputs. See [outputs](usage/outputs.md) for the run layout and saved files.
 6. Optional post-processing or dicomization (see [post-processing](usage/postprocessing.md)).
 
-## Usage
+See also:
 
 - [Configuration](usage/configuration/configuration.md)
     - [Input formats](usage/configuration/input_formats.md)
@@ -24,20 +27,20 @@ Each reconstruction follows these steps:
 
 - [Outputs](usage/outputs.md)
 - [Tests and simulation validation](usage/tests.md)
-- [Pipeline architecture](pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
 
-## Shared conventions
+## How the software is organized
 
-- [Data and coordinate conventions](conventions.md) defines tensor layouts, sampling-index order, motion components, and units.
-
-## Architecture
+The software provides a high-level interface for users who prefer not to work directly with the code, while keeping its components modular and maintainable. All components follow the shared [data and coordinate conventions](conventions.md). The following documents describe component responsibilities and data flow:
 
 - [Configuration](architecture/configuration.md)
 - [Input data loading](architecture/input_data_loading.md)
 - [Data preparation](architecture/data_preparation.md)
 - [Reconstruction](architecture/reconstruction.md)
+- [Pipelines](architecture/pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
 
 ## Implementation details
+
+The following documents describe the main implementation details:
 
 - [JointReconstructor: updates and regularization normalization](implementation/joint_reconstructor.md)
 - [ConjugateGradientSolver: regularization, convergence, and stagnation](implementation/conjugate_gradient_solver.md)

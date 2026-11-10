@@ -152,7 +152,7 @@ def run_simulation(run_number, device, output_root, console):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=20, help="Number of simulations (default: 20)")
-    parser.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
+    parser.add_argument("--device", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--output-root", type=Path, default=ROOT / "runs")
     args = parser.parse_args()
     if args.runs < 1:

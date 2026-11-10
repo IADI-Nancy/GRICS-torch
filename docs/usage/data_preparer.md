@@ -35,4 +35,4 @@ for slice_idx in selected_slice_indices:
 
 Set `_output_unit_count` before copying the parameters so preparation gives each slice its own output folder when reconstructing more than one slice. This prevents later slices from overwriting earlier results.
 
-Use a different `DataPreparer` copy for each slice. Do not call `prepare_reconstructor_inputs(...)` more than once on the same copy. The [2D T2 pipeline](../pipelines.md#2d-t2-pipeline) provides a complete multi-slice implementation with CPU parallelization.
+Use a different `DataPreparer` copy for each slice. Do not call `prepare_reconstructor_inputs(...)` more than once on the same copy. The [2D T2 pipeline](../architecture/pipelines.md#2d-t2-pipeline) provides a complete multi-slice implementation with CPU parallelization.

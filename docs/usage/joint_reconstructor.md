@@ -1,7 +1,6 @@
 # Using JointReconstructor
 
-`JointReconstructor` takes prepared acquisition data and runs joint image and
-motion reconstruction. The usual call sequence is:
+`JointReconstructor` takes prepared acquisition data and runs joint image and motion reconstruction. The usual call sequence is:
 
 ```python
 from src.reconstruction.JointReconstructor import JointReconstructor
@@ -10,16 +9,13 @@ reconstructor = JointReconstructor.from_prepared_data(data)
 image, motion = reconstructor.run()
 ```
 
-Here `data` is a `DataPreparer` after `load_input_data()` and
-`prepare_reconstructor_inputs(...)`; see [using
-DataPreparer](data_preparer.md).
+Here `data` is a `DataPreparer` after `load_input_data()` and `prepare_reconstructor_inputs(...)`; see [using DataPreparer](data_preparer.md).
 
 ## Construct the solver
 
 `JointReconstructor.from_prepared_data(data)` is the constructor for normal workflows. It passes the prepared k-space, coil sensitivity maps, sampling indices, motion signal, configuration, and optional calibration information to the solver. It also uses the preparer's intensity scale so the returned image has acquisition units. Calling it before preparation raises an error.
 
-The direct constructor, `JointReconstructor(KspaceData, smaps, SamplingIndices, motion_signal, params, ...)`, is available when those inputs have been assembled without `DataPreparer`. `params` must be the validated configuration object. Direct callers supply an intensity scale when they need acquisition-unit output and encoded voxel spacing when voxel-aware
-regularization is enabled. When calibration weighting is enabled and no calibration image is supplied, the constructor computes one from imaging k-space. The [constructor signature](../../src/reconstruction/JointReconstructor.py) defines the optional arguments.
+The direct constructor, `JointReconstructor(KspaceData, smaps, SamplingIndices, motion_signal, params, ...)`, is available when those inputs have been assembled without `DataPreparer`. `params` must be the validated configuration object. Direct callers supply an intensity scale when they need acquisition-unit output and encoded voxel spacing when voxel-aware regularization is enabled. When calibration weighting is enabled and no calibration image is supplied, the constructor computes one from imaging k-space. The [constructor signature](../../src/reconstruction/JointReconstructor.py) defines the optional arguments.
 
 ## Run the reconstruction
 

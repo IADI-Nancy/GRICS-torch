@@ -1,7 +1,6 @@
 # Input formats
 
-The `data_type` selected in `load_config(...)` controls how input data is built or loaded.
-For 2D real data, `slice_idx` selects the slice/partition to reconstruct. Pass it only to `prepare_reconstructor_inputs(slice_idx=...)`, after `load_input_data()`; constructors configure the source without selecting a slice. It may be omitted only when the source contains exactly one slice; multi-slice sources require an explicit value before preparation. For synthetic data and all 3D data, do not provide `slice_idx`; input preparation raises an error if it is set.
+The `data_type` selected in `load_config(...)` controls how input data is built or loaded. For 2D real data, `slice_idx` selects the slice/partition to reconstruct. Pass it only to `prepare_reconstructor_inputs(slice_idx=...)`, after `load_input_data()`; constructors configure the source without selecting a slice. It may be omitted only when the source contains exactly one slice; multi-slice sources require an explicit value before preparation. For synthetic data and all 3D data, do not provide `slice_idx`; input preparation raises an error if it is set.
 
 ## Synthetic data types
 ### `shepp-logan`
@@ -15,8 +14,7 @@ In addition to `reconstruction_config`, pass:
 
 ### `from_image`
 
-Loaded from a 2D image file and converted to synthetic multi-coil k-space using generated coil maps.
-Supported inputs include common image formats (e.g. PNG/JPEG/TIFF) and NumPy arrays (`.npy`, `.npz`).
+Loaded from a 2D image file and converted to synthetic multi-coil k-space using generated coil maps. Supported inputs include common image formats (e.g. PNG/JPEG/TIFF) and NumPy arrays (`.npy`, `.npz`).
 
 `load_config(...)` automatically loads `config/synthetic_data/from_image.toml`.
 
