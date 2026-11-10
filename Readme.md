@@ -45,16 +45,6 @@ After `./docker.sh run`, open the VS Code Command Palette and select **Dev Conta
 
 For a comfortable VS Code setup, install [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) on the host. The configuration printed by `docker.sh` installs [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python), [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance), [Jupyter](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter), Jupyter Keymap, and Jupyter Notebook Renderers in the container. Install [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml) in the attached container for editing configuration files.
 
-## Repository layout
-
-- `src/preprocessing/`: data loading, sampling simulation, motion simulation, motion binning
-- `src/reconstruction/`: joint reconstructor, encoding/motion operators, CG solver, etc.
-- `src/runtime/`: config loading and runtime initialization
-- `src/utils/`: plotting, diagnostics, notebook display helpers
-- `config/`: TOML configuration root
-- `pipelines/`: executable end-to-end reconstruction pipelines for real acquisitions; 
-- `docs/`: pipeline overview, shared conventions, architecture, and usage guides
-
 ## Getting started
 
 The demo notebooks expose each reconstruction stage and are the shortest path through a first reconstruction:
@@ -66,18 +56,24 @@ The demo notebooks expose each reconstruction stage and are the shortest path th
 
 To run a demo notebook, select `/opt/conda/envs/environment_grics/bin/python` as its kernel. The reconstruction progress bars use `tqdm.auto` and notebook widgets. This container already includes the Python packages `ipykernel` and `ipywidgets`; if VS Code asks to install either one, check that the selected kernel is `environment_grics`. When using a different Python environment, install those packages in that environment to run notebooks and display widget progress bars.
 
-For complete acquisitions, two specific examples used in our research projects [2,3] are provided (`pipelines/siemens_breast_T2.py` and `pipelines/siemens_breast_3d_lowres.py`). They coordinate the same stages with input selection, export, and execution management. Their data flow is documented in [pipeline architecture](docs/pipelines.md).
+For complete acquisitions, two specific examples are provided (`pipelines/siemens_breast_T2.py` and `pipelines/siemens_breast_3d_lowres.py`). They coordinate the same stages with input selection, export, and execution management. Their data flow is documented in [pipeline architecture](docs/architecture/pipelines.md).
 
 Simulations and some reconstruction steps use random initialization; `seed_enabled` and `seed` in `config/general.toml` control reproducibility. Results can vary with the seed and compute backend. Generated results are written under `runs/` by default; see the [output guide](docs/usage/outputs.md).
 
+Run the validation scripts before using the software for a new environment or workflow. They exercise the complete simulated reconstruction path and require a GPU by default:
+
+```bash
+python tests/validate_shepp_logan_2d_nonrigid.py --runs 20 --device gpu
+python tests/validate_shepp_logan_2d_rigid.py --runs 20 --device gpu
+python tests/validate_shepp_logan_3d_nonrigid.py --runs 20 --device gpu
+python tests/validate_shepp_logan_3d_rigid.py --runs 20 --device gpu
+```
+
+See the [test and simulation-validation guide](docs/usage/tests.md) for expected results and shorter checks.
+
 ## Documentation
 
-Start with the [documentation index](docs/index.md). It links to:
-
-- the [pipeline data flow](docs/pipelines.md)
-- shared [data and coordinate conventions](docs/conventions.md)
-- internal [architecture](docs/index.md#architecture)
-- user-facing [configuration, input, motion, output, and API guides](docs/index.md#usage)
+Please check the [documentation](docs/index.md) to further usage instructions and details regarding architecture or implementation.
 
 ## Disclosure
 
@@ -86,7 +82,3 @@ Parts of this code and its documentation were developed with the assistance of A
 ## References
 
 [1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine, 60(1), 146-157.
-
-[2] Isaieva, K., Meullenet, C., Vuissoz, P. A., Fauvel, M., Nohava, L., Laistler, E., ... & Odille, F. (2023). Feasibility of online non‐rigid motion correction for high‐resolution supine breast MRI. Magnetic Resonance in Medicine, 90(5), 2130-2143.
-
-[3] Isaieva, K., Weber, N., Nohava, L., Fischer, B., Megel, A., Henrot, P., ... & Odille, F. (2025). Optimal sensor selection for motion-corrected supine breast MRI with a wearable coil. IEEE Transactions on Biomedical Engineering, 72(7), 2261-2268.

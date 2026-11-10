@@ -7,7 +7,7 @@ This is a PyTorch implementation of the [GRICS algorithm](algorithm.md) for moti
 
 Installation and and get started are described in the [Readme](../Readme.md).
 
-Each reconstruction follows these steps:
+For your specific reconstruction, follow these steps:
 
 1. Configuration. This step loads the config files and selects the input data type. The corresponding command is [`load_config(...)`](usage/configuration/configuration.md).
 2. Runime setup. This step  is needed to select compute devices and create the run state. Call `runtime = initialize_runtime(params)`.
@@ -28,6 +28,16 @@ See also:
 - [Outputs](usage/outputs.md)
 - [Tests and simulation validation](usage/tests.md)
 
+## Repository layout
+
+- `src/preprocessing/`: data loading, sampling simulation, motion simulation, and motion binning
+- `src/reconstruction/`: joint reconstructor, encoding and motion operators, and the CG solver
+- `src/runtime/`: configuration loading and runtime initialization
+- `src/utils/`: plotting, diagnostics, and notebook display helpers
+- `config/`: TOML configuration root
+- `pipelines/`: executable end-to-end reconstruction pipelines for real acquisitions
+- `docs/`: conventions, architecture, and usage guides
+
 ## How the software is organized
 
 The software provides a high-level interface for users who prefer not to work directly with the code, while keeping its components modular and maintainable. All components follow the shared [data and coordinate conventions](conventions.md). The following documents describe component responsibilities and data flow:
@@ -36,7 +46,7 @@ The software provides a high-level interface for users who prefer not to work di
 - [Input data loading](architecture/input_data_loading.md)
 - [Data preparation](architecture/data_preparation.md)
 - [Reconstruction](architecture/reconstruction.md)
-- [Pipelines](architecture/pipelines.md) for the reconstruction data flow and the available preimplemented pipelines.
+- [Pipelines](architecture/pipelines.md) for the reconstruction data flow and the available preimplemented pipelines, including the breast-MRI workflows used in [1, 2].
 
 ## Implementation details
 
@@ -51,5 +61,11 @@ The following documents describe the main implementation details:
 - [EncodingOperator: shared-image encoding and faster normal operations](implementation/encoding_operator.md)
 - [MotionPerturbationSimulator: Jacobian approximation and boundary gradients](implementation/motion_perturbation_simulator.md)
 - [PseudoGaussSeidelMotionPreconditioner: local factors and CPU execution](implementation/motion_preconditioner.md)
+
+## References
+
+[1] Isaieva, K., Meullenet, C., Vuissoz, P. A., Fauvel, M., Nohava, L., Laistler, E., ... & Odille, F. (2023). Feasibility of online non-rigid motion correction for high-resolution supine breast MRI. Magnetic Resonance in Medicine, 90(5), 2130-2143.
+
+[2] Isaieva, K., Weber, N., Nohava, L., Fischer, B., Megel, A., Henrot, P., ... & Odille, F. (2025). Optimal sensor selection for motion-corrected supine breast MRI with a wearable coil. IEEE Transactions on Biomedical Engineering, 72(7), 2261-2268.
 
 
