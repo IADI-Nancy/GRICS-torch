@@ -35,3 +35,4 @@ Source settings come from the automatically selected synthetic or physiological 
 ## Pipeline-specific configuration
 
 - `config/postprocessing/nonrigid_2d_breast.toml`: reference-image normalization for the Siemens 2D breast pipeline; loaded separately with `load_postprocessing_config(...)`
+- `config/postprocessing/nonrigid_3d_breast.toml`: reference-image normalization for the Siemens 3D breast pipeline; loaded separately with `load_postprocessing_config(...)`

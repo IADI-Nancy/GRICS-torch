@@ -119,13 +119,11 @@ paths. Only CPU execution is supported. Final exports begin after all slices
 succeed.
 
 `pipelines/utils/postprocessing.py` owns reference-image normalization and
-header-based zero-filling and cropping.
+header-based zero-filling and cropping for both pipelines.
 
 ### 3D low-resolution pipeline
 
-The 3D pipeline prepares and reconstructs the complete volume in one process,
-then saves tensors and exports a DICOM series. It has no separate
-postprocessing step, so the native and final images are the same solver result.
+The 3D pipeline prepares and reconstructs the complete volume in one process, then optionally normalizes the image by the GRICS reference and zero-fills/crops it to the header's 3D reconstruction matrix before exporting the final DICOM series and saving the final and native tensors. See [postprocessing](usage/postprocessing.md) for the image steps.
 
 Output names, flags, and cache lifetime are documented in the
 [output guide](usage/outputs.md).

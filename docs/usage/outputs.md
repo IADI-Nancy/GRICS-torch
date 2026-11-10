@@ -23,12 +23,11 @@ the repetition dimension. Its PNG shows the magnitude of the repetition mean;
 individual repetition previews are also saved when multiple repetitions exist.
 The callable Siemens pipelines save both `image_reconstructed_native.pt`, captured
 immediately after GRICS, and the final `image_reconstructed.pt`, plus motion and
-GRICS text logs. T2's final image includes configured reference-image normalization
-and zero-filling; its native image includes neither operation. DICOM export
+GRICS text logs. Both pipelines' final images include configured reference-image normalization and header-based zero-filling/cropping; their native images include neither operation. DICOM export
 uses the magnitude of the repetition mean with DICOM intensity scaling. Motion
 maps retain the reconstruction grid.
 
-See [postprocessing and export](postprocessing.md) for the calls that produce the final and native images in the 2D T2 pipeline.
+See [postprocessing and export](postprocessing.md) for the calls that produce the final and native images in both pipelines.
 
 Common output flags are defined under `[runtime]` in `config/general.toml` and
 validated by `load_config` for all entry points:
@@ -52,7 +51,7 @@ They call `JointReconstructor.run()` directly, then save tensors with
 `write_reconstruction(...)`. The 2D pipeline waits for all slice workers
 before exporting final results. Plot, log, and tensor flags are read from the
 configuration; callable pipelines also accept `overrides={...}`.
-The 3D pipeline returns its CPU image, motion, and output paths; the 2D
+The 3D pipeline returns its final and native CPU images, motion, and output paths; the 2D
 pipeline returns an ordered `reconstructions` list with those values per slice.
 Both Siemens pipelines always export DICOMs, independently of tensor saving. Metadata is recorded
 even when logs, tensors, and plots are disabled.

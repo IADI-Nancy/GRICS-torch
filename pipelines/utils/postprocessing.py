@@ -1,4 +1,5 @@
-"""Image normalization and acquisition-grid restoration for the breast T2 pipeline."""
+"""Image normalization and acquisition-grid restoration for breast pipelines."""
+from collections.abc import Sequence
 import math
 
 import torch
@@ -85,6 +86,29 @@ def grics_zero_fill_shapes(input_data: InputDataLoader) -> tuple[tuple[int, int]
     return target_shape, encoded_shape
 
 
-def zero_fill_loaded_reconstruction(image: torch.Tensor, target_shape: tuple[int, int],
-                                   encoded_shape: tuple[int, int]) -> torch.Tensor:
-    return zero_fill_grics_image_to_shape(image, target_shape=target_shape, encoded_shape=encoded_shape, spatial_dims=(-2, -1))
+def grics_zero_fill_volume_shapes(input_data: InputDataLoader) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Extend the in-plane zero-fill layout with the header's 3D partition sizes."""
+    target_shape, encoded_shape = grics_zero_fill_shapes(input_data)
+    header = acquisition_header(input_data)
+    enc = header.encoding[0]
+    encoded_z = int(enc.encodedSpace.matrixSize.z)
+    target_z = int(enc.reconSpace.matrixSize.z)
+    if encoded_z <= 0:
+        raise ValueError(f"ISMRMRD encoded matrix z must be positive, got {encoded_z}.")
+    if target_z == 0:
+        recon_fov_z = float(enc.reconSpace.fieldOfView_mm.z)
+        encoded_fov_z = float(enc.encodedSpace.fieldOfView_mm.z)
+        if not all(math.isfinite(value) and value > 0 for value in (recon_fov_z, encoded_fov_z)):
+            raise ValueError("A missing reconstruction matrix z requires positive, finite reconstruction and encoded FOV z.")
+        target_z = round(encoded_z * recon_fov_z / encoded_fov_z)
+        print(f"[input] ISMRMRD reconstruction matrix z is zero; using {target_z} from the encoded matrix and field-of-view ratio.", flush=True)
+    if not 1 < target_z <= encoded_z or int(input_data.Nz) > encoded_z:
+        raise ValueError(f"GRICS zero-fill z sizes are inconsistent: loaded={input_data.Nz}, target={target_z}, encoded={encoded_z}.")
+    return (*target_shape, target_z), (*encoded_shape, encoded_z)
+
+
+def zero_fill_loaded_reconstruction(image: torch.Tensor, target_shape: Sequence[int],
+                                   encoded_shape: Sequence[int]) -> torch.Tensor:
+    """Zero-fill and crop the final two or three spatial image axes."""
+    return zero_fill_grics_image_to_shape(image, target_shape=target_shape, encoded_shape=encoded_shape,
+                                          spatial_dims=tuple(range(-len(target_shape), 0)))

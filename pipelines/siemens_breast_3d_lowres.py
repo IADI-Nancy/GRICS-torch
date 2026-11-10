@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Reconstruct a complete Siemens breast 3D volume from a .dat file and SAEC.
 
-Prepare the volume, run GRICS, and export a DICOM series and configured tensors.
+Prepare the volume, run GRICS, normalize it when configured, zero-fill it to the
+header's reconstruction grid, and export a DICOM series and configured tensors.
 The default compute device is GPU; runtime settings can be set through overrides
 when calling run_pipeline() from Python.
 
@@ -22,20 +23,25 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.preprocessing.DataPreparer import DataPreparer
+from pipelines.utils.postprocessing import (
+    grics_reference_image_for_normalization, grics_zero_fill_volume_shapes,
+    normalize_reconstruction_by_grics_reference, zero_fill_loaded_reconstruction,
+)
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import managed_execution, write_reconstruction
-from src.runtime.runtime_config import load_config
+from src.runtime.runtime_config import load_config, load_postprocessing_config
 from src.runtime.runtime_setup import initialize_runtime
 from src.utils.dicom_export import write_volume_dicoms
 
 OUTPUT_ROOT = Path("runs/siemens_breast_3d_lowres")
 RECONSTRUCTION_CONFIG = "config/reconstruction/nonrigid_3d_breast.toml"
+POSTPROCESSING_CONFIG = "config/postprocessing/nonrigid_3d_breast.toml"
 RUNTIME_DEVICE = "gpu"
 
 
 @managed_execution
 def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT, device=RUNTIME_DEVICE,
-                 reconstruction_config=RECONSTRUCTION_CONFIG, overrides=None,
+                 reconstruction_config=RECONSTRUCTION_CONFIG, postprocessing_config=POSTPROCESSING_CONFIG, overrides=None,
                  dicom_header_dir=None, dicom_series_number=1001) -> dict:
     """Load Siemens raw data and SAEC, reconstruct the volume, and save outputs."""
     raw_data_file, saec_file = Path(raw_data_file), Path(saec_file)
@@ -52,23 +58,32 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT, device=RU
                    "runtime_device": device, "flip_for_display": True,
                    "verbose": False, "print_to_console": False, **(overrides or {})},
     )
+    postprocessing = load_postprocessing_config(REPO_ROOT / postprocessing_config)
+    if postprocessing.normalize_image_by_grics_reference and params.coil_sensitivity_method != "odille-spline":
+        raise ValueError("Reference-image normalization requires coil_sensitivity_method='odille-spline'.")
     runtime = initialize_runtime(params)
     data = DataPreparer(params=params, runtime=runtime, filename=(str(raw_data_file), str(saec_file)))
     data.load_input_data()
     if data.input_loader.Nz <= 1:
         raise ValueError("The 3D pipeline requires more than one encoded partition.")
+    target_shape, encoded_shape = grics_zero_fill_volume_shapes(data.input_loader)
     data.prepare_reconstructor_inputs()
 
     reconstructor = JointReconstructor.from_prepared_data(data)
     image, motion = reconstructor.run()
+    native_image = image.detach().cpu()
+    if postprocessing.normalize_image_by_grics_reference:
+        reference_image = grics_reference_image_for_normalization(data, image)
+        image, _ = normalize_reconstruction_by_grics_reference(image, reference_image)
+    image = zero_fill_loaded_reconstruction(image, target_shape, encoded_shape)
     image, motion = image.detach().cpu(), motion.detach().cpu()
     dicom_files, _ = write_volume_dicoms(
         image, Path(params.run_folder) / "exports/dicom", data,
         series_number=dicom_series_number, reference_dicom_path=dicom_header_dir)
     paths = write_reconstruction(
-        params, image, motion, native_image=image, record_paths=True, status="complete",
-        tensor_export="pipeline", dicom_files=dicom_files)
-    return {"run_folder": Path(params.run_folder), "image": image, "motion": motion,
+        params, image, motion, native_image=native_image, image_stage="after_postprocessing",
+        record_paths=True, status="complete", tensor_export="pipeline", dicom_files=dicom_files)
+    return {"run_folder": Path(params.run_folder), "image": image, "native_image": native_image, "motion": motion,
             "dicom_files": dicom_files, **paths}
 
 
