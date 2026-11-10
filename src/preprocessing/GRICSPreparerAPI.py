@@ -70,7 +70,8 @@ class GRICSPreparerAPI:
         )
         if self.params.kspace_sampling_type != "from-data" or self.params.simulated_motion_type != "as-it-is":
             raise ValueError("GRICSPreparerAPI bins recorded metadata only; use DataPreparer for simulated sampling or motion.")
-        self.sp_device, self.device = initialize_runtime(self.params)
+        runtime = initialize_runtime(self.params)
+        self.sp_device, self.device = runtime.sp_device, runtime.t_device
 
     def prepare_acquisition(
         self, motion_data: TensorLike, ky_indices: TensorLike,

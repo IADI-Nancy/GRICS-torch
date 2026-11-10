@@ -5,8 +5,7 @@
 Configured with one variable:
 - `simulated_motion_type`: `"rigid-per-readout"`, `"rigid-per-shot"`, `"non-rigid-per-readout"`, `"non-rigid-per-shot"`, or `"as-it-is"`.
 
-`simulated_motion_type` is configured in `config/motion_simulation/*.toml`. Reconstruction independently uses `reconstruction_motion_type` (`"rigid"` or `"non-rigid"`) from `config/reconstruction/*.toml`.
-Implemented in `src/preprocessing/MotionSimulator.py`.
+`simulated_motion_type` is configured in `config/motion_simulation/*.toml`. Reconstruction independently uses `reconstruction_motion_type` (`"rigid"` or `"non-rigid"`) from `config/reconstruction/*.toml`. Implemented in `src/preprocessing/MotionSimulator.py`.
 
 Motion simulation starts on the configured runtime device, which is the GPU by default. If CUDA memory is insufficient, preparation prints an explicit message, clears unused CUDA memory, and restarts the complete simulation on the CPU. Other runtime errors are not treated as memory fallbacks.
 
@@ -48,17 +47,11 @@ Continuous sinusoidal temporal curve:
 - random cycles per image/volume repetition in `[nonrigid_resp_cycles_min, nonrigid_resp_cycles_max]`
 - normalized to unit amplitude
 
-Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z` for 3D) scaled by `nonrigid_motion_amplitude`.
-For corruption, simulation uses one state per acquired readout (`Ny * Nz * Nex` for fully sampled data).
+Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z` for 3D) scaled by `nonrigid_motion_amplitude`. For corruption, simulation uses one state per acquired readout (`Ny * Nz * Nex` for fully sampled data).
 
 ## Motion binning and reconstruction states
 
-Physiological signals from real acquisitions are standardized after reader-specific processing and synchronization, before slice grouping and motion binning.
-Each sensor is normalized independently as `(signal - mean) / std`, using the
-population standard deviation (`sqrt(mean((signal - mean)**2))`, denominator N).
-Statistics cover every MRI readout in the full acquisition, before slice selection and motion binning. This gives each sensor zero mean and unit
-variance over the acquisition. Constant sensors and non-finite samples raise
-an error. Simulated signals are unaffected.
+Physiological signals from real acquisitions are standardized after reader-specific processing and synchronization, before slice grouping and motion binning. Each sensor is normalized independently as `(signal - mean) / std`, using the population standard deviation (`sqrt(mean((signal - mean)**2))`, denominator N). Statistics cover every MRI readout in the full acquisition, before slice selection and motion binning. This gives each sensor zero mean and unit variance over the acquisition. Constant sensors and non-finite samples raise an error. Simulated signals are unaffected.
 
 After loading or simulation, motion signals are grouped into reconstruction states using `motion_binning_mode` from the reconstruction configuration:
 

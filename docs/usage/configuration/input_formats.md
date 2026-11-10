@@ -1,24 +1,25 @@
 # Input formats
 
-The `data_type` selected in `load_config(...)` controls how input data is built or loaded.
-For 2D real data, `slice_idx` selects the slice/partition to reconstruct. It may be omitted only when the source contains exactly one slice; multi-slice sources require an explicit value before running the slice pipeline.
-For synthetic data and for all 3D data, do not provide `slice_idx`; the loader raises an error if it is set.
+The `data_type` selected in `load_config(...)` controls how input data is built or loaded. For 2D real data, `slice_idx` selects the slice/partition to reconstruct. Pass it only to `prepare_reconstructor_inputs(slice_idx=...)`, after `load_input_data()`; constructors configure the source without selecting a slice. It may be omitted only when the source contains exactly one slice; multi-slice sources require an explicit value before preparation. For synthetic data and all 3D data, do not provide `slice_idx`; input preparation raises an error if it is set.
 
 ## Synthetic data types
 ### `shepp-logan`
 
-Required config files:
-- `config/synthetic_data/shepp_logan_2d.toml` (or `config/synthetic_data/shepp_logan_3d.toml` for 3D data)
+`load_config(...)` automatically selects `config/synthetic_data/shepp_logan_2d.toml` or `shepp_logan_3d.toml` from `reconstruction_dimension` in the reconstruction TOML.
+
+In addition to `reconstruction_config`, pass:
+
 - a sampling simulation config file
 - a motion simulation config file (otherwise there is nothing to correct)
 
 ### `from_image`
 
-Loaded from a 2D image file and converted to synthetic multi-coil k-space using generated coil maps.
-Supported inputs include common image formats (e.g. PNG/JPEG/TIFF) and NumPy arrays (`.npy`, `.npz`).
+Loaded from a 2D image file and converted to synthetic multi-coil k-space using generated coil maps. Supported inputs include common image formats (e.g. PNG/JPEG/TIFF) and NumPy arrays (`.npy`, `.npz`).
 
-Required config files:
-- `config/synthetic_data/from_image.toml`
+`load_config(...)` automatically loads `config/synthetic_data/from_image.toml`.
+
+In addition to `reconstruction_config`, pass:
+
 - a sampling simulation config file
 - a motion simulation config file
 
@@ -63,7 +64,7 @@ Use `-1` for every timestamp when values are already synchronized to MRI readout
 Pass `filename` as `(ismrmrd_file, physio_file)` or `(siemens_raw_file, physio_file)`, or as a dictionary with the corresponding keys. Text channels are ordered by numeric sensor ID and then value-column order.
 
 ### `ismrmrd-saec` and `siemens-saec`
-Uses the corresponding MRI data format together with a physiological data file in SAEC [1, 2] format (`saec_file`). Pass `physiological_data_config="config/physiological_data/saec.toml"` to `load_config(...)`. Select the sensor type in `saec.toml`.
+Uses the corresponding MRI data format together with a physiological data file in SAEC [1, 2] format (`saec_file`). `load_config(...)` automatically loads `config/physiological_data/saec.toml` for `ismrmrd-saec` and `siemens-saec` data. Select the sensor type and filters in `saec.toml`.
 
 SAEC processing depends on `rawdata_sensor_type`:
 
@@ -74,12 +75,12 @@ SAEC processing depends on `rawdata_sensor_type`:
 Timestamped SAEC channels are aligned to the full MRI sequence before slice selection and interpolated onto MRI readout times. SAEC timestamps are referenced to the Siemens stop trigger. The filters are applied before this interpolation; readouts outside the SAEC recording use the nearest endpoint value.
 
 ### `ismrmrd-polaris` and `siemens-polaris`
-Uses the corresponding MRI data format together with a single-tool NDI ToolBox `.tsv` export from a Polaris Vega infrared camera tracker (`polaris_file`). Pass `polaris_config="config/physiological_data/polaris.toml"` to `load_config(...)`. Select the tracks and clock shift in `polaris.toml`. The final timestamp must correspond to the end of the MRI sequence; clock correction is applied after end alignment.
+Uses the corresponding MRI data format together with a single-tool NDI ToolBox `.tsv` export from a Polaris Vega infrared camera tracker (`polaris_file`). `load_config(...)` automatically loads `config/physiological_data/polaris.toml` for `ismrmrd-polaris` and `siemens-polaris` data. Select the tracks, filter, and clock shift in `polaris.toml`. The final timestamp must correspond to the end of the MRI sequence; clock correction is applied after end alignment.
 
 Polaris reads the XYZ tool-position channels and applies a first-order zero-phase Butterworth low-pass filter using `polaris_lowpass_cutoff_hz`. The sampling rate is estimated from the recording duration; at least seven samples are required, and the rate must exceed twice the cutoff. The filtered signals are then interpolated onto full-sequence MRI readout times. With `polaris_channel_mode = "all"`, Tx, Ty, and Tz are retained. With `"largest-amplitude"`, only the axis with the largest peak-to-peak range is retained (ties are resolved in Tx, Ty, Tz order). Shared per-channel normalization follows selection.
 
 ### Post-processing and synchronization
-Text inputs automatically load `config/physiological_data/physio_text.toml`; array inputs load `config/physiological_data/physio_array.toml`. Each file owns its clock-shift value independently. To use another sensor configuration, pass `physio_config="path/to/physio_text.toml"` to `load_config(...)`.
+Text inputs automatically load `config/physiological_data/physio_text.toml`; array inputs load `config/physiological_data/physio_array.toml`. Each file owns its clock-shift value independently. Edit the corresponding file or use `overrides={"physio_clock_drift_seconds": ...}` for a run-specific value.
 
 Generic `physio_text` and `physio_array` inputs are not filtered. Their channels are preserved in sensor/track order through timestamp alignment and interpolation, then standardized by the shared per-channel normalization. If all timestamps are `-1`, values are treated as already synchronized and must contain one sample for every full-acquisition MRI readout; interpolation is skipped and clock correction must be zero.
 

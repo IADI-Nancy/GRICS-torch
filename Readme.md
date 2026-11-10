@@ -1,12 +1,14 @@
 # GRICS-torch: GRICS MRI motion-corrected reconstruction in PyTorch
 
-This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS is an algorithm based on modeling of MRI acquisition and motion, and do not use any AI priors. However, it requires a data associated with the displacement (e.g. respiratoiry bellow indications, navigators, PilotTone amplitude variation or other similar data). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
+This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS models MRI acquisition and motion and does not require AI priors. It requires motion-related data (e.g. respiratory belt measurements, navigators, PilotTone amplitude variations, or similar signals). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
+
+The code currently supports only Cartesian sampling and performs best with fully sampled data. The algorithm was developed primarily for non-rigid motion correction. Rigid motion correction is also available, but has been less extensively validated; users are encouraged to assess its performance for their application as we continue to refine it.
 
 Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
 
-## License and Citation
+## License and citation
 
-This project is distributed under the MIT License. See `LICENSE` for full terms.
+This project is distributed under the MIT License. See [LICENSE](LICENSE) for the full terms.
 
 Please cite the GRICS paper if you use this code for your research work.
 
@@ -22,216 +24,61 @@ Please cite the GRICS paper if you use this code for your research work.
 }
 ```
 
-## Repository layout
+## Environment setup
 
-- `src/preprocessing/`: data loading, sampling simulation, motion simulation, motion binning
-- `src/reconstruction/`: joint reconstructor, encoding/motion operators, CG solver, etc.
-- `src/runtime/`: config loading and runtime initialization
-- `src/utils/`: plotting, diagnostics, notebook display helpers
-- `config/`: TOML configs for reconstruction, sampling, motion simulation, and general runtime
+A Dockerfile is provided in `build/`, and the built image is available from the [GitHub container registry](https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch). The image uses CUDA 12.1. GPU execution requires a compatible NVIDIA driver and the NVIDIA Container Toolkit on the host; the CUDA toolkit itself is included in the image.
 
-\+ four demos. Attention: random initialization was used, therefore the simulated and reconstruction data may look differently and require an adjustment of the reconstruction parameters.
+To run the included examples in native configuration your computer should have at least 16GB of VRAM and 64GB of RAM. An NVIDIA GPU is not required, but CPU reconstruction is much slower. Motion simulation automatically retries on CPU if it runs out of CUDA memory; coil-map estimation and reconstruction do not retry on CPU after a CUDA memory error. To run the complete workflow on CPU, set `runtime_device = "cpu"` in `config/general.toml` and check for device overrides in the chosen notebook or script. If there is no GPU on your workstation, also disable the active `GPU=( --gpus ... )` line and enable `GPU=( )` in `docker.sh`.
 
-## Environment Setup
-
-A Dockerfile is provided in the `build/` folder. The built image is available at https://github.com/IADI-Nancy/GRICS-torch/pkgs/container/grics-torch. The `docker.sh` script in the repository root can be used for mounting and runtime setup.
-
-## Config System
-
-The pipeline merges config files at runtime via `src/runtime/runtime_config.py`.
-
-Main config groups:
-- `config/general.toml`: paths, debug/runtime flags, k-space normalization and coil sensitivities calculation parameters
-- `config/reconstruction/*.toml`: solver/reconstruction settings
-- `config/sampling_simulation/*.toml`: synthetic k-space ordering
-- `config/motion_simulation/*.toml`: synthetic motion model parameters
-- `config/shepp_logan_2d.toml`: Shepp-Logan phantom generation parameters (2D default; use `config/shepp_logan_3d.toml` for 3D)
-
-Important consistency rule:
-- `GN_iterations_per_level` must match `ResolutionLevels` length exactly.
-
-## Data Types
-
-The `data_type` selected in `load_config(...)` controls how input data is built or loaded.
-
-### `shepp-logan`
-
-Required config files:
-- `config/shepp_logan_2d.toml` (or `config/shepp_logan_3d.toml` for 3D data)
-- a sampling simulation config file
-- a motion simulation config file (otherwise there is nothing to correct)
-
-### `from_image`
-
-Loaded from a 2D image file and converted to synthetic multi-coil k-space using generated coil maps.
-Supported inputs include common image formats (e.g. PNG/JPEG/TIFF) and NumPy arrays (`.npy`, `.npz`).
-
-Required config files:
-- `config/from_image.toml`
-- a sampling simulation config file
-- a motion simulation config file
-
-### `real-world`
-
-Loaded from HDF5 with datasets:
-- `kspace`: shape `(Ncoils, Nex, Nx, Ny, Nslices)`, complex (`complex64`/`complex128`)
-- `motion_data`: shape `(Nslices, Nlines)`, real (`float32`/`float64`) - 1D motion data associated with each k-space line (navigator/respiratory bellow indications, etc.)
-- `idx_ky`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
-- `idx_kz`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
-- `idx_nex`: shape `(Nslices, Nlines)`, integer (`int32`/`int64`)
-
-For 2D `real-world` and `raw-data`, the `slice_idx` argument of `DataLoader` selects the slice/partition to load (default: `0` if omitted).
-For synthetic data and for all 3D data, do not provide `slice_idx`; the loader raises an error if it is set.
-
-No synthetic sampling is needed in this mode: acquisition order and motion signal come from file. However, additional motion simulation can still be applied.
-
-### `raw-data`
-
-Loaded from raw scanner and physiological files using `RawDataReader`:
-- the MRI raw data in the ISMRMRD format (`ismrmrd_file`)
-- physiological data file in SAEC [2, 3] format (`saec_file`)
-
-The reader will convert these files to the format corresponding to the 'real-world' mode.
-The SAEC sensor channel is configured with `rawdata_sensor_type` in `config/general.toml`.
-
-When `debug_flag=true`, the loader also writes acquisition-order debug plots into `initial_data_folder` using hardcoded filenames:
-- raw-data: `ky_order_rawdata_slice{slice_idx}.png`
-- real-world: `ky_order_realworld_slice{slice_idx}.png`
-
-## Sampling Modes (synthetic acquisition)
-
-Configured with:
-- `kspace_sampling_type`
-- `NshotsPerNex`
-- `Nex`
-
-Implemented in `src/preprocessing/SamplingSimulator.py`.
-
-When synthetic sampling is generated, per-`nex` debug plots are written to `initial_data_folder` with hardcoded names:
-- 2D sampling: `ky_order_nex{nex}.png`
-- 3D sampling: `ky_kz_order_nex{nex}.png`
-
-For each `nex`, ky lines are split into `NshotsPerNex` chronological shot blocks:
-
-### `linear`
-
-Shot `s` acquires contiguous band:
-- start = `s * Ny / NshotsPerNex`
-- end = `(s+1) * Ny / NshotsPerNex`
-
-### `interleaved`
-
-Shot `s` acquires:
-- `ky = s, s + NshotsPerNex, s + 2*NshotsPerNex, ...`
-
-### `random`
-
-Independent random permutation per `nex`, then split into `NshotsPerNex` chunks.
-
-## Motion Simulation Modes
-
-Configured with:
-- `motion_simulation_model_mode`: `"rigid-realistic"`, `"rigid-per-shot"`, `"non-rigid-realistic"`, `"non-rigid-per-shot"`, or `"as-it-is"`
-- `motion_state_mode`: `"realistic"` or `"per-shot"`
-
-`simulated_motion_type` is derived from `motion_simulation_model_mode` for internal/backward-compatible code paths (`"rigid"` or `"non-rigid"`), so experiment scripts should not set both values independently.
-
-Reconstruction uses a separate parameter:
-- `reconstruction_motion_type`: `"rigid"` or `"non-rigid"`
-
-in `config/motion_simulation/*.toml` (now one file per `{2D,3D} x {rigid,non-rigid}`).
-Implemented in `src/preprocessing/MotionSimulator.py`.
-
-### `as-it-is`
-
-No synthetic corruption added. Only valid for `real-world`/`raw-data` (already motion-corrupted).
-`motion_state_mode` must not be set for this mode.
-
-### `rigid` + `motion_state_mode = "per-shot"`
-
-Shot-wise rigid states:
-- one rigid transform per shot over all `Nshots = Nex * NshotsPerNex`
-- optional global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
-- random `(tx, ty, phi)` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case) per shot in configured ranges
-- piecewise-constant motion in ky-time according to shot order
-
-### `rigid` + `motion_state_mode = "realistic"`
-
-Continuous rigid curve over full acquisition:
-- random event times over `Ny * Nex` lines
-- smooth raised-cosine transitions (`motion_tau`)
-- optional global multiplier `rigid_motion_amplitude_scale` scales all configured rigid amplitudes
-- random event amplitudes for `tx`, `ty`, `phi` (or `(tx, ty, tz, rx, ry, rz)` for the 3D case)
-- data is then reclustered to `N_motion_states` from the simulated navigator signal (first principal component of the simulated rigid motion parameters)
-
-For corruption, simulation uses one global state per acquired line (`Ny * Nz * Nex` states).
-
-### `non-rigid` + `motion_state_mode = "per-shot"`
-
-Shot-wise non-rigid with fixed spatial basis maps:
-- displacement field maps `alpha_x`, `alpha_y` (+ `alpha_z` for 3D) simulate respiration
-- a per-shot Gaussian scale is configured with `nonrigid_discrete_s_scale`
-- one random scalar per shot (`s`) drives the temporal displacement amplitude (can be interpreted as a navigator or respiratory belt signal)
-- displacement at state `m`: `[ux, uy, (uz)] = [alpha_x, alpha_y, (alpha_z)] * s[m]`
-
-### `non-rigid` + `motion_state_mode = "realistic"`
-
-Continuous sinusoidal temporal curve:
-- random phase
-- random cycles per image in `[nonrigid_resp_cycles_min, nonrigid_resp_cycles_max]`
-- normalized to unit amplitude
-
-Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z` for 3D) scaled by `nonrigid_motion_amplitude`.
-For corruption, simulation uses one state per acquired line (`Ny * Nz * Nex` states).
-
-## Motion Binning and Reconstruction States
-
-After loading or simulation, the motion curve is clustered with k-means into reconstruction states.
-
-Key points:
-- simulation state count and reconstruction state count can differ.
-- corruption may be line-wise (`Ny * Nz * Nex` states), but reconstruction uses binned virtual states (`N_motion_states`).
-- `N_motion_states` is a manual reconstruction setting from the reconstruction TOML (or from an explicit `load_config(..., N_motion_states=...)` override).
-
-State-count rules are set in `runtime_config.refresh_derived(...)`:
-- `motion_state_mode = "per-shot"`: `N_motion_states = Nshots`
-- `simulated_motion_type = "rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
-- `simulated_motion_type = "non-rigid"` + `motion_state_mode = "realistic"`: `N_motion_states` stays the manual reconstruction value
-- `as-it-is`: `N_motion_states` stays the manual reconstruction value
-
-For loaded `real-world` / `raw-data` with an explicit per-shot synthetic simulation mode, `DataLoader` recomputes `Nshots = Nex * NshotsPerNex` from the actual loaded data shape and reapplies the `per-shot` rule after loading. This keeps `N_motion_states` consistent with the file content even if the pre-load config values differ.
-
-Note: you can override the reconstruction state count:
-
-Example:
-
-```python
-params = load_config(
-    data_type="real-world",
-    reconstruction_config="config/reconstruction/nonrigid_2d.toml",
-    N_motion_states=6,
-)
+You can use `docker.sh` from the repository to start and manage the container:
+```bash
+./docker.sh run                 # Create the container, or start it if it already exists
+./docker.sh exec-it             # Open an interactive shell as your host user
+./docker.sh exec-it python --version
+./docker.sh stop                # Stop the container
+./docker.sh rm                  # Remove the stopped container
 ```
 
-Note: this manual override is not respected for `per-shot` modes, where `N_motion_states` is forced to `Nshots`
+By default, the script mounts the **parent directory of this repository** at `/home/pyuser/wkdir` inside the container so this repository will be in `/home/pyuser/wkdir/GRICS-torch` (or the repository's actual directory name). For example, if you checkout this repository in the parent folder of your data and your project directories, they will be available under `/home/pyuser/wkdir/`. The script also mounts the host `~/.gitconfig`. `IMAGE_VERSION` selects the container-image tag; dependency versions are pinned in the files under `build/` and are not derived from that tag. Use `./docker.sh build` to build the image locally from `build/Dockerfile`.
 
-## Outputs
+After `./docker.sh run`, open the VS Code Command Palette and select **Dev Containers: Open Container Configuration File**. Paste the JSON printed by `docker.sh` into that file and save it, then connect to the running container. This makes VS Code use the container user created with the host user's UID and GID, so files created inside the mounted workspace belong to the actual host user instead of `root`.
 
-Each run writes into folders from `config/general.toml`:
+For a comfortable VS Code setup, install [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) on the host. The configuration printed by `docker.sh` installs [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python), [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance), [Jupyter](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter), Jupyter Keymap, and Jupyter Notebook Renderers in the container. Install [Even Better TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml) in the attached container for editing configuration files.
 
-- `initial_data/`: sampling order, motion curves, corrupted and ground-truth images (if they exist), and simulated motion (if it exists)
-- `debug_outputs/`: results per reconstruction level
-- `logs/`: residual curves and run log
-- `results/`: final reconstructed outputs
+## Getting started
 
-By default, these folders are cleaned before each run (`clean_output_folders_before_run = true`).
+The demo notebooks expose each reconstruction stage and are the shortest path through a first reconstruction:
+
+- [2D non-rigid simulation from an image](demo_a_2D_nonrigid_simulated_from_image_periodic.ipynb)
+- [2D non-rigid reconstruction of real free-breathing data](demo_b_2D_nonrigid_realworld_freebreathing.ipynb)
+- [3D rigid Shepp-Logan simulation](demo_c_3D_rigid_simulated_shepp_interleaved.ipynb)
+- [3D non-rigid Shepp-Logan simulation](demo_d_3D_nonrigid_simulated_shepp_random.ipynb)
+
+To run a demo notebook, select `/opt/conda/envs/environment_grics/bin/python` as its kernel. The reconstruction progress bars use `tqdm.auto` and notebook widgets. This container already includes the Python packages `ipykernel` and `ipywidgets`; if VS Code asks to install either one, check that the selected kernel is `environment_grics`. When using a different Python environment, install those packages in that environment to run notebooks and display widget progress bars.
+
+For complete acquisitions, two specific examples are provided (`pipelines/siemens_breast_T2.py` and `pipelines/siemens_breast_3d_lowres.py`). They coordinate the same stages with input selection, export, and execution management. Their data flow is documented in [pipeline architecture](docs/architecture/pipelines.md).
+
+Simulations and some reconstruction steps use random initialization; `seed_enabled` and `seed` in `config/general.toml` control reproducibility. Results can vary with the seed and compute backend. Generated results are written under `runs/` by default; see the [output guide](docs/usage/outputs.md).
+
+Run the validation scripts before using the software for a new environment or workflow. They exercise the complete simulated reconstruction path and require a GPU by default:
+
+```bash
+python tests/validate_shepp_logan_2d_nonrigid.py --runs 20 --device gpu
+python tests/validate_shepp_logan_2d_rigid.py --runs 20 --device gpu
+python tests/validate_shepp_logan_3d_nonrigid.py --runs 20 --device gpu
+python tests/validate_shepp_logan_3d_rigid.py --runs 20 --device gpu
+```
+
+See the [test and simulation-validation guide](docs/usage/tests.md) for expected results and shorter checks.
+
+## Documentation
+
+Please check the [documentation](docs/index.md) to further usage instructions and details regarding architecture or implementation.
 
 ## Disclosure
 
-Parts of this code and its documentation were developed with the assistance of AI tools (e.g., ChatGPT, Codex, Claude, Copilot). All content has been reviewed and validated by a human.
+Parts of this code and its documentation were developed with the assistance of AI tools (mostly Codex). All content has been reviewed and validated by a human.
 
 ## References
 
-[1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine: An Official Journal of the International Society for Magnetic Resonance in Medicine, 60(1), 146-157.
-[2] Isaieva, K., Fauvel, M., Weber, N., Vuissoz, P. A., Felblinger, J., Oster, J., & Odille, F. (2022). A hardware and software system for MRI applications requiring external device data. Magnetic Resonance in Medicine, 88(3), 1406-1418.
-[3] https://github.com/IADI-Nancy/wrapperHDF5 
+[1] Odille, F., Vuissoz, P. A., Marie, P. Y., & Felblinger, J. (2008). Generalized reconstruction by inversion of coupled systems (GRICS) applied to free‐breathing MRI. Magnetic Resonance in Medicine, 60(1), 146-157.

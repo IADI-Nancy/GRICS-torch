@@ -24,7 +24,7 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import execution_scope, write_json, write_reconstruction
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
-from validation_metrics import print_step, summarize_residuals
+from utils.validation_metrics import print_step, summarize_residuals
 
 
 def run_reconstruction(data_file, device, output_root):
@@ -44,35 +44,30 @@ def run_reconstruction(data_file, device, output_root):
         )
         print_step(label, "END", "configuration")
         print_step(label, "BEGIN", "runtime initialization")
-        sp_device, t_device = initialize_runtime(params)
+        runtime = initialize_runtime(params)
         print_step(label, "END", "runtime initialization")
         print_step(label, "BEGIN", "real-world data loading")
-        data = DataPreparer(params=params, t_device=t_device, sp_device=sp_device, filename=str(data_file))
+        data = DataPreparer(params=params, runtime=runtime, filename=str(data_file))
         data.load_input_data()
         print_step(label, "END", "real-world data loading")
         print_step(label, "BEGIN", "coil maps and motion binning")
-        data.prepare_reconstructor_inputs()
+        data.prepare_reconstructor_inputs(slice_idx=0)
         print_step(label, "END", "coil maps and motion binning")
         print_step(label, "BEGIN", "joint image and motion reconstruction")
-        reconstructor = JointReconstructor(
-            data.kspace, data.smaps, data.sampling_idx, motion_signal=data.motion_signal,
-            params=params, motion_plot_context=data.motion_plot_context,
-            calibration_image_prior=data.grics_reference_image,
-        )
+        reconstructor = JointReconstructor.from_prepared_data(data)
         image, motion = reconstructor.run()
         print_step(label, "END", "joint image and motion reconstruction")
         print_step(label, "BEGIN", "metrics and output")
         if image.shape != data.image_no_moco.shape or not (torch.isfinite(image).all() and torch.isfinite(motion).all()):
             raise AssertionError("Demo B returned an invalid image shape or non-finite output")
         logger = reconstructor._run_logger.run_log
-        metrics = {"case": label, "device": str(t_device), "input_file": str(data_file),
+        metrics = {"case": label, "device": str(runtime.t_device), "input_file": str(data_file),
                    "image_shape": list(image.shape),
                    "image_residual_final_level": summarize_residuals(logger["recon_residuals_by_level"][-1]),
                    "motion_residual_final_level": summarize_residuals(logger["motion_residuals_by_level"][-1]),
                    "ground_truth_metrics": "unavailable for real-world data"}
         write_reconstruction(params, image, motion)
         write_json(Path(params.run_folder) / "manual_validation.json", metrics)
-        reconstructor.finish_run()
         print(json.dumps(metrics, indent=2), flush=True)
         print_step(label, "END", "metrics and output")
     print("=" * 72, flush=True)
@@ -81,7 +76,7 @@ def run_reconstruction(data_file, device, output_root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
+    parser.add_argument("--device", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--data-file", type=Path, default=ROOT / "demos_data/demo_breast_data.h5")
     parser.add_argument("--output-root", type=Path, default=ROOT / "runs")
     args = parser.parse_args()

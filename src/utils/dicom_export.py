@@ -77,12 +77,13 @@ def write_reconstruction_dicom(
 
 def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
                         reference_dicom_path=None):
-    """Export [Nx, Ny, Nz] as a single-frame MR series on its native grid.
+    """Export a postprocessed [Nx, Ny, Nz] volume as a single-frame MR series.
 
     Siemens 3D acquisition positions describe the slab center, not kz partitions.
-    Expand that center along slice_dir using encoded z FOV (no z crop is applied
-    by the reconstruction pipeline). Donors provide public metadata, while the
-    reconstructed grid supplies geometry, including when donor resolution differs.
+    Expand that center along slice_dir using encoded z spacing, even if the
+    exported volume was zero-filled or cropped. Donors provide public metadata,
+    while the reconstructed grid supplies geometry, including when donor
+    resolution differs.
     """
     import ismrmrd
     from pydicom.uid import generate_uid
@@ -107,9 +108,10 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
                 raise ValueError('3D DICOM export requires one slab with consistent position and orientation.')
     nz = image.shape[-1]
     fov_z = float(enc.encodedSpace.fieldOfView_mm.z)
-    if not np.isfinite(fov_z) or fov_z <= 0:
-        raise ValueError('3D DICOM export requires a positive encoded z field of view.')
-    spacing = fov_z / nz
+    encoded_z = int(enc.encodedSpace.matrixSize.z)
+    if not np.isfinite(fov_z) or fov_z <= 0 or encoded_z <= 0:
+        raise ValueError('3D DICOM export requires a positive encoded z field of view and matrix size.')
+    spacing = fov_z / encoded_z
     geometries = {
         z: {**slab, 'position': (center + (z - (nz - 1) / 2) * spacing * direction).tolist(),
             'slice_thickness': spacing}

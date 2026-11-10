@@ -1,7 +1,6 @@
 # Data preparation architecture
 
-`DataPreparer` coordinates reconstruction preparation for one loaded slice or
-volume. Source loading belongs to [InputDataLoader](input_data_loading.md).
+`DataPreparer` coordinates reconstruction preparation for one loaded slice or volume. Source loading belongs to [InputDataLoader](input_data_loading.md).
 
 ## Data flow
 
@@ -20,48 +19,26 @@ flowchart TD
     class Loader,CSM,Calibration,Simulator,Sampling,Binner pythonClass
 ```
 
-`In` and `Out` refer to the source class of each arrow. `DataPreparer` passes
-inputs to each helper and collects its outputs; helpers do not transfer data
-directly to one another. The dotted edge is internal delegation from
-`MotionSamplingPreparer` to `MotionBinner`.
+`In` and `Out` refer to the source class of each arrow. `DataPreparer` passes inputs to each helper and collects its outputs; helpers do not transfer data directly to one another. The dotted edge is internal delegation from `MotionSamplingPreparer` to `MotionBinner`.
 
 ## Preparation state
 
-Loading and preparation are separate phases. `load_input_data()` must precede
-`prepare_reconstructor_inputs(...)`, which can succeed only once per preparer.
-Multi-slice pipelines copy the loaded preparer and its parameters for each
-slice; preparation copies the loader before selecting that slice.
+Loading and preparation are separate phases. `load_input_data()` must precede `prepare_reconstructor_inputs(...)`, which selects the reconstruction target and can succeed only once per preparer. Slice selection belongs to this phase; constructors only configure the input source. Multi-slice pipelines copy the loaded preparer and its parameters for each slice; preparation copies the loader before selecting that slice.
 
-Tensors initially share the loader's storage. Normalization and simulation
-replace the preparer's working k-space without modifying the retained
-acquisition. Imaging and reference k-space use the same normalization divisor,
-stored in `kspace_scale` for reconstruction.
+Tensors initially share the loader's storage. Normalization and simulation replace the preparer's working k-space without modifying the retained acquisition. Imaging and reference k-space use the same normalization divisor, stored in `kspace_scale` for reconstruction. Working k-space and `input_ifft_image` remain in preprocessing units; the exposed comparison images `image_no_moco` and simulated `image_ground_truth` use restored acquisition units, matching `JointReconstructor.run()` outputs.
 
-`DataPreparer` computes the coil-combined input image from repetition-averaged
-k-space and the estimated coil sensitivity maps. Recorded motion bypasses
-`MotionSimulator`; simulation replaces the working k-space and per-readout
-motion signal. Only simulation treats the input image as ground truth.
+`DataPreparer` computes the coil-combined input image from repetition-averaged k-space and the estimated coil sensitivity maps. Recorded motion bypasses `MotionSimulator`; simulation replaces the working k-space and per-readout motion signal. Only simulation treats the input image as ground truth.
 
 ## Sampling contract
 
-Readout indices are chronological `ky`, optional `kz`, and repetition indices.
-The initial sampling layout groups readouts for simulation. Binned sampling
-indices expand each readout over `kx` and flatten in `[kx, ky, kz]` order.
+Readout indices are chronological `ky`, optional `kz`, and repetition indices. The initial sampling layout groups readouts for simulation. Binned sampling indices expand each readout over `kx` and flatten in `[kx, ky, kz]` order.
 
-The per-readout motion signal has shape `[Nreadout, Nsensor]`; the representative
-`motion_signal` has shape `[Nmotion, Nsensor]`. The final `sampling_idx` is a
-nested `[Nex][Nmotion]` list of variable-length tensors. Empty states retain
-empty tensors so repetitions share the same state layout.
+The per-readout motion signal has shape `[Nreadout, Nsensor]`; the representative `motion_signal` has shape `[Nmotion, Nsensor]`. The final `sampling_idx` is a nested `[Nex][Nmotion]` list of variable-length tensors. Empty states retain empty tensors so repetitions share the same state layout.
 
-Without a motion signal, each readout becomes its own state within its
-repetition; labels and the representative signal are absent. Energy-based
-binning additionally requires prepared k-space.
+Without a motion signal, each readout becomes its own state within its repetition; labels and the representative signal are absent. Energy-based binning additionally requires prepared k-space.
 
-`GRICSPreparerAPI` reuses `MotionSamplingPreparer` for applications that already
-own their acquisition arrays. API usage is in the
-[integration API guide](../usage/api.md#data-preparation-api).
+The resulting tensors and sampling layout are consumed by [joint reconstruction](reconstruction.md).
 
-The resulting tensors and sampling layout are consumed by
-[joint reconstruction](reconstruction.md).
+`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [configuration guide](../usage/configuration/configuration.md) for its preparation and use.
 
-`DataPreparer` owns `grics_reference_image`, computed independently of the coil maps. See [calibration-weighted image configuration](../usage/configuration.md#calibration-weighted-image) for its preparation and use.
+`JointReconstructor.from_prepared_data(data)` maps the prepared `DataPreparer` to the solver's explicit tensor constructor without copying tensors. See the [standard reconstruction workflow](pipelines.md#standard-reconstruction).

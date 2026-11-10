@@ -1,6 +1,6 @@
 # MotionSimulator implementation details
 
-Source: [MotionSimulator](../../src/preprocessing/MotionSimulator.py). Configuration and signal definitions are in the [motion guide](../usage/motion.md).
+Source: [MotionSimulator](../../src/preprocessing/MotionSimulator.py). Configuration and signal definitions are in the [motion guide](../usage/configuration/motion.md).
 
 ## Synthetic acquisition
 
@@ -47,4 +47,4 @@ Here $P_{e,m}$ selects acquired samples, $S_c$ is the coil map, and $M_m$ is the
 
 ## Diagnostic image and reconstruction states
 
-The uncorrected diagnostic image averages k-space over repetitions, applies an inverse FFT, and combines coils with conjugated sensitivity maps. It is distinct from motion-corrected reconstruction. Simulated acquisition states can be finer than the reconstruction bins; [MotionBinner](motion_binner.md) groups the resulting readout signals separately. This allows testing reconstruction with fewer states (`N_motion_states`) than were used to generate the corruption. `seed_enabled` and `seed` control random draws; `use_deterministic_algorithms` separately requests deterministic kernels. `save_debug_plots` enables previews, and `flip_for_display` controls their orientation (also orienting generated non-rigid maps). `runtime_device` selects the preferred simulation device; CPU retry on CUDA memory exhaustion belongs to preparation, as described in the [motion guide](../usage/motion.md#motion-simulation).
+The uncorrected diagnostic image averages k-space over repetitions, applies an inverse FFT, and combines coils with conjugated sensitivity maps. It is distinct from motion-corrected reconstruction. Simulated acquisition states can be finer than the reconstruction bins; [MotionBinner](motion_binner.md) groups the resulting readout signals separately. This allows testing reconstruction with fewer states (`N_motion_states`) than were used to generate the corruption. `seed_enabled` and `seed` control random draws; `use_deterministic_algorithms` separately requests deterministic kernels. `save_debug_plots` enables previews, and `flip_for_display` controls their orientation (also orienting generated non-rigid maps). `runtime_device` selects the preferred simulation device; CPU retry on CUDA memory exhaustion belongs to preparation, as described in the [motion guide](../usage/configuration/motion.md#motion-simulation).

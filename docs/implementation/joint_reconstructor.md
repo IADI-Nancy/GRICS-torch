@@ -46,7 +46,7 @@ $$
 
 Here $b$ is the back-projected measured data before adding a centered prior. Non-rigid gradient regularization also uses $h_i$. Full-resolution spacing is supplied through the constructor argument `voxel_spacing_mm`; `kspace_scale` is also a constructor argument, derived upstream from `normalize_kspace`, `kspace_norm_mode`, and `kspace_norm_eps`.
 
-These scales are recomputed for each solve and override the proxy scale. If `cg_use_reg_scale_proxy=true`, a cached probe estimate is still computed but is not used in the effective weight.
+These scales are recomputed for each solve. Probe estimation is skipped in this mode, even when `cg_use_reg_scale_proxy=true`; that option affects only `direct` scaling.
 
 ### External image prior
 

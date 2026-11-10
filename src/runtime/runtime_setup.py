@@ -2,6 +2,7 @@ import atexit
 import gc
 import signal
 import sys
+from dataclasses import dataclass
 
 import torch
 import sigpy as sp
@@ -9,6 +10,14 @@ import sigpy as sp
 
 _GUARDS_INSTALLED = False
 _GPU_RUNTIME_ACTIVE = False
+
+
+@dataclass(frozen=True)
+class Runtime:
+    """Resolved compute devices for one initialized reconstruction workflow."""
+
+    sp_device: sp.Device
+    t_device: torch.device
 
 
 def cleanup_runtime():
@@ -59,6 +68,7 @@ def _install_runtime_safety_guards():
 
 
 def initialize_runtime(params, print_gpu_info=False):
+    """Initialize run state and return the resolved SigPy and Torch devices in Runtime."""
     global _GPU_RUNTIME_ACTIVE
     _install_runtime_safety_guards()
     from src.runtime.output_layout import RunOutputs
@@ -120,4 +130,4 @@ def initialize_runtime(params, print_gpu_info=False):
         torch.backends.cudnn.benchmark = False
 
     params._run_outputs.snapshot(params)
-    return sp_device, t_device
+    return Runtime(sp_device=sp_device, t_device=t_device)

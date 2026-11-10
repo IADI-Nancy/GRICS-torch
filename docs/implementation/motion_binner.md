@@ -1,6 +1,6 @@
 # MotionBinner implementation details
 
-Source: [MotionBinner](../../src/preprocessing/MotionBinner.py). Input normalization and state-count settings are described in the [motion guide](../usage/motion.md#motion-binning-and-reconstruction-states).
+Source: [MotionBinner](../../src/preprocessing/MotionBinner.py). Input normalization and state-count settings are described in the [motion guide](../usage/configuration/motion.md#motion-binning-and-reconstruction-states).
 
 ## State selection
 

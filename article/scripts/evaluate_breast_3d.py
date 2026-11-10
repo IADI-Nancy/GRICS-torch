@@ -22,7 +22,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from article.scripts.sharpness_index import sharpness_index
-from pipelines.siemens_breast_3d_lowres import RECONSTRUCTION_CONFIG, run_pipeline
+from article.scripts.breast_reconstruction import run_reconstruction
+from pipelines.siemens_breast_3d_lowres import RECONSTRUCTION_CONFIG
 from src.runtime.runtime_config import load_config
 
 DATABASE = Path("/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database")
@@ -136,12 +137,11 @@ def evaluate(ismrmrd_dir=DATABASE / "ISMRMRD", saec_dir=DATABASE / "SAEC",
                 input_file, physiological_file, prepared_output = prepared, None, None
             else:
                 input_file, physiological_file, prepared_output = raw, saec, prepared
-            result = run_pipeline(
+            result = run_reconstruction(
                 input_file, physiological_file,
                 output_root=results_folder / "runs" / raw.stem / mode,
                 reconstruction_config=config_path, device=device, overrides=overrides,
-                save_reconstruction_logs=True, save_reconstruction_tensors=True,
-                return_tensors=True, prepared_output_file=prepared_output, export_dicom=False)
+                prepared_output_file=prepared_output)
             validate_prepared_volume(prepared)
             image = result["reconstructions"][0]["image"]
             scores = score_volume(image)

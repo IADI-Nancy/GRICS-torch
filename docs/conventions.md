@@ -1,8 +1,6 @@
 # Data and coordinate conventions
 
-These conventions form the shared contract between data loading, preparation,
-and reconstruction. File-level input formats are described in the
-[input data guide](usage/input_formats.md).
+These conventions form the shared contract between data loading, preparation, and reconstruction. File-level input formats are described in the [input data guide](usage/configuration/input_formats.md).
 
 ## Symbols
 
@@ -26,28 +24,22 @@ and reconstruction. File-level input formats are described in the
 | Non-rigid motion model | `[Nalpha, Nx, Ny, (Nz), Ns]` |
 | Reconstructed image | `[Nx, Ny, (Nz)]` |
 
-Two-dimensional k-space and coil maps retain `Nz = 1`. The reconstructed image
-omits that singleton dimension.
+Two-dimensional k-space and coil maps retain `Nz = 1`. The reconstructed image omits that singleton dimension.
 
 ## Sampling indices
 
-Sampling indices are zero-based flattened spatial-grid indices, grouped as
-`SamplingIndices[Nex][Nm]`. Each group contains the samples acquired during one
-repetition and assigned to one motion state.
+Sampling indices are zero-based flattened spatial-grid indices, grouped as `SamplingIndices[Nex][Nm]`. Each group contains the samples acquired during one repetition and assigned to one motion state.
 
 The flattening order is:
 
 - 2D: `index = kx * Ny + ky`
 - 3D: `index = (kx * Ny + ky) * Nz + kz`
 
-Thus `kz` varies fastest in 3D, followed by `ky`, then `kx`. Chronological
-sampling arrays contain one `ky`, optional `kz`, and repetition index per
-readout; preparation expands each readout across all `kx` positions.
+Thus `kz` varies fastest in 3D, followed by `ky`, then `kx`. Chronological sampling arrays contain one `ky`, optional `kz`, and repetition index per readout; preparation expands each readout across all `kx` positions.
 
 ## Motion coordinates and units
 
-Motion components follow tensor-grid axes, not fixed patient-anatomical axes.
-Their anatomical interpretation depends on the acquisition orientation.
+Motion components follow tensor-grid axes, not fixed patient-anatomical axes. Their anatomical interpretation depends on the acquisition orientation.
 
 | Model | Component order | Internal units |
 | --- | --- | --- |
@@ -56,6 +48,4 @@ Their anatomical interpretation depends on the acquisition orientation.
 | 2D non-rigid | `[dx, dy]` | Displacement basis in pixels |
 | 3D non-rigid | `[dx, dy, dz]` | Displacement basis in voxels |
 
-Simulation configuration expresses translations and rotation centers in
-millimetres and rotations in degrees. Data-preparation helpers convert them to
-grid units and radians before reconstruction.
+Simulation configuration expresses translations and rotation centers in millimetres and rotations in degrees. Data-preparation helpers convert them to grid units and radians before reconstruction.

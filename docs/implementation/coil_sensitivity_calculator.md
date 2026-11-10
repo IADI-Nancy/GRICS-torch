@@ -53,7 +53,7 @@ $$
 S_c(r)=\frac{S_c^0(r)}{\max_{d,r'}|S_d^0(r')|}.
 $$
 
-A non-positive map maximum raises an error. This convention fixes global scale; it does not impose voxel-wise sum-of-squares unity. The reconstruction calibration image is prepared independently by `CalibrationImageCalculator`, using its own smoothing setting. See [calibration-weighted image configuration](../usage/configuration.md#calibration-weighted-image).
+A non-positive map maximum raises an error. This convention fixes global scale; it does not impose voxel-wise sum-of-squares unity. The reconstruction calibration image is prepared independently by `CalibrationImageCalculator`, using its own smoothing setting. See [calibration-weighted image configuration](../usage/configuration/configuration.md#loaded-automatically).
 
 ## Device and precision choices
 
