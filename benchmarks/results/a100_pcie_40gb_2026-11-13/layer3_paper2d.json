@@ -1,0 +1,24 @@
+{
+ "prep_s": 0.5875220550224185,
+ "run_s": [
+  3.1754017136991024,
+  2.4049011543393135,
+  2.3950317623093724
+ ],
+ "peak_GiB": 1.3946037292480469,
+ "shape": [
+  320,
+  532,
+  1
+ ],
+ "coils": 24,
+ "states": 4,
+ "image_abs_mean": 8.464207307112914e-05,
+ "motion_abs_max": 5.842264765457728,
+ "repo": "GRICS-torch-fast2",
+ "tag": "layer3",
+ "case": "paper2d",
+ "precision": "single",
+ "backend": "gather",
+ "gpu_util_during": "57 %"
+}
