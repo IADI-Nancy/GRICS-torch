@@ -128,17 +128,17 @@ Use `--device cpu` in every command for a CPU installation. Keep the standard re
 
 For Siemens users, run `python tests/validate_siemens_phantom_2d.py --device gpu` to check Siemens conversion, reconstruction, and DICOM export; use `--device cpu` for CPU execution. See the [Siemens phantom test](docs/usage/tests.md#siemens-phantom-check).
 
-## Performance changes (this fork)
+## What changed in this fork
 
-This repository is a fork of [IADI-Nancy/GRICS-torch](https://github.com/IADI-Nancy/GRICS-torch) that makes the
-GPU reconstruction 2.5 to 9 times faster on an A100 without changing the algorithm, the regularisation, the
-iteration counts or the stopping rules: coils are batched into one FFT per motion state, warps and their
-gradients are computed once per Gauss-Newton iteration, sparse warps are emitted pre-sorted, and the CG solver
-reads its scalars once per iteration. With the default settings the reconstructed images are identical to
-upstream (relative difference 0 to 3e-15). Two optional keys in the reconstruction TOML,
-`compute_precision = "single"` and `warp_backend = "gather"`, trade a 1e-6 relative difference for a further
-gain and 2.7x smaller stored operators. Details, measurements and figures: [docs/performance.md](docs/performance.md);
-reproduction: [benchmarks/README.md](benchmarks/README.md).
+Fork of [IADI-Nancy/GRICS-torch](https://github.com/IADI-Nancy/GRICS-torch) (main 4b9f2f5). Same algorithm, same configuration files; the differences are in how the operators use the GPU and in a few corrections.
+
+- Faster operators: one FFT per motion state over all coils, warps and their gradients computed once per Gauss-Newton iteration, sparse warps written already sorted, one host transfer per CG iteration. The default settings give the same images as upstream (differences at machine precision). Two optional keys in the reconstruction TOML, `compute_precision = "single"` and `warp_backend = "gather"`, give another factor at a 1e-6 relative difference. See [docs/performance.md](docs/performance.md).
+- Corrections: rotation factor in the rigid Jacobian, real-valued motion step, warm start rescaled between resolution levels, scale-independent CG guards, ESPIRiT fallback on the GPU, ISMRMRD reader driven by the header, and a few smaller ones. The ones that change the numerics can be switched back to the upstream behaviour in the TOML. See [docs/fixes.md](docs/fixes.md).
+- `benchmarks/run_all.sh` compares a checkout of upstream with this code on one GPU; `python -m pytest tests/unit` runs the tests of the corrections. See [benchmarks/README.md](benchmarks/README.md).
+
+![time per reconstruction](docs/figures/readme_timings.png)
+
+Time per reconstruction on the four shipped validation settings and on the Zenodo breast slice, same seeds, on an RTX PRO 6000 (workstation, GPU idle during the run) and on a dedicated A100 PCIe 40 GB. The labels give the factor over upstream.
 
 ## Documentation
 
