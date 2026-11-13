@@ -128,6 +128,8 @@ class ISMRMRDReader:
             if recon_x <= 0 or encoded_x % recon_x != 0 or encoded_x // recon_x not in (1, 2):
                 raise ValueError(f"Unsupported readout oversampling: encodedSpace.x={encoded_x}, reconSpace.x={recon_x}.")
             self._oversampling_factor = encoded_x // recon_x
+            if self._oversampling_factor == 1:
+                print("[ismrmrd] no readout oversampling declared (encodedSpace.x == reconSpace.x): the readout is kept whole.", flush=True)
 
             N_SLI = self._encoding_limit_size(limits.slice)
             # Nex currently follows repetition, not the Siemens average counter.
@@ -164,6 +166,8 @@ class ISMRMRDReader:
             else:
                 Nz = 1
                 z_size = N_SLI
+            if shift_y or shift_z:
+                print(f"[ismrmrd] k-space centre from the header: line indices shifted by {shift_y} (ky) and {shift_z} (kz) onto the {Ny} x {Nz} grid.", flush=True)
 
             self._raw_uses_kz_as_volume_axis = use_kz_as_volume_axis
             self._raw_n_slices = N_SLI
