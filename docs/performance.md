@@ -132,6 +132,12 @@ kernel launches and host synchronisations, which is what the batching and the as
 paper's 3D size class the batched code reaches about a quarter of the bandwidth bound; the Jacobian operators
 are the next target.
 
+A second run of `benchmarks/run_all.sh` on an idle NVIDIA RTX PRO 6000 Blackwell (fiber, 2026-11-13) is in
+`benchmarks/results/rtx_pro_6000_blackwell_2026-11-13/summary.md`: same identities (3.6e-16 double, 2.9e-7
+single), default settings 2.0 to 4.1x faster than upstream, single + gather 3.1 to 4.7x, Zenodo slice with the
+paper's config 11.8 -> 2.4 -> 1.8 s. The HPC study in `docs/hpc_roofline_study.md` explains the differences
+between the two GPUs.
+
 ## 5. Caveats
 
 - All timings are on one dedicated A100 PCIe 40 GB; on a shared GPU the upstream code, with its seven host
