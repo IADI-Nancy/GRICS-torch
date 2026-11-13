@@ -1,6 +1,6 @@
-# Fixes relative to upstream
+# GRICS-torch 3.0: corrections with respect to 2.0
 
-Problems found while reviewing IADI-Nancy/GRICS-torch (main 4b9f2f5, November 2026) and fixed here. Each one was reproduced on that commit before being changed; the scripts that reproduce them are in `tests/unit/`. Three of the fixes change the numerics of the solver and can be switched off in the reconstruction TOML to get the upstream results back (`jacobian_rotation_factor`, `motion_step_real`, `warm_start_rescale`); `benchmarks/recon_dump.py` does that with `GRICS_COMPAT=1`.
+Problems found in GRICS-torch 2.0 (IADI-Nancy/GRICS-torch, main 4b9f2f5, November 2026) and corrected in 3.0. Each one was reproduced on that commit before being changed; the scripts that reproduce them are in `tests/unit/`. Three of the fixes change the numerics of the solver and can be switched off in the reconstruction TOML to get the GRICS-torch 2.0 results back (`jacobian_rotation_factor`, `motion_step_real`, `warm_start_rescale`); `benchmarks/recon_dump.py` does that with `GRICS_COMPAT=1`.
 
 ## Data reading and preparation
 
@@ -34,7 +34,7 @@ Problems found while reviewing IADI-Nancy/GRICS-torch (main 4b9f2f5, November 20
 
 ## Validation with the corrections on
 
-Her four validation scripts (`tests/validate_shepp_logan_*.py`, 20 simulations each, frozen limits of upstream), run on this code with the default settings on an RTX PRO 6000, 2026-11-13:
+The four validation scripts of 2.0 (`tests/validate_shepp_logan_*.py`, 20 simulations each, frozen limits of GRICS-torch 2.0), run on GRICS-torch 3.0 with the default settings on an RTX PRO 6000, 2026-11-13:
 
 | batch | SSIM (limit) | NRMSE (limit) | verdict |
 |---|---|---|---|
@@ -43,8 +43,8 @@ Her four validation scripts (`tests/validate_shepp_logan_*.py`, 20 simulations e
 | 3D rigid | 0.954 (≥ 0.931) | 0.189 (≤ 0.232) | PASSED |
 | 3D non-rigid | 0.984 (≥ 0.964) | 0.108 (≤ 0.150) | PASSED |
 
-With the three switches off (`GRICS_COMPAT=1` in `benchmarks/run_all.sh`) the code reproduces upstream to machine precision: operator outputs within 3.6e-16 and the five reconstructions of the benchmark (four synthetic cases and the Zenodo breast slice) within 6.4e-15 in relative norm. With the corrections on, the images differ from upstream by 0.3 to 3.1 % and the motion by 1 to 17 %, and the raw NRMSE against the simulated truth is lower in three of the four synthetic cases (2D non-rigid 0.0546 to 0.0526, 3D rigid 0.2692 to 0.2637, 3D non-rigid 0.1054 to 0.1040; 2D rigid 0.5393 to 0.5416 raw, where the registered metrics above improve). Upstream's own 2D rigid batch on the same machine gives 0.909 and 0.0785; the other batches sit within their limits with similar margins. The rotations of these simulations are small (under 1°), so the Jacobian correction barely shows here; it matters for rotations of a few degrees. The unit tests in `tests/unit/` cover each fix in isolation (`python -m pytest tests/unit`).
+With the three switches off (`GRICS_COMPAT=1` in `benchmarks/run_all.sh`) the code reproduces GRICS-torch 2.0 to machine precision: operator outputs within 3.6e-16 and the five reconstructions of the benchmark (four synthetic cases and the Zenodo breast slice) within 6.4e-15 in relative norm. With the corrections on, the images differ from GRICS-torch 2.0 by 0.3 to 3.1 % and the motion by 1 to 17 %, and the raw NRMSE against the simulated truth is lower in three of the four synthetic cases (2D non-rigid 0.0546 to 0.0526, 3D rigid 0.2692 to 0.2637, 3D non-rigid 0.1054 to 0.1040; 2D rigid 0.5393 to 0.5416 raw, where the registered metrics above improve). GRICS-torch 2.0's own 2D rigid batch on the same machine gives 0.909 and 0.0785; the other batches sit within their limits with similar margins. The rotations of these simulations are small (under 1°), so the Jacobian correction barely shows here; it matters for rotations of a few degrees. The unit tests in `tests/unit/` cover each fix in isolation (`python -m pytest tests/unit`).
 
-## Left as upstream
+## Left as GRICS-torch 2.0
 
 `max_tx = 0.2` next to `max_ty = 2.0` in `rigid_2d_common.toml` and the breast configurations requiring an ISMRMRD header feed the frozen validation limits, so they are documented rather than changed. The DICOM export flips the pixel array while the orientation tags are derived from the unflipped directions; whether that compensates a scanner convention could not be checked without scanner DICOMs. The physiological time axis is anchored on the last imaging readout while SAEC uses its stop trigger, so a gap between the two shifts the physiological signal by that gap and `physio_clock_drift_seconds` cannot be used to compensate it for SAEC data.

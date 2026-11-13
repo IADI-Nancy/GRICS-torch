@@ -128,17 +128,17 @@ Use `--device cpu` in every command for a CPU installation. Keep the standard re
 
 For Siemens users, run `python tests/validate_siemens_phantom_2d.py --device gpu` to check Siemens conversion, reconstruction, and DICOM export; use `--device cpu` for CPU execution. See the [Siemens phantom test](docs/usage/tests.md#siemens-phantom-check).
 
-## What changed in this fork
+## GRICS-torch 3.0
 
-Fork of [IADI-Nancy/GRICS-torch](https://github.com/IADI-Nancy/GRICS-torch) (main 4b9f2f5). Same algorithm, same configuration files; the differences are in how the operators use the GPU and in a few corrections.
+This repository is GRICS-torch 3.0, based on GRICS-torch 2.0 (IADI-Nancy, commit 4b9f2f5). The reconstruction algorithm is the same.
 
-- Faster operators: one FFT per motion state over all coils, warps and their gradients computed once per Gauss-Newton iteration, sparse warps written already sorted, one host transfer per CG iteration. The default settings give the same images as upstream (differences at machine precision). Two optional keys in the reconstruction TOML, `compute_precision = "single"` and `warp_backend = "gather"`, give another factor at a 1e-6 relative difference. See [docs/performance.md](docs/performance.md).
-- Corrections: rotation factor in the rigid Jacobian, real-valued motion step, warm start rescaled between resolution levels, scale-independent CG guards, ESPIRiT fallback on the GPU, ISMRMRD reader driven by the header, and a few smaller ones. The ones that change the numerics can be switched back to the upstream behaviour in the TOML. See [docs/fixes.md](docs/fixes.md).
-- `benchmarks/run_all.sh` compares a checkout of upstream with this code on one GPU; `python -m pytest tests/unit` runs the tests of the corrections. See [benchmarks/README.md](benchmarks/README.md).
+- GPU implementation of the encoding operator and of its Jacobian: coils batched in one FFT per motion state, warped images and gradients cached per Gauss-Newton iteration, coalesced sparse warps, one host synchronisation per CG iteration. Optional single precision and gather-based warps (`compute_precision`, `warp_backend`). Details: [docs/performance.md](docs/performance.md).
+- Corrections to the solver and to the data readers: [docs/fixes.md](docs/fixes.md). The corrections that change the numerics have a switch in the reconstruction TOML.
+- Benchmarks against 2.0 ([benchmarks/](benchmarks/README.md)) and unit tests (`python -m pytest tests/unit`).
 
-![time per reconstruction](docs/figures/readme_timings.png)
+![](docs/figures/readme_timings.png)
 
-Time per reconstruction on the four shipped validation settings and on the Zenodo breast slice, same seeds, on an RTX PRO 6000 (workstation, GPU idle during the run) and on a dedicated A100 PCIe 40 GB. The labels give the factor over upstream.
+Reconstruction time for the four shipped validation settings and the Zenodo breast slice, same seeds, on an RTX PRO 6000 and on an A100 PCIe 40 GB. Labels: speed-up with respect to 2.0.
 
 ## Documentation
 
