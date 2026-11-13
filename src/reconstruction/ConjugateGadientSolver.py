@@ -159,6 +159,10 @@ class ConjugateGradientSolver:
         """
         context = nullcontext() if differentiable else torch.no_grad()
         with context:
+            # Same iteration, same stopping rules and same candidate selection as the reference
+            # implementation. The only change is how scalars reach the host: all comparisons of one
+            # iteration are made on values moved in a single transfer, instead of one synchronisation
+            # per comparison, so the GPU queue is drained once per iteration (twice on refresh steps).
             b = b.to(self.device)
             n = b.numel()
 
@@ -168,19 +172,10 @@ class ConjugateGradientSolver:
                 x = x0.clone().to(self.device)
 
             # Here A includes regularization: A(x) = E^H E(x) + lambda_eff R(x).
-            # For a motion solve, E is the linearized motion operator J.
             Ax = self._A(x)
-
-            # The "true residual" is b - A(x), evaluated directly at the current x.
-            # It measures how well x solves this regularized linear system.
-            # It is NOT the k-space data mismatch y - E(x), nor an error against
-            # a known ground-truth image/motion. "True" means directly recomputed;
-            # this calculation still has ordinary floating-point rounding error.
+            # The "true residual" is b - A(x), evaluated directly at the current x (see the reference).
             r = b - Ax
             b_norm = torch.linalg.norm(b) + 1e-12
-            # Convergence means ||b - A(x)|| / ||b|| <= tol (with a tiny guard
-            # in b_norm for zero RHS). This is a residual tolerance, not a direct
-            # bound on image or motion error.
             tolb = tol * b_norm
 
             z = r.clone() if self.preconditioner is None else self.preconditioner(r)
@@ -196,13 +191,14 @@ class ConjugateGradientSolver:
                 stagnation_countdown_steps = max(1, int(self.stagnation_countdown_steps))
             iters_done = 0
             res_norm = torch.linalg.norm(r)
-            rel_res = (res_norm / b_norm).item()
-            residual_norm_history = [float(res_norm.item())]
+            res_norm_v, b_norm_v, tolb_v = torch.stack([res_norm, b_norm, tolb]).tolist()
+            rel_res = res_norm_v / b_norm_v
+            residual_norm_history = [float(res_norm_v)]
             relres_history = [float(rel_res)]
-            converged = bool(res_norm <= tolb)
+            converged = bool(res_norm_v <= tolb_v)
             stop_reason = "initial_tolerance"
             best_x = x.clone()
-            best_res_norm = res_norm
+            best_res_norm_v = res_norm_v
             best_iteration = 0
 
             for it in range(0 if converged else max_iter):
@@ -210,75 +206,55 @@ class ConjugateGradientSolver:
                 iters_done = it + 1
 
                 denom = torch.dot(torch.conj(p), Ap).real
-                if denom.abs() < 1e-15:
+                alpha = rz_old / denom
+                # Tiny-update test (numerical stagnation), evaluated on the device, read below.
+                tiny = torch.linalg.norm(p) * alpha.abs() < eps * torch.linalg.norm(x)
+
+                x_prev = x
+                x = x + alpha * p
+                # Cheap recursive residual: reuse Ap from this iteration.
+                r = r - alpha * Ap
+                res_norm = torch.linalg.norm(r)
+                # One host transfer for every scalar decision of this iteration.
+                denom_v, tiny_v, res_norm_v, rz_old_v = torch.stack(
+                    [denom, tiny.to(denom.dtype), res_norm, rz_old]).tolist()
+                if abs(denom_v) < 1e-15:
+                    # The reference breaks before applying this update.
+                    x = x_prev
                     stop_reason = "breakdown_denom"
                     break
-
-                alpha = rz_old / denom
-                # The proposed change is delta_x = alpha * p. If its norm is
-                # below machine precision times ||x||, adding it may barely
-                # change the stored iterate. Count consecutive such steps.
-                # This detects numerical stagnation, NOT a slowly decreasing
-                # residual or a visually unchanged reconstructed image.
-                if torch.linalg.norm(p) * alpha.abs() < eps * torch.linalg.norm(x):
+                if tiny_v != 0.0:
                     consecutive_tiny_updates += 1
                 else:
                     consecutive_tiny_updates = 0
-
-                x = x + alpha * p
-                # Cheap recursive residual: reuse Ap from this iteration.
-                # In exact arithmetic this equals b - A(x), since A is linear.
-                # In floating-point arithmetic, accumulated rounding can make
-                # this recursively updated r drift away from b - A(x).
-                r = r - alpha * Ap
-                res_norm = torch.linalg.norm(r)
-                # Recompute directly in four situations:
-                # 1. Periodically, to limit drift (not a stopping condition).
-                # 2. When r suggests convergence, to verify before accepting it.
-                # 3. When enough consecutive tiny updates suggest stagnation.
-                # 4. On every step of an already active stagnation countdown.
+                # Recompute the residual directly in the same four situations as the reference.
                 refresh_true_residual = (
                     (it + 1) % self.true_residual_interval == 0
-                    or res_norm <= tolb
+                    or res_norm_v <= tolb_v
                     or (self.stop_on_stagnation and consecutive_tiny_updates >= stagnation_consecutive_steps)
                     or (self.stop_on_stagnation and stagnation_countdown_elapsed > 0)
                 )
                 if refresh_true_residual:
-                    # Costs an extra A evaluation (encoding + adjoint, plus
-                    # regularization). Replace the accumulated residual with
-                    # a fresh one; this does not reset x or the search direction.
                     r = b - self._A(x)
                     res_norm = torch.linalg.norm(r)
-                    if res_norm < best_res_norm:
+                    res_norm_v = res_norm.item()
+                    if res_norm_v < best_res_norm_v:
                         best_x = x.clone()
-                        best_res_norm = res_norm
+                        best_res_norm_v = res_norm_v
                         best_iteration = iters_done
-                rel_res = (res_norm / b_norm).item()
-                # History uses the direct residual on refresh steps and the
-                # recursive residual on other steps.
-                residual_norm_history.append(float(res_norm.item()))
+                rel_res = res_norm_v / b_norm_v
+                residual_norm_history.append(float(res_norm_v))
                 relres_history.append(float(rel_res))
                 if self.verbose:
                     print(
-                        f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
+                        f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm_v:.6e}, "
                         f"Rel residual: {rel_res:.6e}"
                     )
-                # torch.cuda.synchronize()
 
-                # Any apparent convergence above has now been checked using
-                # the direct residual. This stop remains enabled even when
-                # stop_on_stagnation=False (that flag controls stagnation only).
-                if res_norm <= tolb:
+                if res_norm_v <= tolb_v:
                     converged = True
                     stop_reason = "tolerance"
                     break
-                # Only detected stagnation starts this countdown; routine
-                # residual refreshes must not start it. Allow a few more steps
-                # using freshly checked residuals before giving up.
-                # The triggering iteration counts as step 1, so a budget of 6
-                # allows at most 5 subsequent iterations. Once started, this
-                # countdown continues even if a later update is no longer tiny.
-                # Convergence or max_iter can still end the solve sooner.
                 if self.stop_on_stagnation and (consecutive_tiny_updates >= stagnation_consecutive_steps or stagnation_countdown_elapsed > 0):
                     if consecutive_tiny_updates >= stagnation_consecutive_steps and stagnation_countdown_elapsed == 0:
                         consecutive_tiny_updates = 0
@@ -290,7 +266,7 @@ class ConjugateGradientSolver:
                 z = r.clone() if self.preconditioner is None else self.preconditioner(r)
 
                 rz_new = torch.dot(torch.conj(r), z).real
-                if rz_old.abs() < 1e-15:
+                if abs(rz_old_v) < 1e-15:
                     stop_reason = "breakdown_rz"
                     break
                 beta = rz_new / rz_old
@@ -305,20 +281,20 @@ class ConjugateGradientSolver:
 
             # Verify the final candidate even when stopping between refreshes
             # or on breakdown. Selection always uses the unpreconditioned system.
-            res_norm = torch.linalg.norm(b - self._A(x))
-            final_rel_res = float((res_norm / b_norm).item())
-            converged = bool(res_norm <= tolb)
-            if converged or res_norm < best_res_norm:
+            res_norm_v = torch.linalg.norm(b - self._A(x)).item()
+            final_rel_res = float(res_norm_v / b_norm_v)
+            converged = bool(res_norm_v <= tolb_v)
+            if converged or res_norm_v < best_res_norm_v:
                 best_x = x
-                best_res_norm = res_norm
+                best_res_norm_v = res_norm_v
                 best_iteration = iters_done
 
             self.last_info = {
                 "flag": 0 if converged else 1,
                 "iterations": int(iters_done),
                 "selected_iteration": int(best_iteration),
-                "relres": float((best_res_norm / b_norm).item()),
-                "residual_norm": float(best_res_norm.item()),
+                "relres": float(best_res_norm_v / b_norm_v),
+                "residual_norm": float(best_res_norm_v),
                 "final_relres": final_rel_res,
                 "residual_norm_history": residual_norm_history,
                 "relres_history": relres_history,
