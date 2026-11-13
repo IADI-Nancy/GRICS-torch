@@ -15,10 +15,10 @@ Python 3.11 or newer is required (`tomllib`). The pins in `requirements.txt` are
 
 ## 2. Reference checkout
 
-GRICS-torch 2.0 is tagged `v2.0`. Put it in a sibling directory:
+Put a checkout of GRICS-torch 2.0 in a sibling directory, for example:
 
 ```bash
-git worktree add ../GRICS-torch-upstream v2.0
+git clone <GRICS-torch 2.0> ../GRICS-torch-upstream
 ```
 
 ## 3. Run
