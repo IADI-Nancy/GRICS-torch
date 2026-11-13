@@ -32,6 +32,15 @@ class MotionOperator:
 
     def _get_sparse_operator(self, motion_state):
         return self.sparseMotionOperator[motion_state]
+
+    def _get_sparse_operator_T(self, motion_state):
+        """Transposed (= adjoint, real weights) sparse operator, coalesced once and cached."""
+        cache = self.__dict__.setdefault("_sparseMotionOperatorT", {})
+        op_t = cache.get(motion_state)
+        if op_t is None:
+            op_t = self.sparseMotionOperator[motion_state].t().coalesce()
+            cache[motion_state] = op_t
+        return op_t
     
     # ---------------------------------------------------------
     # Rigid motion
@@ -172,6 +181,13 @@ class MotionOperator:
     # ------------------------ Geometric derivatives ----------------------------
 
     def _translation_derivative(self):
+        cached = self.__dict__.get("_translation_derivative_cache")
+        if cached is None:
+            cached = self._translation_derivative_uncached()
+            self.__dict__["_translation_derivative_cache"] = cached
+        return cached
+
+    def _translation_derivative_uncached(self):
         if self.Nz > 1:
             ones = torch.ones((self.Nx, self.Ny, self.Nz), device=self.device)
             zeros = torch.zeros_like(ones)
@@ -182,6 +198,12 @@ class MotionOperator:
 
 
     def _phi_derivative(self, motion_state):
+        cache = self.__dict__.setdefault("_phi_derivative_cache", {})
+        if motion_state not in cache:
+            cache[motion_state] = self._phi_derivative_uncached(motion_state)
+        return cache[motion_state]
+
+    def _phi_derivative_uncached(self, motion_state):
         phi = self.alpha[2,motion_state] 
         xmc = self.X - self.centers[0,motion_state]
         ymc = self.Y - self.centers[1,motion_state]
@@ -261,6 +283,12 @@ class MotionOperator:
         return dr_drx, dr_dry, dr_drz
 
     def _rigid_3d_rotation_derivatives(self, motion_state):
+        cache = self.__dict__.setdefault("_rotation_derivative_cache", {})
+        if motion_state not in cache:
+            cache[motion_state] = self._rigid_3d_rotation_derivatives_uncached(motion_state)
+        return cache[motion_state]
+
+    def _rigid_3d_rotation_derivatives_uncached(self, motion_state):
         _, _, _, _, rx, ry, rz = self._rigid_params_3d(motion_state)
         dr_drx, dr_dry, dr_drz = MotionOperator._rotation_matrix_derivatives_3d(rx, ry, rz)
         dr_drx = dr_drx.to(dtype=self.X.dtype, device=self.device)
@@ -492,8 +520,10 @@ class MotionOperator:
         # -----------------------------
         # Prepare row indices (same as repmat(1:N3i, 4, 1))
         # -----------------------------
-        row = torch.arange(1, N3i + 1, device=device, dtype=torch.long)
-        rowIndices = row.repeat(4) - 1   # PyTorch 0-based indexing
+        # Entries are emitted row by row, columns in increasing order
+        # (col1 < col3 < col2 < col4 for Ny >= 2), so the COO tensor is
+        # already coalesced and no sort is needed.
+        rowIndices = torch.arange(N3i, device=device, dtype=torch.long).repeat_interleave(4)
 
         # -----------------------------
         # Prepare column indices
@@ -510,7 +540,7 @@ class MotionOperator:
         col3 = (Yi_i_flat)     + (Xi_i_flat - 1) * Ny      # y+1
         col4 = (Yi_i_flat)     + (Xi_i_flat) * Ny          # x+1, y+1
 
-        colIndices = torch.cat([col1, col2, col3, col4], dim=0)
+        colIndices = torch.stack([col1, col3, col2, col4], dim=1).reshape(-1)
 
         # -----------------------------
         # Interpolation weights
@@ -528,13 +558,17 @@ class MotionOperator:
         val3 = d_x_xi   * d_y_yip1
         val4 = d_x_xip1 * d_y_yip1
 
-        values = torch.cat([val1, val2, val3, val4], dim=0)
+        values = torch.stack([val1, val3, val2, val4], dim=1).reshape(-1)
 
         # -----------------------------
         # Build sparse matrix
         # -----------------------------
         indices = torch.stack([rowIndices, colIndices], dim=0)
-        M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex128)
+        if Ny >= 2:
+            M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex128,
+                                        is_coalesced=True)
+        else:
+            M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex128).coalesce()
 
         return M
 
@@ -573,8 +607,10 @@ class MotionOperator:
         Zi_i = Zi.floor().clamp(1, z_hi)
 
         n = Nx * Ny * Nz
-        row = torch.arange(n, device=device, dtype=torch.long)
-        row_idx = row.repeat(8)
+        # Entries emitted row by row with columns in increasing order
+        # (c000 < c001 < c010 < c011 < c100 < c101 < c110 < c111 for Ny, Nz >= 2):
+        # the COO tensor is already coalesced, no sort needed.
+        row_idx = torch.arange(n, device=device, dtype=torch.long).repeat_interleave(8)
 
         xi = Xi_i.reshape(-1).long()
         yi = Yi_i.reshape(-1).long()
@@ -589,7 +625,7 @@ class MotionOperator:
         c101 = (xi * Ny + (yi - 1)) * Nz + zi
         c011 = ((xi - 1) * Ny + yi) * Nz + zi
         c111 = (xi * Ny + yi) * Nz + zi
-        col_idx = torch.cat([c000, c100, c010, c110, c001, c101, c011, c111], dim=0)
+        col_idx = torch.stack([c000, c001, c010, c011, c100, c101, c110, c111], dim=1).reshape(-1)
 
         Xi_f = Xi.reshape(-1)
         Yi_f = Yi.reshape(-1)
@@ -609,7 +645,10 @@ class MotionOperator:
         w101 = wx2 * wy1 * wz2
         w011 = wx1 * wy2 * wz2
         w111 = wx2 * wy2 * wz2
-        vals = torch.cat([w000, w100, w010, w110, w001, w101, w011, w111], dim=0)
+        vals = torch.stack([w000, w001, w010, w011, w100, w101, w110, w111], dim=1).reshape(-1)
 
         indices = torch.stack([row_idx, col_idx], dim=0)
+        if Ny >= 2 and Nz >= 2:
+            return torch.sparse_coo_tensor(indices, vals, size=(n, n), device=device, dtype=torch.complex128,
+                                           is_coalesced=True)
         return torch.sparse_coo_tensor(indices, vals, size=(n, n), device=device, dtype=torch.complex128).coalesce()
