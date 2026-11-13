@@ -231,8 +231,7 @@ class SAECReader:
             # Remove the outliers
             mean = np.mean(respiratory_data_filtered)
             sigma = np.std(respiratory_data_filtered)
-            respiratory_data_within_2_sigma = np.where(respiratory_data_filtered > mean + 2 * sigma, mean + 2 * sigma, respiratory_data_filtered)
-            respiratory_data_within_2_sigma = np.where(respiratory_data_filtered < mean - 2 * sigma, mean - 2 * sigma, respiratory_data_filtered)
+            respiratory_data_within_2_sigma = np.clip(respiratory_data_filtered, mean - 2 * sigma, mean + 2 * sigma)
             a2, a1, a0 = np.polyfit(timestamps, respiratory_data_within_2_sigma, 2)
 
             # Correction of the drift

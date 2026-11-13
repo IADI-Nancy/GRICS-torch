@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import numpy as np
 import torch
 
@@ -72,18 +74,67 @@ class CoilSensitivityCalculator:
         ).run()
         return self._maps_numpy_to_torch(maps_np, kspace_block.device)
 
+    @staticmethod
+    def _calibration_matrix_shape(kspace_block, calib_width, kernel_width):
+        ndim = kspace_block.ndim - 1
+        return (calib_width - kernel_width + 1) ** ndim, int(kspace_block.shape[0]) * kernel_width ** ndim
+
+    @staticmethod
+    def _gesvd_workspace_fits(cp, m, n):
+        """cuSOLVER refuses gesvd (INVALID_VALUE) once its workspace exceeds 2^31 elements."""
+        from cupy_backends.cuda.libs import cusolver
+        try:
+            cusolver.cgesvd_bufferSize(cp.cuda.device.get_cusolver_handle(), m, n)
+            return True
+        except cusolver.CUSOLVERError:
+            return False
+
+    @staticmethod
+    def _gram_svd(mat, full_matrices=False, compute_uv=True):
+        """S and V^H of a tall matrix from the eigendecomposition of A^H A (U is not needed by EspiritCalib)."""
+        import cupy as cp
+        gram = mat.conj().T @ mat
+        w, v = cp.linalg.eigh(gram)
+        order = cp.argsort(w)[::-1]
+        s = cp.sqrt(cp.maximum(w[order], 0))
+        vh = v[:, order].conj().T
+        return (None, s, vh) if compute_uv else s
+
     def _run_espirit_calibration_gpu(self, kspace_block, calib_width, kernel_width, sp_device):
         import cupy as cp
         import sigpy.mri as spmri
+        from contextlib import contextmanager
+
+        m, n = self._calibration_matrix_shape(kspace_block, calib_width, kernel_width)
+        use_gram = False
+        if not self._gesvd_workspace_fits(cp, m, n):
+            free_bytes, _ = cp.cuda.runtime.memGetInfo()
+            if 3 * n * n * 8 > free_bytes:
+                raise RuntimeError(
+                    f"cuSOLVER cannot factor the {m} x {n} ESPIRiT calibration matrix and its {n} x {n} Gram matrix "
+                    f"does not fit in GPU memory; reduce espirit_calibration_width / espirit_kernel_width or the coil count.")
+            print(f"[coil sensitivity] the {m} x {n} ESPIRiT calibration matrix exceeds the cuSOLVER SVD limit; "
+                  "using the Gram-matrix SVD on the GPU.", flush=True)
+            use_gram = True
+
+        @contextmanager
+        def gram_svd_in_cupy():
+            original = cp.linalg.svd
+            cp.linalg.svd = self._gram_svd
+            try:
+                yield
+            finally:
+                cp.linalg.svd = original
 
         kspace_cp = cp.asarray(kspace_block.contiguous(), dtype=cp.complex64)
-        maps_cp = spmri.app.EspiritCalib(
-            kspace_cp,
-            calib_width=calib_width,
-            kernel_width=kernel_width,
-            max_iter=self.params.espirit_max_iter,
-            device=sp_device,
-        ).run()
+        with gram_svd_in_cupy() if use_gram else nullcontext():
+            maps_cp = spmri.app.EspiritCalib(
+                kspace_cp,
+                calib_width=calib_width,
+                kernel_width=kernel_width,
+                max_iter=self.params.espirit_max_iter,
+                device=sp_device,
+            ).run()
         maps_cp = maps_cp.astype(cp.complex64, copy=False)
         maps_cp = cp.ascontiguousarray(maps_cp)
         maps_t = torch.view_as_real(torch.utils.dlpack.from_dlpack(maps_cp))
@@ -99,6 +150,7 @@ class CoilSensitivityCalculator:
             )
 
         import cupy as cp
+        from cupy_backends.cuda.libs import cusolver
 
         try:
             return self._run_espirit_calibration_gpu(
@@ -108,12 +160,18 @@ class CoilSensitivityCalculator:
             import sigpy as sp
 
             print("[coil sensitivity] GPU memory exhausted; running ESPIRiT on CPU.", flush=True)
-            self._cupy_cleanup(cp)
-            return self._run_espirit_calibration_cpu(
-                kspace_block, calib_width, kernel_width, sp_device=sp.Device(-1),
-            )
+        except (cusolver.CUSOLVERError, RuntimeError) as error:
+            # Upstream only caught out-of-memory, so a cuSOLVER failure (e.g. the 2^31 workspace
+            # limit with 7+ coils at the shipped 48/12 widths in 3D) crashed the preparation.
+            m, n = self._calibration_matrix_shape(kspace_block, calib_width, kernel_width)
+            print(f"[coil sensitivity] GPU ESPIRiT failed on the {m} x {n} calibration matrix ({error}); "
+                  "running ESPIRiT on CPU. This can take hours in 3D: consider smaller espirit widths.", flush=True)
         finally:
             self._cupy_cleanup(cp)
+        self._cupy_cleanup(cp)
+        return self._run_espirit_calibration_cpu(
+            kspace_block, calib_width, kernel_width, sp_device=sp.Device(-1),
+        )
 
     def calculate_espirit(self, kspace, reference_kspace=None):
         ncha, _, nx, ny, nz = kspace.shape

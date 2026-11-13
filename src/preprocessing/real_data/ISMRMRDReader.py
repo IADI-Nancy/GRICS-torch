@@ -60,6 +60,14 @@ class ISMRMRDReader:
         return max(1, int(val))
 
     @staticmethod
+    def _center_shift(limit_obj, size):
+        """Index offset that moves the declared k-space centre of an encoding axis to size // 2."""
+        center = getattr(limit_obj, "center", None) if limit_obj is not None else None
+        if center is None:
+            return 0
+        return size // 2 - int(center)
+
+    @staticmethod
     def _expanded_matrix_size(n_lines, accel):
         acquired_lines = math.ceil(float(n_lines) / float(accel))
         return int(2 * math.ceil((float(accel) * float(acquired_lines)) / 2.0))
@@ -114,6 +122,13 @@ class ISMRMRDReader:
             limits = enc.encodingLimits
             self._oversampling_factor = self._readout_oversampling_factor(enc)
 
+            # Readout oversampling from the header; upstream assumed 2x for every file and
+            # cropped half of the field of view when there was none.
+            encoded_x, recon_x = int(enc.encodedSpace.matrixSize.x), int(enc.reconSpace.matrixSize.x)
+            if recon_x <= 0 or encoded_x % recon_x != 0 or encoded_x // recon_x not in (1, 2):
+                raise ValueError(f"Unsupported readout oversampling: encodedSpace.x={encoded_x}, reconSpace.x={recon_x}.")
+            self._oversampling_factor = encoded_x // recon_x
+
             N_SLI = self._encoding_limit_size(limits.slice)
             # Nex currently follows repetition, not the Siemens average counter.
             # Our Siemens protocol uses two complementary averages at R=2 to
@@ -128,18 +143,24 @@ class ISMRMRDReader:
 
             Ny = self._encoding_limit_size(limits.kspace_encoding_step_1)
             Ry = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_1")
-            Ny = self._expanded_matrix_size(Ny, Ry)
+            Ny = max(self._expanded_matrix_size(Ny, Ry), int(enc.encodedSpace.matrixSize.y))
+            # Place the declared k-space centre at Ny // 2, where the centred FFT expects it.
+            # Upstream ignored encodingLimits.*.center; that only matters for asymmetric
+            # (partial-Fourier) index ranges that do not start at the grid origin.
+            shift_y = self._center_shift(limits.kspace_encoding_step_1, Ny)
 
             # Heuristic: multi-slice acquisitions are treated as 2D stacks,
             # while slab acquisitions (typically one encoded slice with kz partitions)
             # use kspace_encode_step_2 as the volume axis.
             use_kz_as_volume_axis = (N_SLI <= 1) and (Nz_native > 1)
+            shift_z = 0
             if use_kz_as_volume_axis:
                 Rz = self._accel_factor_or_one(
                     getattr(enc, "parallelImaging", None), "kspace_encoding_step_2"
                 )
-                Nz = self._expanded_matrix_size(Nz_native, Rz)
+                Nz = max(self._expanded_matrix_size(Nz_native, Rz), int(enc.encodedSpace.matrixSize.z))
                 z_size = Nz
+                shift_z = self._center_shift(limits.kspace_encoding_step_2, Nz)
             else:
                 Nz = 1
                 z_size = N_SLI
@@ -164,11 +185,15 @@ class ISMRMRDReader:
                 if _is_noise(acq) or _is_non_imaging(acq):
                     continue
 
-                ky = int(acq.idx.kspace_encode_step_1)
-                kz = int(acq.idx.kspace_encode_step_2)
+                ky = int(acq.idx.kspace_encode_step_1) + shift_y
+                kz = int(acq.idx.kspace_encode_step_2) + shift_z
                 rep = int(acq.idx.repetition)
                 sli = int(acq.idx.slice)
                 ts = float(acq.acquisition_time_stamp)
+                if not 0 <= ky < Ny or (use_kz_as_volume_axis and not 0 <= kz < Nz):
+                    raise ValueError(
+                        f"Acquisition {i}: line (ky={ky - shift_y}, kz={kz - shift_z}) falls outside the "
+                        f"{Ny} x {Nz} encoded grid after centring; check encodingLimits in the header.")
 
                 nex = rep
                 if use_kz_as_volume_axis:
@@ -195,6 +220,7 @@ class ISMRMRDReader:
                         dtype=torch.bool,
                         device=self.device,
                     )
+                    line_count = torch.zeros((Nex, Ny, z_size), dtype=torch.int32, device=self.device)
 
                 timestamps.append(ts)
                 z_indices.append(z)
@@ -211,7 +237,13 @@ class ISMRMRDReader:
                         "patient_position": str(patient_position).split(".")[-1] if patient_position is not None else None,
                     }
                 nex_values_seen.add(nex)
-                kspace[:, nex, :, ky, z] = acq_data
+                # A line acquired more than once in the same repetition (averages) is averaged;
+                # upstream silently kept the last one.
+                if line_count[nex, ky, z] > 0:
+                    kspace[:, nex, :, ky, z] += acq_data
+                else:
+                    kspace[:, nex, :, ky, z] = acq_data
+                line_count[nex, ky, z] += 1
 
                 if _is_parallel_calibration(acq):
                     if reference_line_seen[ky, z]:
@@ -225,6 +257,12 @@ class ISMRMRDReader:
 
             if kspace is None or len(timestamps) == 0:
                 raise ValueError("No acquisitions were mapped into the output tensor.")
+
+            repeated = line_count > 1
+            if bool(torch.any(repeated)):
+                print(f"[ismrmrd] {int(repeated.sum().item())} (ky, kz, repetition) lines were acquired more than once; "
+                      "their readouts are averaged. Each readout keeps its own physiological sample.", flush=True)
+                kspace = kspace / line_count.clamp(min=1).to(kspace.dtype).reshape(1, Nex, 1, Ny, z_size)
 
             timestamps = torch.tensor(timestamps, device=self.device)
             timestamps = (timestamps - timestamps[-1]) * 2.5e-3

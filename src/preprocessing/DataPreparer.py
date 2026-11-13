@@ -134,6 +134,13 @@ class DataPreparer:
         """Return encoded spacing for voxel-aware reconstruction; otherwise None."""
         if self.params.regularization_scaling != "voxel_aware":
             return None
+        spacing = getattr(self.params, "voxel_spacing_mm", None)
+        if spacing is not None:
+            # Files without an ISMRMRD header (e.g. the Zenodo demo) take the spacing from the config.
+            expected = 3 if self.params.data_dimension == "3D" else 2
+            if len(spacing) != expected:
+                raise ValueError(f"voxel_spacing_mm must have {expected} entries for {self.params.data_dimension} data.")
+            return tuple(float(v) for v in spacing)
         from src.utils.ismrmrd_io import acquisition_header
 
         encoding = acquisition_header(self).encoding[0].encodedSpace
