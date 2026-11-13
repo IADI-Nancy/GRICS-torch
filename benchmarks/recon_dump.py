@@ -26,6 +26,8 @@ ov = {"workflow_label": f"recon_dump_{CASE}", "output_root": str(Path(S) / "runs
       "save_reconstruction_tensors": False, "verbose": False, "print_to_console": False}
 if PRECISION: ov["compute_precision"] = PRECISION
 if len(sys.argv) > 6: ov["warp_backend"] = sys.argv[6]
+if os.environ.get("GRICS_COMPAT") == "1":      # upstream numerics: solver corrections off
+    ov.update({"jacobian_rotation_factor": False, "motion_step_real": False, "warm_start_rescale": False})
 kw = dict(data_type=data_type, reconstruction_config=str(REPO / "config/reconstruction" / recon), overrides=ov)
 if sampling: kw["sampling_config"] = str(REPO / "config/sampling_simulation" / sampling)
 if motion: kw["motion_simulation_config"] = str(REPO / "config/motion_simulation" / motion)

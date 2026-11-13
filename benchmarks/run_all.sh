@@ -10,7 +10,7 @@ REF=$(cd "$1" && pwd); FAST=$(cd "${2:-$REPO}" && pwd)
 export GRICS_BENCH_BASE=${GRICS_BENCH_BASE:-$HERE/out}; B=$GRICS_BENCH_BASE
 export GRICS_DEMO_H5=${GRICS_DEMO_H5:-$HERE/data/demo_breast_data.h5}
 PY=${GRICS_BENCH_PY:-python}
-mkdir -p "$B/recon_reference" "$B/recon_batched_double" "$B/recon_batched_single"
+mkdir -p "$B/recon_reference" "$B/recon_compat" "$B/recon_batched_double" "$B/recon_batched_single"
 cd "$HERE"
 echo "=== node $(hostname) $(date)"; nvidia-smi --query-gpu=name,driver_version,utilization.gpu,memory.used --format=csv,noheader
 echo "=== reference: $REF ($(git -C "$REF" rev-parse --short HEAD 2>/dev/null || echo 'no git'))"
@@ -23,10 +23,13 @@ for t in batched_double batched_single_gather; do echo "--- operators $t vs refe
 echo "=== reconstructions $(date)"
 for case in 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; do
   $PY recon_dump.py "$REF" $case "$B/recon_reference/$case.pt" 2>&1 | grep -E "run\(\)|Error"
+  GRICS_COMPAT=1 $PY recon_dump.py "$FAST" $case "$B/recon_compat/$case.pt" 2>&1 | grep -E "run\(\)|Error"
   $PY recon_dump.py "$FAST" $case "$B/recon_batched_double/$case.pt" 2>&1 | grep -E "run\(\)|Error"
   $PY recon_dump.py "$FAST" $case "$B/recon_batched_single/$case.pt" 20261101 single gather 2>&1 | grep -E "run\(\)|Error"
 done
-for t in batched_double batched_single; do echo "--- reconstructions $t vs reference"; $PY compare_recons.py "$B/recon_reference" "$B/recon_$t" 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; done
+echo "--- reconstructions, upstream numerics (GRICS_COMPAT=1) vs reference: must be identical"
+$PY compare_recons.py "$B/recon_reference" "$B/recon_compat" 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real
+for t in batched_double batched_single; do echo "--- reconstructions $t (solver corrections on) vs reference: differences expected"; $PY compare_recons.py "$B/recon_reference" "$B/recon_$t" 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; done
 echo "=== roofline model $(date)"; $PY roofline.py "$REF" "$FAST" "$FAST" "$B/roofline.json" 2>&1 | grep -v Warning
 echo "=== paper-size 2D slice (Zenodo breast slice, nonrigid_2d.toml, 3 repeats) $(date)"
 $PY paper_size_bench.py "$REF" reference paper2d 2>&1 | grep -E "run |reference|Error"

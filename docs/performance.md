@@ -6,6 +6,8 @@ Fork of [IADI-Nancy/GRICS-torch](https://github.com/IADI-Nancy/GRICS-torch) at m
 
 ## 1. What changed
 
+The numbers in this document were measured with the performance changes alone (commits `7e7f42b` to `ca0007b`). The solver corrections of `docs/fixes.md` came later and are on by default; `jacobian_rotation_factor = false`, `motion_step_real = false` and `warm_start_rescale = false` in the reconstruction TOML give the upstream numerics back, and that is the setting the identity figures below refer to.
+
 **Batched operators, same arithmetic (commit `7e7f42b`).** Relative differences to upstream 4e-16, i.e. summation order only.
 
 1. The coil axis is one batched tensor: one FFT call per motion state instead of one per coil, in the forward, adjoint and normal operators.

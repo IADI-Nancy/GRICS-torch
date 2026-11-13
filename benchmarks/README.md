@@ -38,7 +38,7 @@ What `run_all.sh` does, in order:
 | roofline model | `roofline.py` | measured device ceilings (copy bandwidth, FP32/FP64 matmul, 3D FFT) and, per operator call, the bytes the batched formulation must move, hence the fraction of the bandwidth bound each code reaches |
 | paper-size 2D | `paper_size_bench.py` | the Zenodo slice with `nonrigid_2d.toml` (the paper's 2D setting), 3 repeats, peak memory |
 
-Each script can also be run on its own; the usage line is in its docstring. Two variants of this repository are timed: the default settings (double precision, sparse warps) and `compute_precision = "single"` + `warp_backend = "gather"`, passed as the trailing `single gather` arguments.
+Each script can also be run on its own; the usage line is in its docstring. Two variants of this repository are timed: the default settings (double precision, sparse warps) and `compute_precision = "single"` + `warp_backend = "gather"`, passed as the trailing `single gather` arguments. A third run with `GRICS_COMPAT=1` switches the solver corrections of `docs/fixes.md` off; that run must be identical to upstream (relative difference at machine precision), the other two differ from upstream by the corrections.
 
 Optional, not part of `run_all.sh`: `paper_size_bench.py <repo> <tag> paper3d|brain [single gather]` (synthetic 3D at the paper's size class and at 256×208×160) and `slice_concurrency.py` (several slices per GPU). `profile_recon.py` prints where the time of one reconstruction goes (operator calls, CG, operator builds).
 
