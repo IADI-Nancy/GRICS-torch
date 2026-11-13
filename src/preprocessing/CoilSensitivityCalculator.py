@@ -87,8 +87,8 @@ class CoilSensitivityCalculator:
         return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
 
     def _run_espirit_calibration(self, kspace_block, calib_width, kernel_width):
-        use_gpu = kspace_block.device.type == "cuda"
         sp_device = self._resolved_espirit_device(kspace_block)
+        use_gpu = sp_device.id >= 0
 
         if not use_gpu:
             return self._run_espirit_calibration_cpu(
