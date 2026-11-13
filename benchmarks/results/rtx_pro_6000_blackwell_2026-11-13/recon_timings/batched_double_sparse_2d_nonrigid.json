@@ -1,0 +1,8 @@
+{
+ "tag": "batched_double_sparse",
+ "case": "2d_nonrigid",
+ "precision": "none",
+ "backend": "none",
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "elapsed_s": 0.9668348120176233
+}

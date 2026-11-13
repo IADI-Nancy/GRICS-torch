@@ -1,0 +1,8 @@
+{
+ "tag": "batched_single_gather",
+ "case": "2d_rigid",
+ "precision": "single",
+ "backend": "gather",
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "elapsed_s": 0.6152070249663666
+}

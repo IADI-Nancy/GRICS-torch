@@ -1,0 +1,8 @@
+{
+ "tag": "batched_single_gather",
+ "case": "real",
+ "precision": "single",
+ "backend": "gather",
+ "gpu": "NVIDIA A100-PCIE-40GB",
+ "elapsed_s": 2.4219432435929775
+}

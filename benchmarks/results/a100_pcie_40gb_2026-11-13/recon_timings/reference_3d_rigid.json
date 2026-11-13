@@ -1,0 +1,8 @@
+{
+ "tag": "reference",
+ "case": "3d_rigid",
+ "precision": "none",
+ "backend": "none",
+ "gpu": "NVIDIA A100-PCIE-40GB",
+ "elapsed_s": 14.417660587467253
+}
