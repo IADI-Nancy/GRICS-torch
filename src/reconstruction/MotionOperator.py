@@ -14,7 +14,17 @@ Translational and rotational motion derivatives:
 
 
 class MotionOperator:
-    def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None, Nz=1):
+    def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None, Nz=1, compute_dtype=torch.complex128,
+                 warp_backend="sparse"):
+        # Arithmetic precision of the warps (complex64 or complex128); the geometry stays float64.
+        self.compute_dtype = compute_dtype
+        # "sparse": one sparse COO matrix per state (reference layout). "gather": neighbour indices and
+        # weights per state, applied as a gather (forward) and an index_add (adjoint); same arithmetic,
+        # about 4x less memory and no transposed copies.
+        if warp_backend not in ("sparse", "gather"):
+            raise ValueError('warp_backend must be "sparse" or "gather".')
+        self.warp_backend = warp_backend
+        self._real_dtype = torch.float32 if compute_dtype == torch.complex64 else torch.float64
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = int(Nz)
@@ -31,7 +41,78 @@ class MotionOperator:
             raise ValueError(f"Unknown motion type: {motion_type}")    
 
     def _get_sparse_operator(self, motion_state):
+        if self.warp_backend == "gather":
+            # Legacy consumers (preconditioner, simulator) get a lazily materialised sparse view.
+            cache = self.__dict__.setdefault("_sparse_view_cache", {})
+            op = cache.get(motion_state)
+            if op is None:
+                idx, w = self.gatherMotionOperator[motion_state]
+                n = idx.shape[1]
+                rows = torch.arange(n, device=idx.device).repeat_interleave(idx.shape[0])
+                op = torch.sparse_coo_tensor(torch.stack([rows, idx.t().reshape(-1)]), w.t().reshape(-1).to(self.compute_dtype),
+                                             (n, n), is_coalesced=True)
+                cache[motion_state] = op
+            return op
         return self.sparseMotionOperator[motion_state]
+
+    # ---- batched (all states at once) application for the gather backend ----
+    def _gather_tables(self):
+        """Stacked neighbour indices [Nm, K, N] and weights [Nm, K, N] of all states (gather backend)."""
+        tabs = self.__dict__.get("_gather_tables_cache")
+        if tabs is None:
+            tabs = (torch.stack([t[0] for t in self.gatherMotionOperator]), torch.stack([t[1] for t in self.gatherMotionOperator]))
+            self.__dict__["_gather_tables_cache"] = tabs
+        return tabs
+
+    def state_chunks(self, bytes_per_state, budget_bytes=None):
+        """Split the states into chunks so that one intermediate of `bytes_per_state` per state stays within a budget."""
+        import os
+        n_states = len(self.gatherMotionOperator) if self.warp_backend == "gather" else len(self.sparseMotionOperator)
+        if budget_bytes is None:
+            budget_bytes = int(float(os.environ.get("GRICS_STATE_BATCH_BUDGET_GB", "2")) * 2**30)
+        chunk = max(1, min(n_states, int(budget_bytes // max(1, bytes_per_state))))
+        return [(s, min(s + chunk, n_states)) for s in range(0, n_states, chunk)]
+
+    def warp_all(self, x_flat, states=None):
+        """Warped images of several states at once: [n_states, N] (gather backend)."""
+        idx, w = self._gather_tables()
+        if states is not None:
+            idx, w = idx[states[0]:states[1]], w[states[0]:states[1]]
+        return (w * x_flat[idx]).sum(dim=1)
+
+    def warp_T_all(self, y_states, states=None):
+        """Sum over states of the transposed warps applied to y_states [n_states, N] (gather backend)."""
+        idx, w = self._gather_tables()
+        if states is not None:
+            idx, w = idx[states[0]:states[1]], w[states[0]:states[1]]
+        out = torch.zeros(y_states.shape[-1], dtype=y_states.dtype, device=y_states.device)
+        out.index_add_(0, idx.reshape(-1), (w * y_states.unsqueeze(1)).reshape(-1))
+        return out
+
+    def warp(self, x_flat, motion_state):
+        """Apply the interpolating warp of one state to a flattened image."""
+        if self.warp_backend == "gather":
+            idx, w = self.gatherMotionOperator[motion_state]
+            return (w * x_flat[idx]).sum(dim=0)
+        return self.sparseMotionOperator[motion_state] @ x_flat
+
+    def warp_T(self, y_flat, motion_state):
+        """Apply the transposed (= adjoint, real weights) warp of one state."""
+        if self.warp_backend == "gather":
+            idx, w = self.gatherMotionOperator[motion_state]
+            out = torch.zeros_like(y_flat)
+            out.index_add_(0, idx.reshape(-1), (w * y_flat.unsqueeze(0)).reshape(-1))
+            return out
+        return self._get_sparse_operator_T(motion_state) @ y_flat
+
+    def _store(self, motion_state_op):
+        """Store the operator of one state in the layout of the selected backend."""
+        if self.warp_backend == "gather":
+            idx, w = motion_state_op
+            self.gatherMotionOperator.append((idx, w.to(self._real_dtype)))
+        else:
+            idx, w = motion_state_op
+            self.sparseMotionOperator.append(MotionOperator._sparse_from_indices_weights(idx, w, self.compute_dtype))
 
     def _get_sparse_operator_T(self, motion_state):
         """Transposed (= adjoint, real weights) sparse operator, coalesced once and cached."""
@@ -72,6 +153,7 @@ class MotionOperator:
         X, Y = torch.meshgrid(xs, ys, indexing="ij")
 
         self.sparseMotionOperator = []
+        self.gatherMotionOperator = []
 
         for motion_state in range(alpha.shape[1]):
             tx = alpha[0, motion_state]
@@ -92,8 +174,7 @@ class MotionOperator:
             Ux = Xp - X
             Uy = Yp - Y
 
-            motion_op = MotionOperator._create_sparse_motion_operator_2d(Ux, Uy)
-            self.sparseMotionOperator.append(motion_op)
+            self._store(MotionOperator._interp_indices_weights_2d(Ux, Uy))
 
     @staticmethod
     def _rotation_matrix_3d(rx, ry, rz):
@@ -145,6 +226,7 @@ class MotionOperator:
 
         X, Y, Z = self.X, self.Y, self.Z
         self.sparseMotionOperator = []
+        self.gatherMotionOperator = []
 
         n_params = int(alpha.shape[0])
         if n_params != 6:
@@ -175,8 +257,7 @@ class MotionOperator:
             uy = yp - Y
             uz = zp - Z
 
-            motion_op = MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
-            self.sparseMotionOperator.append(motion_op)
+            self._store(MotionOperator._interp_indices_weights_3d(ux, uy, uz))
 
     # ------------------------ Geometric derivatives ----------------------------
 
@@ -413,6 +494,7 @@ class MotionOperator:
             )
 
         self.sparseMotionOperator = []
+        self.gatherMotionOperator = []
         n_states = int(signal.shape[0])
         n_sensor = int(signal.shape[1])
         if self.Nz > 1:
@@ -431,8 +513,7 @@ class MotionOperator:
                 ux = torch.sum(alpha[0] * weights, dim=-1)
                 uy = torch.sum(alpha[1] * weights, dim=-1)
                 uz = torch.sum(alpha[2] * weights, dim=-1)
-                motion_op = MotionOperator._create_sparse_motion_operator_3d(ux, uy, uz)
-                self.sparseMotionOperator.append(motion_op)
+                self._store(MotionOperator._interp_indices_weights_3d(ux, uy, uz))
         else:
             # Axis convention:
             # alpha[0] -> Ux -> axis 0 displacement (rows)
@@ -451,8 +532,7 @@ class MotionOperator:
                 weights = signal[motion_state].reshape(1, 1, n_sensor)
                 ux = torch.sum(alpha[0] * weights, dim=-1)
                 uy = torch.sum(alpha[1] * weights, dim=-1)
-                motion_op = MotionOperator._create_sparse_motion_operator_2d(ux, uy)
-                self.sparseMotionOperator.append(motion_op)
+                self._store(MotionOperator._interp_indices_weights_2d(ux, uy))
 
 
 
@@ -462,7 +542,7 @@ class MotionOperator:
     # ---------------------------------------------------------------------------------
 
     @staticmethod
-    def _create_sparse_motion_operator_2d(Ux, Uy):
+    def _interp_indices_weights_2d(Ux, Uy):
         """
         PyTorch version of MATLAB _create_sparse_motion_operator.
         Produces a sparse linear interpolation matrix M for the displacement fields Ux, Uy.
@@ -558,22 +638,32 @@ class MotionOperator:
         val3 = d_x_xi   * d_y_yip1
         val4 = d_x_xip1 * d_y_yip1
 
-        values = torch.stack([val1, val3, val2, val4], dim=1).reshape(-1)
-
-        # -----------------------------
-        # Build sparse matrix
-        # -----------------------------
-        indices = torch.stack([rowIndices, colIndices], dim=0)
-        if Ny >= 2:
-            M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex128,
-                                        is_coalesced=True)
-        else:
-            M = torch.sparse_coo_tensor(indices, values, size=(N3i, N3), device=device, dtype=torch.complex128).coalesce()
-
-        return M
+        # neighbour columns [4, N] and weights [4, N] in increasing column order per row
+        idx = torch.stack([col1, col3, col2, col4], dim=0)
+        w = torch.stack([val1, val3, val2, val4], dim=0)
+        return idx, w
 
     @staticmethod
-    def _create_sparse_motion_operator_3d(Ux, Uy, Uz):
+    def _sparse_from_indices_weights(idx, w, value_dtype=torch.complex128):
+        """Sparse COO matrix (rows = output voxels) from per-row neighbour indices [K, N] and weights [K, N].
+        Columns are already increasing within each row for Ny, Nz >= 2 (see the builders), so the tensor is
+        emitted coalesced without a sort."""
+        K, n = idx.shape
+        rows = torch.arange(n, device=idx.device, dtype=torch.long).repeat_interleave(K)
+        indices = torch.stack([rows, idx.t().reshape(-1)], dim=0)
+        values = w.t().reshape(-1)
+        sorted_cols = bool((idx[1:] > idx[:-1]).all()) if K > 1 else True
+        if sorted_cols:
+            return torch.sparse_coo_tensor(indices, values, size=(n, n), device=idx.device, dtype=value_dtype, is_coalesced=True)
+        return torch.sparse_coo_tensor(indices, values, size=(n, n), device=idx.device, dtype=value_dtype).coalesce()
+
+    @staticmethod
+    def _create_sparse_motion_operator_2d(Ux, Uy, value_dtype=torch.complex128):
+        idx, w = MotionOperator._interp_indices_weights_2d(Ux, Uy)
+        return MotionOperator._sparse_from_indices_weights(idx, w, value_dtype)
+
+    @staticmethod
+    def _interp_indices_weights_3d(Ux, Uy, Uz):
         """
         3D trilinear sparse interpolation operator for displacement fields Ux, Uy, Uz.
 
@@ -625,7 +715,6 @@ class MotionOperator:
         c101 = (xi * Ny + (yi - 1)) * Nz + zi
         c011 = ((xi - 1) * Ny + yi) * Nz + zi
         c111 = (xi * Ny + yi) * Nz + zi
-        col_idx = torch.stack([c000, c001, c010, c011, c100, c101, c110, c111], dim=1).reshape(-1)
 
         Xi_f = Xi.reshape(-1)
         Yi_f = Yi.reshape(-1)
@@ -645,10 +734,11 @@ class MotionOperator:
         w101 = wx2 * wy1 * wz2
         w011 = wx1 * wy2 * wz2
         w111 = wx2 * wy2 * wz2
-        vals = torch.stack([w000, w001, w010, w011, w100, w101, w110, w111], dim=1).reshape(-1)
+        idx = torch.stack([c000, c001, c010, c011, c100, c101, c110, c111], dim=0)
+        w = torch.stack([w000, w001, w010, w011, w100, w101, w110, w111], dim=0)
+        return idx, w
 
-        indices = torch.stack([row_idx, col_idx], dim=0)
-        if Ny >= 2 and Nz >= 2:
-            return torch.sparse_coo_tensor(indices, vals, size=(n, n), device=device, dtype=torch.complex128,
-                                           is_coalesced=True)
-        return torch.sparse_coo_tensor(indices, vals, size=(n, n), device=device, dtype=torch.complex128).coalesce()
+    @staticmethod
+    def _create_sparse_motion_operator_3d(Ux, Uy, Uz, value_dtype=torch.complex128):
+        idx, w = MotionOperator._interp_indices_weights_3d(Ux, Uy, Uz)
+        return MotionOperator._sparse_from_indices_weights(idx, w, value_dtype)

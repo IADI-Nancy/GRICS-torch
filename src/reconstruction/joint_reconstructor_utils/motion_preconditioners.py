@@ -147,7 +147,7 @@ class PseudoGaussSeidelMotionPreconditioner:
             image = jacobian.image.flatten() * image_scale
             for state in range(len(jacobian.SamplingIndices[0])):
                 warp = jacobian.motionOperator._get_sparse_operator(state)
-                warped = (warp @ image).reshape(spatial_shape)
+                warped = (warp @ image.to(warp.dtype)).reshape(spatial_shape)
                 gradient = (jacobian._gradient_3d(warped) if dimensions == 3
                             else jacobian._gradient_2d(warped))
                 yield torch.stack(gradient)

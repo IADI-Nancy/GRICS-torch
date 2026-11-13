@@ -73,7 +73,7 @@ _RECONSTRUCTION_KEYS = {
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
     'use_calibration_weighted_image', 'regularization_scaling', 'motion_preconditioner',
-    'motion_gradient_boundary',
+    'motion_gradient_boundary', 'compute_precision', 'warp_backend',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -403,7 +403,11 @@ def _validate_motion(cfg):
 
 
 def _validate_reconstruction(cfg):
-    required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes'}
+    required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes', 'compute_precision', 'warp_backend'}
+    cfg.setdefault('compute_precision', 'double')
+    _choice(cfg['compute_precision'], 'compute_precision', {'double', 'single'})
+    cfg.setdefault('warp_backend', 'sparse')
+    _choice(cfg['warp_backend'], 'warp_backend', {'sparse', 'gather'})
     if cfg.get('reconstruction_motion_type') == 'rigid':
         required.remove('motion_preconditioner')
     _require(cfg, required, 'reconstruction')
