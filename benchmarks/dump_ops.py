@@ -1,9 +1,8 @@
 """Dump operator outputs on fixed-seed synthetic problems for a given repository, for equivalence checks
-import os
 between the reference and the fast implementation, plus per-call timings.
 Usage: python dump_ops.py <repo_root> <out.pt>
 """
-import sys, time, json
+import os, sys, time, json
 from pathlib import Path
 import torch
 ROOT = Path(sys.argv[1]).resolve(); sys.path.insert(0, str(ROOT))
@@ -67,7 +66,8 @@ for name, Nx, Ny, Nz, Nc, Nm, Nex, motion, empty in cases:
     mo = MotionOperator(Nx, Ny, alpha, motion, motion_signal=ms, Nz=Nz, **MO_KW)
     Ns = Nx * Ny * Nz
     E = EncodingOperator(smaps, Ns, sampling, Nex, mo)
-    J = MotionPerturbationSimulator(smaps, Ns, sampling, Nex, image, mo, "one_sided")
+    J_KW = {"rotate_gradients": False} if os.environ.get("GRICS_COMPAT") == "1" else {}   # upstream Jacobian (no rotation factor)
+    J = MotionPerturbationSimulator(smaps, Ns, sampling, Nex, image, mo, "one_sided", **J_KW)
     x = image.flatten()
     y = (torch.randn(Nc * Nex * Ns, generator=g) + 1j * torch.randn(Nc * Nex * Ns, generator=g)).to(torch.complex128).to(DEV)
     d = (torch.randn(alpha.numel(), generator=g) + 1j * torch.randn(alpha.numel(), generator=g)).to(torch.complex128).to(DEV)

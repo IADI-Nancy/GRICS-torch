@@ -17,9 +17,11 @@ echo "=== reference: $REF ($(git -C "$REF" rev-parse --short HEAD 2>/dev/null ||
 echo "=== batched:   $FAST ($(git -C "$FAST" rev-parse --short HEAD 2>/dev/null || echo 'no git'))"
 echo "=== operators $(date)"
 $PY dump_ops.py "$REF" "$B/ops_reference.pt" 2>&1 | grep -v Warning
+GRICS_COMPAT=1 $PY dump_ops.py "$FAST" "$B/ops_compat.pt" 2>&1 | grep -v Warning
 $PY dump_ops.py "$FAST" "$B/ops_batched_double.pt" 2>&1 | grep -v Warning
 $PY dump_ops.py "$FAST" "$B/ops_batched_single_gather.pt" single gather 2>&1 | grep -v Warning
-for t in batched_double batched_single_gather; do echo "--- operators $t vs reference"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_$t.pt"; done
+echo "--- operators, upstream Jacobian (GRICS_COMPAT=1) vs reference: must be identical"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_compat.pt"
+for t in batched_double batched_single_gather; do echo "--- operators $t vs reference (J carries the rotation factor, so J_* differ from upstream)"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_$t.pt"; done
 echo "=== reconstructions $(date)"
 for case in 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; do
   $PY recon_dump.py "$REF" $case "$B/recon_reference/$case.pt" 2>&1 | grep -E "run\(\)|Error"

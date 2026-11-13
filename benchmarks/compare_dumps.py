@@ -1,5 +1,4 @@
 """Compare two dump_ops.py outputs: max relative difference per case/operator and timing ratios.
-import os
 Usage: python compare_dumps.py ref.pt fast.pt
 """
 import sys, torch
