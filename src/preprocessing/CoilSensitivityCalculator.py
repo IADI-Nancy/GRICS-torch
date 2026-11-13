@@ -169,8 +169,8 @@ class CoilSensitivityCalculator:
 
             print("[coil sensitivity] GPU memory exhausted; running ESPIRiT on CPU.", flush=True)
         except (cusolver.CUSOLVERError, RuntimeError) as error:
-            # Upstream only caught out-of-memory, so a cuSOLVER failure (e.g. the 2^31 workspace
-            # limit with 7+ coils at the shipped 48/12 widths in 3D) crashed the preparation.
+            # 2.0 only caught out-of-memory, so a cuSOLVER failure (e.g. the 2^31 workspace limit,
+            # reached at 7+ coils with the shipped 48/12 widths in 3D on CUDA 12.8) crashed the preparation.
             m, n = self._calibration_matrix_shape(kspace_block, calib_width, kernel_width)
             print(f"[coil sensitivity] GPU ESPIRiT failed on the {m} x {n} calibration matrix ({error}); "
                   "running ESPIRiT on CPU. This can take hours in 3D: consider smaller espirit widths.", flush=True)

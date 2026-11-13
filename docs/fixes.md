@@ -4,7 +4,7 @@ Problems found in GRICS-torch 2.0 and corrected in 3.0. Each one was reproduced 
 
 ## Data reading and preparation
 
-**ESPIRiT in 3D crashed on the GPU with 7 coils or more** (`CoilSensitivityCalculator`). With the shipped widths (calibration 48, kernel 12) the calibration matrix is 50653 x C·1728 whatever the image size, and cuSOLVER refuses the SVD once its workspace passes 2^31 elements, which happens at C = 7. Only out-of-memory errors were caught, so the preparation died. Now: the workspace is queried first; if cuSOLVER cannot do it, the SVD is taken from the eigendecomposition of the Gram matrix A^H A on the GPU when that fits in memory, otherwise ESPIRiT runs on the CPU with a message that says why. cuSOLVER and runtime errors fall back to the CPU too.
+**ESPIRiT in 3D crashed on the GPU with 7 coils or more** (`CoilSensitivityCalculator`). With the shipped widths (calibration 48, kernel 12) the calibration matrix is 50653 x C·1728 whatever the image size, and cuSOLVER refuses the SVD once its workspace passes 2^31 elements; with the CUDA 12.8 libraries that happens at C = 7 (the exact count depends on the cuSOLVER version). Only out-of-memory errors were caught, so the preparation died. Now: the workspace is queried first; if cuSOLVER cannot do it, the SVD is taken from the eigendecomposition of the Gram matrix A^H A on the GPU when that fits in memory, otherwise ESPIRiT runs on the CPU with a message that says why. cuSOLVER and runtime errors fall back to the CPU too.
 
 **Readout oversampling was assumed to be 2x for every ISMRMRD file** (`ISMRMRDReader`). A file without oversampling lost the outer half of its field of view. The factor now comes from `encodedSpace.x / reconSpace.x` (1 or 2).
 
