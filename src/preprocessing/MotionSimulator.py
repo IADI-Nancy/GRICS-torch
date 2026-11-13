@@ -200,7 +200,7 @@ class MotionSimulator:
 
         if self.Nz > 1:
             # Generate 3D realistic rigid curves and parameters.
-            self.navigator, self.tx, self.ty, self.tz, self.rx, self.ry, self.rz = self._create_realistic_motion_curves_3d()
+            self.navigator, self.tx, self.ty, self.tz, self.rx, self.ry, self.rz = self._create_per_readout_motion_curves_3d()
 
             alpha = torch.zeros(6, n_states, device=self.t_device)
             alpha[0, :] = self.tx
