@@ -1,0 +1,24 @@
+{
+ "prep_s": 0.5291417019907385,
+ "run_s": [
+  2.53962416597642,
+  1.868266778998077,
+  1.8377202849951573
+ ],
+ "peak_GiB": 1.3937950134277344,
+ "shape": [
+  320,
+  532,
+  1
+ ],
+ "coils": 24,
+ "states": 4,
+ "image_abs_mean": 8.46440581003457e-05,
+ "motion_abs_max": 5.836605063259259,
+ "repo": "GRICS-torch-batched",
+ "tag": "batched_single",
+ "case": "paper2d",
+ "precision": "single",
+ "backend": "gather",
+ "gpu_util_during": "54 %"
+}
