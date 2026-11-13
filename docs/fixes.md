@@ -1,6 +1,6 @@
 # GRICS-torch 3.0: corrections with respect to 2.0
 
-Problems found in GRICS-torch 2.0 (IADI-Nancy/GRICS-torch, main 4b9f2f5, November 2026) and corrected in 3.0. Each one was reproduced on that commit before being changed; the scripts that reproduce them are in `tests/unit/`. Three of the fixes change the numerics of the solver and can be switched off in the reconstruction TOML to get the GRICS-torch 2.0 results back (`jacobian_rotation_factor`, `motion_step_real`, `warm_start_rescale`); `benchmarks/recon_dump.py` does that with `GRICS_COMPAT=1`.
+Problems found in GRICS-torch 2.0 (tag `v2.0`) and corrected in 3.0. Each one was reproduced on that commit before being changed; the scripts that reproduce them are in `tests/unit/`. Three of the fixes change the numerics of the solver and can be switched off in the reconstruction TOML to get the GRICS-torch 2.0 results back (`jacobian_rotation_factor`, `motion_step_real`, `warm_start_rescale`); `benchmarks/recon_dump.py` does that with `GRICS_COMPAT=1`.
 
 ## Data reading and preparation
 

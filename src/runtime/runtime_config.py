@@ -411,7 +411,7 @@ def _validate_reconstruction(cfg):
     _choice(cfg['compute_precision'], 'compute_precision', {'double', 'single'})
     cfg.setdefault('warp_backend', 'sparse')
     _choice(cfg['warp_backend'], 'warp_backend', {'sparse', 'gather'})
-    # Solver corrections; false reproduces the upstream (IADI-Nancy main) numerics.
+    # Solver corrections; false reproduces the GRICS-torch 2.0 numerics.
     for key in ('jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale'):
         cfg.setdefault(key, True)
         if type(cfg[key]) is not bool:

@@ -130,7 +130,7 @@ For Siemens users, run `python tests/validate_siemens_phantom_2d.py --device gpu
 
 ## GRICS-torch 3.0
 
-This repository is GRICS-torch 3.0, based on GRICS-torch 2.0 (IADI-Nancy, commit 4b9f2f5). The reconstruction algorithm is the same.
+This repository is GRICS-torch 3.0, based on GRICS-torch 2.0. The reconstruction algorithm is the same.
 
 - GPU implementation of the encoding operator and of its Jacobian: coils batched in one FFT per motion state, warped images and gradients cached per Gauss-Newton iteration, coalesced sparse warps, one host synchronisation per CG iteration. Optional single precision and gather-based warps (`compute_precision`, `warp_backend`). Details: [docs/performance.md](docs/performance.md).
 - Corrections to the solver and to the data readers: [docs/fixes.md](docs/fixes.md). The corrections that change the numerics have a switch in the reconstruction TOML.

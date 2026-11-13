@@ -76,7 +76,7 @@ max_iter_motion = 15
 # Relative convergence tolerance for motion updates; use any finite value > 0.
 tol_motion = 1.0e-2
 
-# --- Solver corrections (false reproduces the upstream IADI-Nancy numerics) ---
+# --- Solver corrections (false reproduces the GRICS-torch 2.0 numerics) ---
 # Rigid Jacobian: rotate the warped-image gradient by R, as the chain rule of the pull-back warp requires; true or false.
 jacobian_rotation_factor = true
 # Motion step on the real normal equations Re(J^H J) d = Re(J^H r) instead of the complex system followed by Re(d); true or false.
