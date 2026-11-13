@@ -397,6 +397,20 @@ class MotionOperator:
 
         return (dX_drx, dY_drx, dZ_drx), (dX_dry, dY_dry, dZ_dry), (dX_drz, dY_drz, dZ_drz)
 
+    def rigid_rotation_matrix(self, motion_state):
+        """Rotation R of the rigid warp T(r) = c + R (r - c) + t for one state (2x2 or 3x3, float64)."""
+        cache = self.__dict__.setdefault("_rotation_matrix_cache", {})
+        if motion_state not in cache:
+            if self.Nz > 1:
+                _, _, _, _, rx, ry, rz = self._rigid_params_3d(motion_state)
+                r = MotionOperator._rotation_matrix_3d(rx, ry, rz)
+            else:
+                phi = self.alpha[2, motion_state]
+                c, s = torch.cos(phi), torch.sin(phi)
+                r = torch.stack([torch.stack([c, -s]), torch.stack([s, c])])
+            cache[motion_state] = r.to(dtype=torch.float64, device=self.device)
+        return cache[motion_state]
+
     # ----------------- FULL JACOBIAN OPERATOR J * δᾱ_j = sum_j(∂x_i/∂ᾱ_j) δᾱ_j = δu_i -----------------
 
     def _apply_J(self, delta_alpha, motion_state):

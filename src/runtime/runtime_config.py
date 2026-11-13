@@ -74,6 +74,7 @@ _RECONSTRUCTION_KEYS = {
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
     'use_calibration_weighted_image', 'regularization_scaling', 'motion_preconditioner',
     'motion_gradient_boundary', 'compute_precision', 'warp_backend',
+    'jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale', 'voxel_spacing_mm',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
 _SAMPLING_KEYS = {'kspace_sampling_type', 'NshotsPerNex', 'Nex', 'acceleration_factor', 'calibration_lines'}
@@ -107,6 +108,7 @@ _BOOL_KEYS = {
     'update_motion_on_final_iteration', 'gn_early_stopping',
     'save_reconstruction_logs', 'save_reconstruction_tensors', 'cg_stop_on_stagnation', 'cg_use_reg_scale_proxy',
     'use_calibration_weighted_image', 'motion_preconditioner',
+    'jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale',
 }
 
 
@@ -403,11 +405,22 @@ def _validate_motion(cfg):
 
 
 def _validate_reconstruction(cfg):
-    required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes', 'compute_precision', 'warp_backend'}
+    required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes', 'compute_precision', 'warp_backend',
+                                       'jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale', 'voxel_spacing_mm'}
     cfg.setdefault('compute_precision', 'double')
     _choice(cfg['compute_precision'], 'compute_precision', {'double', 'single'})
     cfg.setdefault('warp_backend', 'sparse')
     _choice(cfg['warp_backend'], 'warp_backend', {'sparse', 'gather'})
+    # Solver corrections; false reproduces the upstream (IADI-Nancy main) numerics.
+    for key in ('jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale'):
+        cfg.setdefault(key, True)
+        if type(cfg[key]) is not bool:
+            raise ValueError(f'{key} must be a boolean.')
+    if 'voxel_spacing_mm' in cfg:
+        spacing = cfg['voxel_spacing_mm']
+        if not isinstance(spacing, list) or len(spacing) not in (2, 3):
+            raise ValueError('voxel_spacing_mm must be a list of 2 (2D) or 3 (3D) positive numbers in mm.')
+        cfg['voxel_spacing_mm'] = [float(_number(v, 'voxel_spacing_mm entry', positive=True)) for v in spacing]
     if cfg.get('reconstruction_motion_type') == 'rigid':
         required.remove('motion_preconditioner')
     _require(cfg, required, 'reconstruction')

@@ -49,6 +49,8 @@ class EncodingOperator:
         self._phase_fft_dims = (2, 3) if self._is_3d else (2,)
         # Sampling is fixed throughout a CG solve; build the phase masks once for optimized normal operator.
         self._phase_encoding_masks = self._build_phase_encoding_masks()
+        # normal() assumes complete readout lines; otherwise fall back to adjoint(forward).
+        self._complete_lines = self._check_complete_lines()
         # State batching (gather backend): all motion states go through one FFT / gather / index_add per call.
         # State batching pays off for launch-bound (small) problems and costs memory traffic on large ones:
         # default = batch when a state has at most GRICS_STATE_BATCH_MAX_VOXELS voxels (2^19), gather backend only.
@@ -214,6 +216,22 @@ class EncodingOperator:
             masks.append(nex_masks)
         return masks
 
+    def _check_complete_lines(self):
+        """True when every state's samples are whole readout lines (all kx for each acquired ky[, kz])."""
+        Ncoils, Nx, Ny, Nz = self.smaps.shape
+        n_phase = Ny * Nz
+        for nex in range(self.Nex):
+            for motion_state, indices in enumerate(self.SamplingIndices[nex]):
+                if indices.numel() == 0:
+                    continue
+                phase = indices % n_phase
+                lines = torch.unique(phase)
+                if indices.numel() != Nx * lines.numel() or torch.unique(indices).numel() != indices.numel():
+                    print(f"[encoding] repetition {nex}, state {motion_state}: samples are not complete readout lines; "
+                          "E^H E will use adjoint(forward), which is slower.", flush=True)
+                    return False
+        return True
+
     def normal(self, image):
         """Apply E^H E using only the phase-encoding FFTs (y, or y and z).
 
@@ -226,6 +244,8 @@ class EncodingOperator:
         Coil weighting and image warping stay on their original sides of
         the FFTs; neither needs to commute with the sampling mask.
         """
+        if not self._complete_lines:
+            return self.adjoint(self.forward(image))
         if self._batched:
             return self._normal_batched(image)
         N_motion_states = len(self.SamplingIndices[0])

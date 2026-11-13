@@ -166,10 +166,18 @@ class ConjugateGradientSolver:
             b = b.to(self.device)
             n = b.numel()
 
+            # Work on the system scaled to ||b|| = 1: the breakdown guards below are then relative
+            # to the data scale (upstream used absolute 1e-15 thresholds, so un-normalised k-space
+            # changed the result). The solution is scaled back on exit.
+            b_scale = float(torch.linalg.norm(b).item())
+            if not b_scale > 0.0:
+                b_scale = 1.0
+            b = b / b_scale
+
             if x0 is None:
                 x = torch.zeros_like(b)
             else:
-                x = x0.clone().to(self.device)
+                x = x0.to(self.device) / b_scale
 
             # Here A includes regularization: A(x) = E^H E(x) + lambda_eff R(x).
             Ax = self._A(x)
@@ -191,7 +199,9 @@ class ConjugateGradientSolver:
                 stagnation_countdown_steps = max(1, int(self.stagnation_countdown_steps))
             iters_done = 0
             res_norm = torch.linalg.norm(r)
-            res_norm_v, b_norm_v, tolb_v = torch.stack([res_norm, b_norm, tolb]).tolist()
+            res_norm_v, b_norm_v, tolb_v, rz_initial_v = torch.stack([res_norm, b_norm, tolb, rz_old]).tolist()
+            # Breakdown guards relative to the start of the solve (upstream: absolute 1e-15).
+            rz_floor = 1e-30 * max(abs(rz_initial_v), 1e-300)
             rel_res = res_norm_v / b_norm_v
             residual_norm_history = [float(res_norm_v)]
             relres_history = [float(rel_res)]
@@ -200,6 +210,11 @@ class ConjugateGradientSolver:
             best_x = x.clone()
             best_res_norm_v = res_norm_v
             best_iteration = 0
+            # Iterate with the smallest recursive residual between refreshes. Upstream only compared
+            # x0, the refresh points and the last iterate, and returned x0 (a zero update, silently)
+            # whenever the last iterate was worse than the start.
+            best_recursive = None
+            best_recursive_norm_v = res_norm_v
 
             for it in range(0 if converged else max_iter):
                 Ap = self._A(p)
@@ -218,8 +233,8 @@ class ConjugateGradientSolver:
                 # One host transfer for every scalar decision of this iteration.
                 denom_v, tiny_v, res_norm_v, rz_old_v = torch.stack(
                     [denom, tiny.to(denom.dtype), res_norm, rz_old]).tolist()
-                if abs(denom_v) < 1e-15:
-                    # The reference breaks before applying this update.
+                if not math.isfinite(denom_v) or abs(denom_v) < 1e-15 * abs(rz_old_v):
+                    # alpha = rz / denom would blow up; the update is discarded.
                     x = x_prev
                     stop_reason = "breakdown_denom"
                     break
@@ -227,6 +242,9 @@ class ConjugateGradientSolver:
                     consecutive_tiny_updates += 1
                 else:
                     consecutive_tiny_updates = 0
+                if res_norm_v < best_recursive_norm_v:
+                    best_recursive = (x, iters_done)      # x is a fresh tensor each iteration
+                    best_recursive_norm_v = res_norm_v
                 # Recompute the residual directly in the same four situations as the reference.
                 refresh_true_residual = (
                     (it + 1) % self.true_residual_interval == 0
@@ -266,7 +284,7 @@ class ConjugateGradientSolver:
                 z = r.clone() if self.preconditioner is None else self.preconditioner(r)
 
                 rz_new = torch.dot(torch.conj(r), z).real
-                if abs(rz_old_v) < 1e-15:
+                if abs(rz_old_v) < rz_floor:
                     stop_reason = "breakdown_rz"
                     break
                 beta = rz_new / rz_old
@@ -288,20 +306,28 @@ class ConjugateGradientSolver:
                 best_x = x
                 best_res_norm_v = res_norm_v
                 best_iteration = iters_done
+            if best_iteration == 0 and best_recursive is not None and best_recursive[1] != iters_done:
+                candidate, candidate_iteration = best_recursive
+                candidate_norm_v = torch.linalg.norm(b - self._A(candidate)).item()
+                if candidate_norm_v < best_res_norm_v:
+                    best_x, best_res_norm_v, best_iteration = candidate, candidate_norm_v, candidate_iteration
+            if best_iteration == 0 and iters_done > 0:
+                print(f"[cg] no iterate improved on the initial guess in {iters_done} iterations (stop: {stop_reason}); "
+                      "returning the initial guess.", flush=True)
 
             self.last_info = {
                 "flag": 0 if converged else 1,
                 "iterations": int(iters_done),
                 "selected_iteration": int(best_iteration),
                 "relres": float(best_res_norm_v / b_norm_v),
-                "residual_norm": float(best_res_norm_v),
+                "residual_norm": float(best_res_norm_v * b_scale),
                 "final_relres": final_rel_res,
-                "residual_norm_history": residual_norm_history,
+                "residual_norm_history": [v * b_scale for v in residual_norm_history],
                 "relres_history": relres_history,
                 "stop_reason": stop_reason,
             }
 
-            return best_x
+            return best_x * b_scale
         
     # --------------------------------------------------------------
     # Convenience function: solve with simple CG

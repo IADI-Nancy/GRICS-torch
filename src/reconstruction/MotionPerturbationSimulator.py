@@ -24,8 +24,12 @@ contributions of all repetitions are accumulated before the (linear) adjoint Jac
 
 class MotionPerturbationSimulator:
     def __init__(self, smaps, Nsamples, SamplingIndices, Nex, image, motionOperator,
-                 gradient_boundary="one_sided"):
+                 gradient_boundary="one_sided", rotate_gradients=True):
         self.device = smaps.device
+        # The warp is a pull-back, warped(r) = rho(T(r)) with T(r) = c + R (r - c) + t, so the
+        # chain rule needs (grad rho)(T(r)) = R grad(warped)(r). The upstream code used
+        # grad(warped) directly, which is off by R^T; keep that path for comparisons.
+        self.rotate_gradients = bool(rotate_gradients) and motionOperator.motion_type == "rigid"
         self.SensitivityMaps = smaps
         self.Nex = Nex
         self.Nsamples = Nsamples
@@ -126,6 +130,9 @@ class MotionPerturbationSimulator:
         if cached is None:
             WarpedImage = self.motionOperator.warp(self._image_c.flatten(), motion_state).reshape(self._shape)
             cached = self._gradient_3d(WarpedImage) if self._is_3d else self._gradient_2d(WarpedImage)
+            if self.rotate_gradients:
+                R = self.motionOperator.rigid_rotation_matrix(motion_state).to(self._real_dtype)
+                cached = tuple(sum(R[i, j] * cached[j] for j in range(len(cached))) for i in range(len(cached)))
             self._state_cache[motion_state] = cached
         return cached
 

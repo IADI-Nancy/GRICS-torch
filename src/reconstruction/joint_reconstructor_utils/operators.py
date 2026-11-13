@@ -35,8 +35,30 @@ def build_encoding_operator(Data_res, params):
     return E
 
 
+class RealNormalOperator:
+    """Re(J^H J) on real vectors.
+
+    The motion parameters are real, so the Gauss-Newton step is Re(J^H J) d = Re(J^H r).
+    Upstream solved the complex system and took the real part of d afterwards.
+    """
+
+    def __init__(self, J):
+        self.J = J
+        self.device = J.device
+
+    def forward(self, v):
+        return self.J.forward(v)
+
+    def adjoint(self, y):
+        return self.J.adjoint(y).real
+
+    def normal(self, v):
+        return self.J.adjoint(self.J.forward(v)).real
+
+
 def build_motion_perturbation_simulator(Data_res, params):
     J = MotionPerturbationSimulator(Data_res["SensitivityMaps"], Data_res["Nsamples"], Data_res["SamplingIndices"],
                                     params.Nex, Data_res["ReconstructedImage"], Data_res["MotionOperator"],
-                                    gradient_boundary=params.motion_gradient_boundary)
+                                    gradient_boundary=params.motion_gradient_boundary,
+                                    rotate_gradients=getattr(params, 'jacobian_rotation_factor', True))
     return J
