@@ -167,7 +167,7 @@ class ConjugateGradientSolver:
             n = b.numel()
 
             # Work on the system scaled to ||b|| = 1: the breakdown guards below are then relative
-            # to the data scale (upstream used absolute 1e-15 thresholds, so un-normalised k-space
+            # to the data scale (2.0 used absolute 1e-15 thresholds, so un-normalised k-space
             # changed the result). The solution is scaled back on exit.
             b_scale = float(torch.linalg.norm(b).item())
             if not b_scale > 0.0:
@@ -200,7 +200,7 @@ class ConjugateGradientSolver:
             iters_done = 0
             res_norm = torch.linalg.norm(r)
             res_norm_v, b_norm_v, tolb_v, rz_initial_v = torch.stack([res_norm, b_norm, tolb, rz_old]).tolist()
-            # Breakdown guards relative to the start of the solve (upstream: absolute 1e-15).
+            # Breakdown guards relative to the start of the solve (2.0: absolute 1e-15).
             rz_floor = 1e-30 * max(abs(rz_initial_v), 1e-300)
             rel_res = res_norm_v / b_norm_v
             residual_norm_history = [float(res_norm_v)]
@@ -210,7 +210,7 @@ class ConjugateGradientSolver:
             best_x = x.clone()
             best_res_norm_v = res_norm_v
             best_iteration = 0
-            # Iterate with the smallest recursive residual between refreshes. Upstream only compared
+            # Iterate with the smallest recursive residual between refreshes. 2.0 only compared
             # x0, the refresh points and the last iterate, and returned x0 (a zero update, silently)
             # whenever the last iterate was worse than the start.
             best_recursive = None

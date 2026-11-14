@@ -39,7 +39,7 @@ class RealNormalOperator:
     """Re(J^H J) on real vectors.
 
     The motion parameters are real, so the Gauss-Newton step is Re(J^H J) d = Re(J^H r).
-    Upstream solved the complex system and took the real part of d afterwards.
+    GRICS-torch 2.0 solved the complex system and took the real part of d afterwards.
     """
 
     def __init__(self, J):

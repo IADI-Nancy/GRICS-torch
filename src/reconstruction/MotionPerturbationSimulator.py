@@ -27,7 +27,7 @@ class MotionPerturbationSimulator:
                  gradient_boundary="one_sided", rotate_gradients=True):
         self.device = smaps.device
         # The warp is a pull-back, warped(r) = rho(T(r)) with T(r) = c + R (r - c) + t, so the
-        # chain rule needs (grad rho)(T(r)) = R grad(warped)(r). The upstream code used
+        # chain rule needs (grad rho)(T(r)) = R grad(warped)(r). GRICS-torch 2.0 used
         # grad(warped) directly, which is off by R^T; keep that path for comparisons.
         self.rotate_gradients = bool(rotate_gradients) and motionOperator.motion_type == "rigid"
         self.SensitivityMaps = smaps

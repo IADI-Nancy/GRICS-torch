@@ -6,8 +6,8 @@
 #SBATCH -t 03:00:00
 #SBATCH -o grics_bench_%j.out
 # One-GPU benchmark job. Submit from the repository root after `benchmarks/setup_env.sh` and `benchmarks/get_demo_data.sh`:
-#   git clone <GRICS-torch 2.0> ../GRICS-torch-upstream
-#   sbatch -A <account> -p <partition> benchmarks/slurm/run_a100.sbatch ../GRICS-torch-upstream
+#   git clone <GRICS-torch 2.0> ../GRICS-torch-2.0
+#   sbatch -A <account> -p <partition> benchmarks/slurm/run_a100.sbatch ../GRICS-torch-2.0
 set -u
 REPO=$(cd "$(dirname "$0")/../.." && pwd); REF=${1:?reference repo root}
 V=${GRICS_VENV:-$REPO/benchmarks/venv}

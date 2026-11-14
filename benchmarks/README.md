@@ -18,16 +18,16 @@ Python 3.11 or newer is required (`tomllib`). The pins in `requirements.txt` are
 Put a checkout of GRICS-torch 2.0 in a sibling directory, for example:
 
 ```bash
-git clone <GRICS-torch 2.0> ../GRICS-torch-upstream
+git clone <GRICS-torch 2.0> ../GRICS-torch-2.0
 ```
 
 ## 3. Run
 
 ```bash
-benchmarks/run_all.sh ../GRICS-torch-upstream          # outputs in benchmarks/out/, summary in benchmarks/out/summary.md
+benchmarks/run_all.sh ../GRICS-torch-2.0               # outputs in benchmarks/out/, summary in benchmarks/out/summary.md
 ```
 
-or, on a SLURM cluster, `sbatch -A <account> -p <partition> benchmarks/slurm/run_a100.sbatch ../GRICS-torch-upstream`.
+or, on a SLURM cluster, `sbatch -A <account> -p <partition> benchmarks/slurm/run_a100.sbatch ../GRICS-torch-2.0`.
 
 What `run_all.sh` does, in order:
 

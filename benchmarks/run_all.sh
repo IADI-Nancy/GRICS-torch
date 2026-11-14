@@ -1,7 +1,7 @@
 #!/bin/bash
 # Reference-versus-batched comparison on one GPU: operator outputs, full reconstructions, roofline model, paper-size 2D slice.
 # Usage: benchmarks/run_all.sh <reference_repo_root> [this_repo_root]
-#   reference_repo_root: a checkout of upstream GRICS-torch, e.g. `git clone <GRICS-torch 2.0> ../GRICS-torch-upstream`
+#   reference_repo_root: a checkout of GRICS-torch 2.0, e.g. `git clone <GRICS-torch 2.0> ../GRICS-torch-2.0`
 # Environment: GRICS_BENCH_BASE (output dir, default benchmarks/out), GRICS_DEMO_H5 (Zenodo demo file, default benchmarks/data/demo_breast_data.h5),
 #              GRICS_BENCH_PY (python, default: python on PATH), PYTHONPATH must contain the wrapperHDF5 package (h5Saec).
 set -u
@@ -20,8 +20,8 @@ $PY dump_ops.py "$REF" "$B/ops_reference.pt" 2>&1 | grep -v Warning
 GRICS_COMPAT=1 $PY dump_ops.py "$FAST" "$B/ops_compat.pt" 2>&1 | grep -v Warning
 $PY dump_ops.py "$FAST" "$B/ops_batched_double.pt" 2>&1 | grep -v Warning
 $PY dump_ops.py "$FAST" "$B/ops_batched_single_gather.pt" single gather 2>&1 | grep -v Warning
-echo "--- operators, upstream Jacobian (GRICS_COMPAT=1) vs reference: must be identical"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_compat.pt"
-for t in batched_double batched_single_gather; do echo "--- operators $t vs reference (J carries the rotation factor, so J_* differ from upstream)"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_$t.pt"; done
+echo "--- operators, 2.0 Jacobian (GRICS_COMPAT=1) vs reference: must be identical"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_compat.pt"
+for t in batched_double batched_single_gather; do echo "--- operators $t vs reference (J carries the rotation factor, so J_* differ from 2.0)"; $PY compare_dumps.py "$B/ops_reference.pt" "$B/ops_$t.pt"; done
 echo "=== reconstructions $(date)"
 for case in 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; do
   $PY recon_dump.py "$REF" $case "$B/recon_reference/$case.pt" 2>&1 | grep -E "run\(\)|Error"
@@ -29,7 +29,7 @@ for case in 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; do
   $PY recon_dump.py "$FAST" $case "$B/recon_batched_double/$case.pt" 2>&1 | grep -E "run\(\)|Error"
   $PY recon_dump.py "$FAST" $case "$B/recon_batched_single/$case.pt" 20261101 single gather 2>&1 | grep -E "run\(\)|Error"
 done
-echo "--- reconstructions, upstream numerics (GRICS_COMPAT=1) vs reference: must be identical"
+echo "--- reconstructions, 2.0 numerics (GRICS_COMPAT=1) vs reference: must be identical"
 $PY compare_recons.py "$B/recon_reference" "$B/recon_compat" 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real
 for t in batched_double batched_single; do echo "--- reconstructions $t (solver corrections on) vs reference: differences expected"; $PY compare_recons.py "$B/recon_reference" "$B/recon_$t" 2d_rigid 2d_nonrigid 3d_rigid 3d_nonrigid real; done
 echo "=== roofline model $(date)"; $PY roofline.py "$REF" "$FAST" "$FAST" "$B/roofline.json" 2>&1 | grep -v Warning

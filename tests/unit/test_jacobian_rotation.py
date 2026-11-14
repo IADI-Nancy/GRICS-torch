@@ -30,9 +30,9 @@ def _jacobian_error(device, phi, direction, rotate_gradients, eps=1e-4):
 def test_rotation_factor_removes_angle_dependence(device):
     for direction in range(3):
         fixed = [_jacobian_error(device, phi, direction, True) for phi in (0.1, 0.3, 0.6)]
-        upstream = [_jacobian_error(device, phi, direction, False) for phi in (0.1, 0.3, 0.6)]
+        without_factor = [_jacobian_error(device, phi, direction, False) for phi in (0.1, 0.3, 0.6)]
         assert max(fixed) < 0.15, fixed                     # about 11 % (interpolation), flat in the angle
-        assert upstream[2] > 2 * fixed[2], (upstream, fixed)  # grows with the angle without the factor
+        assert without_factor[2] > 2 * fixed[2], (without_factor, fixed)  # grows with the angle without the factor
 
 
 def test_both_paths_agree_at_zero_rotation(device):

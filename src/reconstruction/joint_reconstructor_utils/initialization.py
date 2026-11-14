@@ -13,7 +13,7 @@ def apply_external_initializer(
     Images and non-rigid fields are interpolated to the level's spatial grid.
     Displacements in initial_motion are in full-resolution voxels; when full_shape is
     given they are rescaled to this level's grid the same way upsample_data does
-    between levels (upstream applied them unscaled at the coarsest level).
+    between levels (2.0 applied them unscaled at the coarsest level).
     """
     spatial = ((data["Nx"], data["Ny"], data["Nz"]) if int(data.get("Nz", 1)) > 1 else (data["Nx"], data["Ny"]))
     ratios = [1.0] * len(spatial) if full_shape is None else [s / f for s, f in zip(spatial, full_shape)]

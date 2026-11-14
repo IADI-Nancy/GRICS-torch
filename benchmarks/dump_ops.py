@@ -66,7 +66,7 @@ for name, Nx, Ny, Nz, Nc, Nm, Nex, motion, empty in cases:
     mo = MotionOperator(Nx, Ny, alpha, motion, motion_signal=ms, Nz=Nz, **MO_KW)
     Ns = Nx * Ny * Nz
     E = EncodingOperator(smaps, Ns, sampling, Nex, mo)
-    J_KW = {"rotate_gradients": False} if os.environ.get("GRICS_COMPAT") == "1" else {}   # upstream Jacobian (no rotation factor)
+    J_KW = {"rotate_gradients": False} if os.environ.get("GRICS_COMPAT") == "1" else {}   # 2.0 Jacobian (no rotation factor)
     J = MotionPerturbationSimulator(smaps, Ns, sampling, Nex, image, mo, "one_sided", **J_KW)
     x = image.flatten()
     y = (torch.randn(Nc * Nex * Ns, generator=g) + 1j * torch.randn(Nc * Nex * Ns, generator=g)).to(torch.complex128).to(DEV)

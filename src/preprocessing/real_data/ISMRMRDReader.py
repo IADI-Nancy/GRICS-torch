@@ -122,7 +122,7 @@ class ISMRMRDReader:
             limits = enc.encodingLimits
             self._oversampling_factor = self._readout_oversampling_factor(enc)
 
-            # Readout oversampling from the header; upstream assumed 2x for every file and
+            # Readout oversampling from the header; 2.0 assumed 2x for every file and
             # cropped half of the field of view when there was none.
             encoded_x, recon_x = int(enc.encodedSpace.matrixSize.x), int(enc.reconSpace.matrixSize.x)
             if recon_x <= 0 or encoded_x % recon_x != 0 or encoded_x // recon_x not in (1, 2):
@@ -147,7 +147,7 @@ class ISMRMRDReader:
             Ry = self._accel_factor_or_one(getattr(enc, "parallelImaging", None), "kspace_encoding_step_1")
             Ny = max(self._expanded_matrix_size(Ny, Ry), int(enc.encodedSpace.matrixSize.y))
             # Place the declared k-space centre at Ny // 2, where the centred FFT expects it.
-            # Upstream ignored encodingLimits.*.center; that only matters for asymmetric
+            # 2.0 ignored encodingLimits.*.center; that only matters for asymmetric
             # (partial-Fourier) index ranges that do not start at the grid origin.
             shift_y = self._center_shift(limits.kspace_encoding_step_1, Ny)
 
@@ -242,7 +242,7 @@ class ISMRMRDReader:
                     }
                 nex_values_seen.add(nex)
                 # A line acquired more than once in the same repetition (averages) is averaged;
-                # upstream silently kept the last one.
+                # 2.0 silently kept the last one.
                 if line_count[nex, ky, z] > 0:
                     kspace[:, nex, :, ky, z] += acq_data
                 else:
