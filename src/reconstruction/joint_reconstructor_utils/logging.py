@@ -7,7 +7,6 @@ from src.runtime.output_layout import record_reconstruction, reconstruction_axes
 from contextlib import contextmanager, nullcontext
 
 import torch
-from tqdm.auto import tqdm
 
 from src.utils.plotting import save_nonrigid_alpha_plots, save_residual_subplots, show_and_save_image
 from src.utils.save_final_motion_plots import save_final_nonrigid_alpha_maps, save_final_rigid_motion_plots
@@ -124,12 +123,13 @@ class JointReconstructionLogger:
             _append_run_log(self.run_log, message)
 
     def progress(self, level_index, level_iterations, level_count):
-        if level_iterations <= 0:
+        if level_iterations <= 0 or not self.params.jupyter_notebook_flag:
             return nullcontext()
+        from tqdm.auto import tqdm
+
         return tqdm(
             total=level_iterations,
             desc=f"Resolution level {level_index + 1}/{level_count}",
-            disable=not self.params.jupyter_notebook_flag,
             leave=True, dynamic_ncols=True, position=0,
         )
 

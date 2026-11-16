@@ -22,7 +22,6 @@ from src.reconstruction.joint_reconstructor_utils.state import (
     remove_temporary_operators, extract_image_and_motion_for_next_level,
 )
 from src.reconstruction.joint_reconstructor_utils.regularization import _assign_cached_reg_scale
-from src.reconstruction.joint_reconstructor_utils.motion_preconditioners import PseudoGaussSeidelMotionPreconditioner
 from src.reconstruction.joint_reconstructor_utils.calibration_prior import (
     CalibrationPriorEncodingOperator, fourier_crop_calibration_image,
 )
@@ -245,6 +244,8 @@ class JointReconstructor:
         return self.Nalpha * self.Nphysio * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
     def _build_pseudo_gauss_seidel_motion_preconditioner(self, jacobian, solver, data):
+        from src.reconstruction.joint_reconstructor_utils.motion_preconditioners import PseudoGaussSeidelMotionPreconditioner
+
         if self.regularization_scaling == "voxel_aware":
             spacing, _ = self._level_voxel_spacing_and_sqrt_voxel_count_ratio(data)
             image_scale = self.kspace_scale

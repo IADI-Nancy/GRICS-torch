@@ -1,9 +1,6 @@
 import os
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-from matplotlib.colors import BoundaryNorm, ListedColormap, Normalize, TwoSlopeNorm
-from matplotlib.patches import Rectangle
 
 
 _ORIENT_LABELS = ["Axial (XY)", "Coronal (XZ)", "Sagittal (YZ)"]
@@ -50,6 +47,8 @@ def _robust_vrange(tensors, p_low=2.0, p_high=98.0):
 
 
 def _component_norm(comp, abs_max=None):
+    from matplotlib.colors import TwoSlopeNorm
+
     vmax = float(abs_max) if abs_max is not None else torch.max(torch.abs(comp)).item()
     if vmax <= 0:
         vmax = 1e-12
@@ -74,6 +73,8 @@ def _quiver_fields(alpha_axis0, alpha_axis1, divisor=32):
 
 
 def _save_or_show(fig, out_path, should_display=False):
+    import matplotlib.pyplot as plt
+
     _ensure_output_dir(out_path)
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0)
     if should_display:
@@ -82,6 +83,8 @@ def _save_or_show(fig, out_path, should_display=False):
 
 
 def _plot_component_panels(planes, titles, out_path, abs_max=None, cmap="bwr", figsize=None):
+    import matplotlib.pyplot as plt
+
     comp = torch.cat([plane.reshape(-1) for plane in planes])
     norm = _component_norm(comp, abs_max=abs_max)
     figsize = figsize or ((5, 5) if len(planes) == 1 else (12, 4))
@@ -97,6 +100,8 @@ def _plot_component_panels(planes, titles, out_path, abs_max=None, cmap="bwr", f
 
 
 def _plot_quiver_panel(ax, alpha_axis0, alpha_axis1, img, title, amp_vmax=None, divisor=32):
+    from matplotlib.colors import Normalize
+
     xx, yy, ux, uy, amp = _quiver_fields(alpha_axis0, alpha_axis1, divisor=divisor)
     img_np = img.numpy()
 
@@ -125,6 +130,8 @@ def show_and_save_image(
     - a single 2D image, or
     - for 3D volumes, a 1x3 panel of central XY/XZ/YZ planes.
     """
+    import matplotlib.pyplot as plt
+
     should_display = jupyter_notebook_flag if jupyter_display is None else bool(jupyter_display)
     out_path = os.path.join(folder, image_name + ".png")
     img_disp = _prepare_display_image(img)
@@ -168,6 +175,8 @@ def save_nonrigid_quiver_with_contours(
     flip_vertical=True,
     amp_vmax=None,
 ):
+    import matplotlib.pyplot as plt
+
     alpha_axis0 = alpha_axis0.detach().cpu()
     alpha_axis1 = alpha_axis1.detach().cpu()
     img = _prepare_display_image(image)
@@ -197,6 +206,8 @@ def save_nonrigid_quiver_with_contours_3d(
     flip_vertical=True,
     amp_vmax=None,
 ):
+    import matplotlib.pyplot as plt
+
     alpha_axis0_3d = alpha_axis0_3d.detach().cpu()
     alpha_axis1_3d = alpha_axis1_3d.detach().cpu()
     img = _prepare_display_image(image_3d)
@@ -316,6 +327,8 @@ def _add_resolution_center_lines(ax, ky_idx_cpu, resolution_levels):
 
 
 def _add_resolution_center_boxes(ax, ny, nz, resolution_levels):
+    from matplotlib.patches import Rectangle
+
     if resolution_levels is None:
         return
     if ny <= 0 or nz <= 0:
@@ -348,6 +361,8 @@ def _add_resolution_center_boxes(ax, ny, nz, resolution_levels):
 
 
 def _motion_value_norm(motion_cpu, y_limits=None):
+    from matplotlib.colors import Normalize, TwoSlopeNorm
+
     if y_limits is not None:
         vmin, vmax = float(y_limits[0]), float(y_limits[1])
     else:
@@ -420,6 +435,9 @@ def save_clustered_motion_plots(
     data_type=None,
     y_limits=None,
 ):
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
     os.makedirs(output_folder, exist_ok=True)
 
     markers = ["o", "x", "s", "^", "v", "D", "+", "*", "<", ">"]
@@ -612,6 +630,8 @@ def save_clustered_motion_plots(
 
 
 def save_motion_debug_plots(motion_curve, tx, ty, phi, output_folder, event_times=None):
+    import matplotlib.pyplot as plt
+
     os.makedirs(output_folder, exist_ok=True)
 
     plt.figure()
@@ -640,6 +660,8 @@ def save_motion_debug_plots(motion_curve, tx, ty, phi, output_folder, event_time
 
 
 def save_line_plot(x, y, out_path, title=None, xlabel=None, ylabel=None):
+    import matplotlib.pyplot as plt
+
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     plt.figure()
     plt.plot(x, y)
@@ -655,6 +677,8 @@ def save_line_plot(x, y, out_path, title=None, xlabel=None, ylabel=None):
 
 
 def save_residual_subplots(values_by_level, title, y_label, out_path):
+    import matplotlib.pyplot as plt
+
     n_levels = len(values_by_level)
     if n_levels == 0:
         return
@@ -697,6 +721,8 @@ def save_residual_subplots(values_by_level, title, y_label, out_path):
 
 
 def _visualize_ky_order(ky_per_shot, ny, folder, fname="ky_sampling_order.png"):
+    import matplotlib.pyplot as plt
+
     img = torch.zeros((ny, ny, 3), dtype=torch.float64)
     all_ky = torch.cat(ky_per_shot)
 
@@ -725,6 +751,8 @@ def _visualize_ky_order(ky_per_shot, ny, folder, fname="ky_sampling_order.png"):
 
 
 def _visualize_ky_kz_order(ky_per_block, kz_per_block, ny, nz, folder, fname="ky_kz_sampling_order.png"):
+    import matplotlib.pyplot as plt
+
     if nz <= 1:
         return
 

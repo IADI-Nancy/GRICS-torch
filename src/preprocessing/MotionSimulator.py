@@ -3,7 +3,6 @@ import torch
 
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
-from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 from src.utils.fftnc import ifftnc # normalised ifft for n dimensions
 from src.utils.plotting import (

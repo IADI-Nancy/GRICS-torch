@@ -29,26 +29,5 @@ def _setup_warning_filters():
     )
 
 
-def _setup_cupy_sigpy_compat():
-    """
-    Bridge CuPy API differences so sigpy can import cuDNN helpers across versions.
-    """
-    try:
-        import cupy
-    except Exception:
-        return
-
-    if hasattr(cupy, "cudnn"):
-        return
-
-    try:
-        import cupy.cuda.cudnn as cudnn
-    except Exception:
-        return
-
-    cupy.cudnn = cudnn
-
-
 _setup_env_guards()
-_setup_cupy_sigpy_compat()
 _setup_warning_filters()

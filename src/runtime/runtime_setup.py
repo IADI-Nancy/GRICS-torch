@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 import atexit
 import gc
 import signal
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
-import sigpy as sp
+
+if TYPE_CHECKING:
+    import sigpy as sp
 
 
 _GUARDS_INSTALLED = False
@@ -14,9 +19,9 @@ _GPU_RUNTIME_ACTIVE = False
 
 @dataclass(frozen=True)
 class Runtime:
-    """Resolved compute devices for one initialized reconstruction workflow."""
+    """Resolved Torch device and optional ESPIRiT SigPy device for one workflow."""
 
-    sp_device: sp.Device
+    sp_device: sp.Device | None
     t_device: torch.device
 
 
@@ -26,13 +31,13 @@ def cleanup_runtime():
     if not _GPU_RUNTIME_ACTIVE:
         return
 
-    try:
-        import cupy as cp
-
-        cp.get_default_memory_pool().free_all_blocks()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
-    except Exception:
-        pass
+    cp = sys.modules.get("cupy")
+    if cp is not None:
+        try:
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+        except Exception:
+            pass
 
     # is_initialized() is a local state check; unlike is_available(), it does
     # not initialize the CUDA driver during cleanup.
@@ -79,32 +84,22 @@ def initialize_runtime(params, print_gpu_info=False):
     if runtime_device not in {"cpu", "gpu"}:
         raise ValueError("runtime_device must be 'cpu' or 'gpu'.")
 
-    cupy_ok = False
     # CPU runs must not probe CUDA: is_available() initializes the NVIDIA
     # driver and can deadlock when many CPU reconstruction workers start.
     torch_cuda_ok = False
     if runtime_device == "gpu":
         torch_cuda_ok = torch.cuda.is_available()
-        try:
-            import cupy as cp
-
-            cupy_ok = cp.cuda.runtime.getDeviceCount() > 0
-        except Exception:
-            cupy_ok = False
-
         if not torch_cuda_ok:
             print("[runtime] GPU requested but PyTorch CUDA is unavailable. Falling back to CPU.", flush=True)
             runtime_device = "cpu"
 
     use_gpu = runtime_device == "gpu"
     _GPU_RUNTIME_ACTIVE = _GPU_RUNTIME_ACTIVE or use_gpu
-    # SigPy/CuPy can stay on CPU even when Torch runs on CUDA.
-    if use_gpu and cupy_ok:
-        sp_device = sp.Device(0)
-    else:
-        sp_device = sp.Device(-1)
-        if use_gpu and not cupy_ok:
-            print("[runtime] CuPy/SigPy GPU backend is unavailable; using CPU for SigPy and CUDA for PyTorch.", flush=True)
+    sp_device = None
+    if params.coil_sensitivity_method == "espirit":
+        from src.runtime.sigpy_backend import resolve_espirit_device
+
+        sp_device = resolve_espirit_device(use_gpu)
 
     t_device = torch.device("cuda:0" if use_gpu else "cpu")
     params.runtime_device = runtime_device

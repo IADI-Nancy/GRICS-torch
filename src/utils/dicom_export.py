@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from types import SimpleNamespace
 
-from src.utils.ismrmrd_io import acquisition_header
 import numpy as np
 import torch
 
@@ -40,6 +39,8 @@ def write_reconstruction_dicom(
     to use acquisition geometry while copying other public metadata from a
     DICOM donor.
     """
+    from src.utils.ismrmrd_io import acquisition_header
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -85,6 +86,7 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     while the reconstructed grid supplies geometry, including when donor
     resolution differs.
     """
+    from src.utils.ismrmrd_io import acquisition_header
     import ismrmrd
     from pydicom.uid import generate_uid
 

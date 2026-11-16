@@ -6,14 +6,7 @@ from pathlib import Path
 import torch
 
 from src.preprocessing.SamplingSimulator import SamplingSimulator
-from src.preprocessing.SyntheticDataGenerator import SyntheticDataGenerator
-from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
 from src.preprocessing.real_data.RawDataCache import RawDataCache
-from src.preprocessing.real_data.RawDataPreparer import RawDataPreparer
-from src.preprocessing.real_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
-from src.preprocessing.real_data.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
-from src.preprocessing.real_data.physiological_data.SAECReader import SAECReader
-from src.preprocessing.real_data.real_data_io import convert_siemens_to_ismrmrd, read_preprocessed_data
 from src.runtime.output_layout import bind_output_paths, record_reconstruction, register_execution_cleanup
 from src.runtime.runtime_config import REAL_DATA_TYPES, ISMRMRD_READER_DATA_TYPES, validate_sampling_size
 
@@ -102,6 +95,8 @@ class InputDataLoader:
     def _load_input_data(self):
         print(f"[InputDataLoader] Loading input data (data_type={self.params.data_type})...")
         if self.params.data_type == 'shepp-logan':
+            from src.preprocessing.SyntheticDataGenerator import SyntheticDataGenerator
+
             generator = SyntheticDataGenerator(self.params, self.t_device)
             self._use_synthetic_data(generator.generate_shepp_logan(
                 N=self.params.N_SheppLogan, Ncoils=self.params.Ncoils_SheppLogan,
@@ -119,6 +114,8 @@ class InputDataLoader:
             self.source_ismrmrd_file = path_to_ismrm
             self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, path_to_physiology)
         elif self.params.data_type == 'from_image':
+            from src.preprocessing.SyntheticDataGenerator import SyntheticDataGenerator
+
             generator = SyntheticDataGenerator(self.params, self.t_device)
             self._use_synthetic_data(generator.load_image(self.filename))
         else:
@@ -183,6 +180,8 @@ class InputDataLoader:
         return paths[0], physiology
 
     def _convert_siemens_to_ismrmrd(self, path_to_siemens):
+        from src.preprocessing.real_data.real_data_io import convert_siemens_to_ismrmrd
+
         return convert_siemens_to_ismrmrd(path_to_siemens, self.raw_data_cache)
 
     def _initialize_realworld_data(self, data):
@@ -301,6 +300,8 @@ class InputDataLoader:
     def _load_realworld_data_from_ismrm_and_physiology(self, path_to_ismrm, path_to_physiology):
         # Resampled workflows need decoded MRI data but do not use recorded physiology.
         if self.params.kspace_sampling_type != "from-data":
+            from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
+
             reader = ISMRMRDReader(path_to_ismrm, device="cpu")
             raw_data = reader.read_data()
             data = {"kspace": raw_data["kspace"].cpu().numpy(),
@@ -312,6 +313,8 @@ class InputDataLoader:
             return
         # From-data workflows synchronize the selected physiological source to MRI readouts.
         physiological_reader = self._create_physiological_reader()
+        from src.preprocessing.real_data.RawDataPreparer import RawDataPreparer
+
         preparer = RawDataPreparer(
             ismrmrd_file=path_to_ismrm, physiological_file=path_to_physiology,
             physiological_reader=physiological_reader,
@@ -328,18 +331,26 @@ class InputDataLoader:
         """Construct the physiological reader selected by the runtime configuration."""
         physiological_format = self.params.data_type.split("-", 1)[1]
         if physiological_format == "polaris":
+            from src.preprocessing.real_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
+
             return PolarisInfraredTrackerReader(
                 channel_mode=self.params.polaris_channel_mode, lowpass_cutoff_hz=self.params.polaris_lowpass_cutoff_hz)
         if physiological_format == "saec":
+            from src.preprocessing.real_data.physiological_data.SAECReader import SAECReader
+
             return SAECReader(
                 sensor_type=self.params.rawdata_sensor_type, belt_lowpass_cutoff_hz=self.params.saec_belt_lowpass_cutoff_hz,
                 marmot_lowpass_cutoff_hz=self.params.saec_marmot_lowpass_cutoff_hz,
                 marmot_highpass_cutoff_hz=self.params.saec_marmot_highpass_cutoff_hz)
         if physiological_format in {"physio_text", "physio_array"}:
+            from src.preprocessing.real_data.physiological_data.PreprocessedPhysioReader import PreprocessedPhysioReader
+
             return PreprocessedPhysioReader(physiological_format)
         raise ValueError(f"Unsupported physiological format: {physiological_format!r}.")
 
     def _load_realworld_data(self, path_to_data):
+        from src.preprocessing.real_data.real_data_io import read_preprocessed_data
+
         data = read_preprocessed_data(
             path_to_data, from_data=self.params.kspace_sampling_type == "from-data",
         )
