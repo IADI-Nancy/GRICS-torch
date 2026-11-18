@@ -21,11 +21,12 @@ class RawDataPreparer:
     """
 
     def __init__(self, ismrmrd_file, physiological_file, *, physiological_reader,
-                 device, physio_clock_drift_seconds=0.0):
+                 device, physio_clock_drift_seconds=0.0, allow_constant=False):
         if isinstance(physio_clock_drift_seconds, bool) or not isinstance(physio_clock_drift_seconds, (int, float)) or not np.isfinite(physio_clock_drift_seconds):
             raise ValueError("physio_clock_drift_seconds must be a finite number.")
         if not physiological_reader.supports_clock_correction and physio_clock_drift_seconds != 0:
             raise ValueError("The selected physiological reader does not support clock correction.")
+        self.allow_constant = allow_constant
         self.physio_clock_drift_seconds = float(physio_clock_drift_seconds)
         self.physiological_reader = physiological_reader
         self.reader = ISMRMRDReader(ismrmrd_file, device=device)
@@ -192,7 +193,7 @@ class RawDataPreparer:
         motion = self.physiological_reader.prepare_motion(interpolated)
         # All reader-specific filtering and channel selection is complete; normalize
         # each synchronized channel over the full MRI acquisition before reshaping.
-        motion, _, _ = normalize_physiological_motion_input(motion)
+        motion, _, _ = normalize_physiological_motion_input(motion, allow_constant=self.allow_constant)
         motion, ky, kz, nex = self._reshape_data_slicewise(
             torch.as_tensor(motion, device=self.device), raw["slice_indices"],
             raw["idx_ky"], raw["idx_kz"], raw["idx_nex"],
@@ -263,7 +264,8 @@ class RawDataPreparer:
             key = cache.key([self.reader.ismrmrd_file, *physiology_files],
                             {'implementation': implementation,
                              'physiological_reader': self.physiological_reader.cache_parameters,
-                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds})
+                             'physio_clock_drift_seconds': self.physio_clock_drift_seconds,
+                             'allow_constant': self.allow_constant})
             def build(path):
                 arrays = self._prepare_data()
                 metadata = {'synchronization': self.synchronization,

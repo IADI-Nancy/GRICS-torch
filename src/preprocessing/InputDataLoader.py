@@ -319,7 +319,7 @@ class InputDataLoader:
             ismrmrd_file=path_to_ismrm, physiological_file=path_to_physiology,
             physiological_reader=physiological_reader,
             physio_clock_drift_seconds=self.params.physio_clock_drift_seconds,
-            device="cpu")
+            device="cpu", allow_constant=self.params.N_motion_states == 1)
         self.raw_data_preparer = preparer
         cache = self.raw_data_cache if self.params.cache_preprocessed_data else None
         data = preparer.read_data(cache=cache)

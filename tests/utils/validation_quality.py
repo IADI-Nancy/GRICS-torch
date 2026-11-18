@@ -10,9 +10,8 @@ import math
 # and median of per-simulation percentage improvements, NOT a ratio of medians.
 # Store the 1st percentile for SSIM/improvements and 99th for NRMSE below.
 # These are marginal bootstrap uncertainty bounds, not simultaneous coverage or
-# prediction guarantees for future hardware. The additional engineering margins
-# are explicit: subtract 0.01 SSIM, allow 10% higher NRMSE, and retain 90% of the
-# lower improvement bound. Round outward to 0.001 or 0.01 percentage points.
+# prediction guarantees for future batches or hardware. Use the bounds directly,
+# without additional margins or rounding in comparisons.
 # Freeze these values: never fit thresholds to the batch being evaluated.
 # Recalibrate using independent batches/devices when the reference changes.
 REFERENCES = {
@@ -57,10 +56,10 @@ def assess_quality(summary, results, case):
     reference = REFERENCES[case]
     ssim, nrmse, ssim_imp, nrmse_imp = reference["bounds"]
     limits = {
-        "SSIM_ref": math.floor((ssim - 0.01) * 1000) / 1000,
-        "NRMSE_ref": math.ceil(nrmse * 1.1 * 1000) / 1000,
-        "SSIM_imp_ref": math.floor(ssim_imp * 0.9 * 100) / 100,
-        "NRMSE_imp_ref": math.floor(nrmse_imp * 0.9 * 100) / 100,
+        "SSIM_ref": ssim,
+        "NRMSE_ref": nrmse,
+        "SSIM_imp_ref": ssim_imp,
+        "NRMSE_imp_ref": nrmse_imp,
         # Two paired, two-sided Wilcoxon tests: Bonferroni alpha = 0.05 / 2.
         # Significance is evidence of a difference; positive improvement is also
         # required. This alpha is chosen in advance, not fitted to observed p.
@@ -91,7 +90,7 @@ def assess_quality(summary, results, case):
     summary["quality_assessment"] = {
         "reference_batch": reference["batch"], "limits": limits, "checks": checks,
         "reference_settings": expected,
-        "method": "100000 paired bootstrap resamples, seed 42; 1% lower/99% upper median bounds; -0.01 SSIM, +10% NRMSE, -10% improvement margins; outward rounding; Wilcoxon alpha 0.05/2",
+        "method": "100000 paired bootstrap resamples, seed 42; 1% lower/99% upper median bounds; bounds used directly at full precision without additional margins; Wilcoxon alpha 0.05/2",
         "reasons": reasons, "status": "INCONCLUSIVE" if reasons else ("PASSED" if all(checks.values()) else "QUALITY CHECK NOT MET"),
     }
 
@@ -101,4 +100,5 @@ def quality_suffix(summary, key, operator, percent=False):
     assessment = summary["quality_assessment"]
     limit = assessment["limits"]["p_ref" if key.endswith("_p_ref") else key]
     status = "INCONCLUSIVE" if assessment["reasons"] else ("PASSED" if assessment["checks"][key] else "NOT MET")
-    return f"; criterion: {operator} {key} = {limit:g}{'%' if percent else ''} — {status}"
+    displayed_limit = f"{limit:.2e}" if key.endswith("_p_ref") else f"{limit:.2f}"
+    return f"; criterion: {operator} {key} = {displayed_limit}{'%' if percent else ''} — {status}"
