@@ -15,6 +15,8 @@ Each simulation script owns its configuration selection and randomized motion pa
 
 ## Running the Shepp-Logan validations
 
+The [README installation instructions](../../Readme.md#environment-setup) provide the required simulation dependencies through native CPU/GPU pip installation or the Docker environment.
+
 Run a complete reference-sized batch with an explicit device:
 
 ```bash
@@ -135,7 +137,7 @@ This additional check is intended for users who will reconstruct Siemens or ISMR
 
 ### Running the check
 
-The raw-data dependencies and `siemens_to_ismrmrd` should be available on `PATH` (i.e. either use a docker image, or see [installation](installation.md)). Run from the repository root:
+Use the [Docker setup](../../Readme.md#docker), defined in the [Dockerfile](../../build/Dockerfile), for this check. Run from the repository root with that Python environment and ensure `siemens_to_ismrmrd` is on `PATH`:
 
 ```bash
 python tests/validate_siemens_phantom_2d.py --device gpu

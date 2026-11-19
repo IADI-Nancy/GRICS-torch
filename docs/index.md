@@ -5,7 +5,7 @@ This is a PyTorch implementation of the [GRICS algorithm](algorithm.md) for moti
 
 ## How to use the software
 
-Installation and and get started are described in the [Readme](../Readme.md).
+See the [README](../Readme.md) for setup and getting started. It covers basic CPU/GPU installation through pip and the full Docker setup.
 
 For your specific reconstruction, follow these steps:
 
@@ -34,6 +34,7 @@ See also:
 - `src/reconstruction/`: joint reconstructor, encoding and motion operators, and the CG solver
 - `src/runtime/`: configuration loading and runtime initialization
 - `src/utils/`: plotting, diagnostics, and notebook display helpers
+- `pyproject.toml`: editable package installation and optional GPU dependencies
 - `config/`: TOML configuration root
 - `pipelines/`: executable end-to-end reconstruction pipelines for real acquisitions
 - `docs/`: conventions, architecture, and usage guides
