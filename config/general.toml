@@ -36,7 +36,8 @@ verbose = true
 # Print detailed JointReconstructor progress; true enables and false disables it.
 # Start/finish messages are always printed, including in notebook mode.
 print_to_console = true
-# Manage generated cache lifetime; true releases files at execution end and false retains them for reuse.
+# Delete generated ISMRMRD conversions and preprocessing caches; true removes them after the last active user releases them at execution end, false retains them for reuse.
+# Original Siemens .dat files and user-supplied ISMRMRD/physiology inputs are always retained.
 remove_temporary_data_after_run = true
 # Control reusable HDF5 preprocessing caching; true writes under cache_root and false avoids the extra cache file.
 # cache_root remains required when false; "auto" is supported.

@@ -10,6 +10,8 @@ and saves reconstructed tensors, PNGs, and a DICOM series for all slices.
 
 import argparse
 import copy
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,7 +24,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.preprocessing.DataPreparer import DataPreparer
-from src.preprocessing.real_data.real_data_io import convert_siemens_to_ismrmrd
 from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import execution_scope, write_reconstruction
 from src.runtime.runtime_config import load_config
@@ -69,21 +70,25 @@ def run_phantom(raw_data_file, *, device="gpu", output_root=ROOT / "runs"):
     for path in (raw_data_file, physio_file):
         if not path.is_file():
             raise FileNotFoundError(path)
-    # A new empty cache guarantees that no conversion from an earlier call is used.
-    # The loader then reads the conversion produced during this invocation.
-    with TemporaryDirectory(prefix="grics-phantom-") as cache_root, execution_scope():
+    converter = shutil.which("siemens_to_ismrmrd")
+    if converter is None:
+        raise RuntimeError("siemens_to_ismrmrd executable was not found. Install it to run the phantom check.")
+    with TemporaryDirectory(prefix="grics-phantom-") as directory, execution_scope():
+        ismrmrd_file = Path(directory) / raw_data_file.with_suffix(".mrd").name
         params = load_config(
-            data_type="siemens-physio_text", reconstruction_config=ROOT / "config/reconstruction/nonrigid_2d.toml",
+            data_type="ismrmrd-physio_text", reconstruction_config=ROOT / "config/reconstruction/nonrigid_2d.toml",
             overrides={"N_motion_states": 1, "workflow_label": "siemens_phantom_2d", "runtime_device": device,
-                       "output_root": str(output_root), "cache_root": cache_root, "cache_preprocessed_data": False,
+                       "output_root": str(output_root), "cache_root": str(Path(directory) / "cache"), "cache_preprocessed_data": False,
                        "save_debug_plots": False, "save_reconstruction_logs": True, "save_reconstruction_tensors": True,
                        "verbose": False, "print_to_console": False},
         )
         runtime = initialize_runtime(params)
-        data = DataPreparer(params=params, runtime=runtime, filename=(str(raw_data_file), str(physio_file)))
         print("[phantom] Starting fresh Siemens conversion", flush=True)
-        convert_siemens_to_ismrmrd(raw_data_file, data.input_loader.raw_data_cache)
-        print_success("CONVERSION")
+        subprocess.run([converter, "-f", str(raw_data_file), "-z", "2", "-o", str(ismrmrd_file)], check=True)
+        if not ismrmrd_file.is_file() or ismrmrd_file.stat().st_size == 0:
+            raise RuntimeError("Siemens conversion produced no data.")
+        print_success("CONVERSION", ismrmrd_file)
+        data = DataPreparer(params=params, runtime=runtime, filename=(str(ismrmrd_file), str(physio_file)))
         data.load_input_data()
         loader = data.input_loader
         if torch.count_nonzero(loader._input_motion_data):

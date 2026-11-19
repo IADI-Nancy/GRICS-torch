@@ -12,10 +12,11 @@ DEFAULT_CACHE_ROOT = Path(__file__).resolve().parents[4] / 'data' / 'cache' / 'g
 
 
 class _CacheLease:
-    def __init__(self, path, lock, remove_on_release):
+    def __init__(self, path, lock, remove_on_release, cache_hit):
         self.path = path
         self.lock = lock
         self.remove_on_release = remove_on_release
+        self.cache_hit = cache_hit
         self.pid = os.getpid()
         self.closed = False
 
@@ -74,6 +75,7 @@ class RawDataCache:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f'{key}{suffix}'
         lock = path.with_suffix(path.suffix + '.lock').open('a+b')
+        cache_hit = True
         try:
             fcntl.flock(lock, fcntl.LOCK_SH)
             if not path.is_file():
@@ -86,12 +88,13 @@ class RawDataCache:
                             if not temporary.is_file() or temporary.stat().st_size == 0:
                                 raise RuntimeError('Cache builder produced no data.')
                             temporary.replace(path)
+                            cache_hit = False
                         finally:
                             temporary.unlink(missing_ok=True)
         except BaseException:
             lock.close()
             raise
-        lease = _CacheLease(path, lock, self.remove_on_release)
+        lease = _CacheLease(path, lock, self.remove_on_release, cache_hit)
         self._leases.append(lease)
         return lease
 

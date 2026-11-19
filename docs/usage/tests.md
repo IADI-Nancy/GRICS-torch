@@ -149,9 +149,9 @@ python tests/validate_siemens_phantom_2d.py --device gpu
 
 The default input is `meas_MID00020_FID552369_AX_T2_TSE_HR_1NEX_SAT.dat`, a three-slice 2D TSE Siemens acquisition. The script downloads this file and its `.physio.txt` sidecar from Zenodo [1] into `demos_data/` only when each file is absent. Existing inputs are reused without being overwritten, and interrupted downloads are not retained as completed files. The script downloads the pre-generated physiology; it does not generate physiological samples.
 
-The physiological text contains one `0 -1 0` row per retained imaging readout in full acquisition order, before slice selection. The columns are sensor identifier, timestamp marker, and physiological value. The `-1` marker denotes already-synchronized samples without timestamps. The loader uses `siemens-physio_text` and checks alignment with the MRI readouts.
+The physiological text contains one `0 -1 0` row per retained imaging readout in full acquisition order, before slice selection. The columns are sensor identifier, timestamp marker, and physiological value. The `-1` marker denotes already-synchronized samples without timestamps. The loader uses `ismrmrd-physio_text` after conversion and checks alignment with the MRI readouts.
 
-Every invocation creates a fresh temporary conversion cache and disables preprocessing caching, so conversions from previous runs are not reused. The acquisition is converted and read once. All slices are then prepared, reconstructed, and exported sequentially, in zero-based index order. Temporary converted data are removed when the execution ends.
+Every invocation runs `siemens_to_ismrmrd` directly into a fresh temporary directory and loads that output through `ismrmrd-physio_text`, with preprocessing caching disabled. Conversion caching is bypassed entirely. The acquisition is converted and read once. All slices are then prepared, reconstructed, and exported sequentially, in zero-based index order. Temporary converted data are removed when the execution ends.
 
 ### Checks and progress
 
