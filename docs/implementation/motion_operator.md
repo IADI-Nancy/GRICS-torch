@@ -23,7 +23,7 @@ $$
 Each term is one corner of the interpolation cell; the weights sum to one. Non-rigid sampling coordinates use the sensor-weighted displacement:
 
 $$
-u_m(r)=\sum_j\alpha_j(r)s_{m,j},\qquad \xi(r)=\operatorname{clamp}\bigl(r+u_m(r)\bigr).
+u_m(r)=\sum_j\alpha_j(r)s_{m,j},\qquad \xi(r)=\mathrm{clamp}\bigl(r+u_m(r)\bigr).
 $$
 
 Here $\alpha_j$ is a vector coefficient field and $s_{m,j}$ is channel $j$ of `motion_signal`.
