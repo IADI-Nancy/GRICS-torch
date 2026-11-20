@@ -9,8 +9,8 @@ build-backend = "setuptools.build_meta"
 [project]
 # Distribution name; Python imports retain the existing src package name.
 name = "GRICS-torch"
-# Local development distribution version; replace when defining a package release.
-version = "2.0.0"
+# Distribution version; GRICS-torch 3.0 is the batched GPU implementation with the solver and reader corrections of docs/fixes.md.
+version = "3.0.0"
 # Supported Python range: 3.11 and 3.12 only.
 requires-python = ">=3.11,<3.13"
 # Runtime dependencies; install the CPU or CUDA PyTorch build with the same public version.
