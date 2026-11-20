@@ -74,7 +74,7 @@ python -c 'from cupy_backends.cuda.libs import cusolver; print("CuPy cuSOLVER im
 
 The commands install dependencies and the project in editable mode using `pyproject.toml`, making `src` importable outside the repository. Basic includes simulation, preprocessed HDF5 and ISMRMRD `.h5` input, reconstruction, ESPIRiT, DICOM export, and notebook kernels/widgets. For SAEC support or Siemens `.dat` conversion, see the corresponding commands in the [Dockerfile](build/Dockerfile).
 
-The GPU sequence also exposes the CUDA libraries installed by pip to CuPy, including `libcusolver.so.11`, which ESPIRiT needs for its singular value decomposition, and verifies that cuSOLVER imports successfully.
+The GPU sequence also exposes the CUDA libraries installed by pip to CuPy, including `libcusolver.so.11`, which ESPIRiT needs for its singular value decomposition, and verifies that cuSOLVER imports successfully. The export applies to the current shell only: repeat the `CUDA_WHEEL_LIBS` and `export` lines in every new terminal, notebook kernel or batch job that runs ESPIRiT on the GPU, or append them to the activation script of the environment (`bin/activate` for a venv). Without them, the runtime prints a notice and runs ESPIRiT on the CPU while PyTorch keeps the GPU.
 
 Basic pip installation normally needs no additional apt packages when binary wheels are available. For native builds of the Siemens converter and its dependencies, the Ubuntu/Debian packages used by the Dockerfile are: `git`, `build-essential`, `cmake`, `pkg-config`, `libboost-all-dev`, `libpugixml-dev`, `libhdf5-dev`, `libxml2-dev`, `libxslt1-dev`, `libfftw3-dev`, `liblapacke-dev`, and `libopenblas-dev`.
 

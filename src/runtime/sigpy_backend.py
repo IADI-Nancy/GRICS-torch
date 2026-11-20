@@ -15,6 +15,7 @@ def _setup_cupy_sigpy_compat(cp):
 def resolve_espirit_device(use_gpu):
     """Keep ESPIRiT on CPU when the requested CuPy backend is unavailable."""
     cupy_ok = False
+    reason = None
     # SigPy imports installed CuPy even on CPU. Apply its compatibility shim
     # here, without probing CUDA unless a GPU backend was requested.
     try:
@@ -23,10 +24,16 @@ def resolve_espirit_device(use_gpu):
         _setup_cupy_sigpy_compat(cp)
         if use_gpu:
             cupy_ok = cp.cuda.runtime.getDeviceCount() > 0
-    except Exception:
+        if cupy_ok:
+            # ESPIRiT needs cuSOLVER for its SVD. CuPy loads it on first use,
+            # which fails when libcusolver is not on the loader path.
+            from cupy_backends.cuda.libs import cusolver  # noqa: F401
+    except Exception as error:
         cupy_ok = False
+        reason = error
     if use_gpu and not cupy_ok:
-        print("[runtime] CuPy/SigPy GPU backend is unavailable; using CPU for SigPy and CUDA for PyTorch.", flush=True)
+        detail = f" ({reason})" if reason is not None else ""
+        print(f"[runtime] CuPy/SigPy GPU backend is unavailable{detail}; using CPU for SigPy and CUDA for PyTorch.", flush=True)
 
     import sigpy as sp
 

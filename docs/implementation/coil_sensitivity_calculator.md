@@ -57,4 +57,4 @@ A non-positive map maximum raises an error. This convention fixes global scale; 
 
 ## Device and precision choices
 
-ESPIRiT calibrates in complex64 and returns complex128 maps. The CUDA path uses CuPy and DLPack to avoid a host copy. `runtime_device` selects the preferred runtime device; an explicit `sp_device` argument selects the SigPy device. On the CUDA path, CUDA memory exhaustion prints a message and retries calibration on CPU. Other exceptions propagate. Spline filtering uses mixed precision internally and also returns complex128 maps.
+ESPIRiT calibrates in complex64 and returns complex128 maps. The CUDA path uses CuPy and DLPack to avoid a host copy. `runtime_device` selects the preferred runtime device; an explicit `sp_device` argument selects the SigPy device. Runtime setup selects the CUDA path only when CuPy sees a device and can load cuSOLVER (`src/runtime/sigpy_backend.py`); otherwise it prints the reason and keeps SigPy on the CPU. On the CUDA path, CUDA memory exhaustion prints a message and retries calibration on CPU. Other exceptions propagate. Spline filtering uses mixed precision internally and also returns complex128 maps.
