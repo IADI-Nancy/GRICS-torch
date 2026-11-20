@@ -3,11 +3,10 @@
 import os
 import time
 from pathlib import Path
-from src.runtime.output_layout import record_reconstruction
+from src.runtime.output_layout import record_reconstruction, reconstruction_axes
 from contextlib import contextmanager, nullcontext
 
 import torch
-from tqdm.auto import tqdm
 
 from src.utils.plotting import save_nonrigid_alpha_plots, save_residual_subplots, show_and_save_image
 from src.utils.save_final_motion_plots import save_final_nonrigid_alpha_maps, save_final_rigid_motion_plots
@@ -19,7 +18,8 @@ def _format_cg_info(cg_info):
     return (
         f"flag = {cg_info.get('flag', -1)}, "
         f"relres = {cg_info.get('relres', float('nan')):.6e}, "
-        f"iter = {cg_info.get('iterations', 0)}"
+        f"iter = {cg_info.get('iterations', 0)}, "
+        f"selected_iter = {cg_info['selected_iteration']}"
     )
 
 def _console(params, message):
@@ -78,7 +78,7 @@ def _save_nonrigid_motion_debug(Data_res, level_idx, motion_type, debug_folder, 
     if alpha.shape[0] < 2:
         return
 
-    image = Data_res["ReconstructedImage"][0]
+    image = Data_res["ReconstructedImage"]
     if alpha.ndim in (3, 4) and not (alpha.ndim == 4 and image.ndim == 2):
         save_nonrigid_alpha_plots(
             alpha, image,
@@ -107,7 +107,6 @@ class JointReconstructionLogger:
         self.motion_plot_context = motion_plot_context or {}
         self.iterations_per_level = iterations_per_level
         self._progress = None
-        self.tensor_enabled = params.save_reconstruction_tensors
         self.log_enabled = params.save_reconstruction_logs
         self.plot_enabled = params.save_debug_plots
         n_levels = len(iterations_per_level)
@@ -124,12 +123,13 @@ class JointReconstructionLogger:
             _append_run_log(self.run_log, message)
 
     def progress(self, level_index, level_iterations, level_count):
-        if level_iterations <= 0:
+        if level_iterations <= 0 or not self.params.jupyter_notebook_flag:
             return nullcontext()
+        from tqdm.auto import tqdm
+
         return tqdm(
             total=level_iterations,
             desc=f"Resolution level {level_index + 1}/{level_count}",
-            disable=not self.params.jupyter_notebook_flag,
             leave=True, dynamic_ncols=True, position=0,
         )
 
@@ -259,7 +259,7 @@ class JointReconstructionLogger:
         if self.plot_enabled:
             level_folder = str(Path(self.params.debug_folder) / f'level_{self._level_index + 1:02d}')
             show_and_save_image(
-                data["ReconstructedImage"][0], "image_reconstructed",
+                data["ReconstructedImage"], "image_reconstructed",
                 level_folder, flip_for_display=self.params.flip_for_display)
             _save_nonrigid_motion_debug(
                 data, self._level_index + 1, self.params.reconstruction_motion_type,
@@ -275,45 +275,27 @@ class JointReconstructionLogger:
             _save_run_residual_plots(str(Path(self.params.debug_folder) / "residuals"), self.run_log)
         self._announce_run(f"finished in {elapsed:.2f} seconds")
 
-    def save_final_outputs(self, image, motion, *, defer_tensor_export=False):
-        """Record metadata unconditionally; save configured tensors/plots separately."""
+    def finish_reconstruction(self, image, motion):
+        """Record solver metadata and save configured diagnostic plots."""
         if hasattr(self.params, 'reconstruction_folder'):
-            image_axes = ['nex', 'x', 'y'] + (['z'] if image.ndim == 4 else [])
-            motion_axes = (['component', 'motion_state'] if self.params.reconstruction_motion_type == 'rigid'
-                           else ['component'] + image_axes[1:])
-            if len(motion_axes) < motion.ndim:
-                motion_axes.append('sensor')
+            image_axes, motion_axes = reconstruction_axes(image, motion, self.params.reconstruction_motion_type)
             record_reconstruction(self.params, image_shape=list(image.shape), image_axes=image_axes,
                                   motion_shape=list(motion.shape), motion_axes=motion_axes,
                                   motion_grid='reconstruction',
                                   motion_type=self.params.reconstruction_motion_type,
                                   image_stage='before_postprocessing', status='reconstructed',
-                                  tensor_export=('deferred' if defer_tensor_export else 'solver')
-                                  if self.tensor_enabled else 'disabled',
-                                  preview_repetition_reduction='mean' if image.shape[0] > 1 else 'none')
-        write_tensors = self.tensor_enabled and not defer_tensor_export
-        if not (write_tensors or self.plot_enabled):
+                                  tensor_export='deferred' if self.params.save_reconstruction_tensors else 'disabled',
+                                  preview_repetition_reduction='none')
+        if not self.plot_enabled:
             return
         folder = Path(self.params.results_folder)
         folder.mkdir(parents=True, exist_ok=True)
-        if write_tensors:
-            torch.save(image.detach().cpu(), folder / 'image_reconstructed.pt')
-            torch.save(motion.detach().cpu(), folder / 'motion_parameters.pt')
-        if not self.plot_enabled:
-            return
-        if image.shape[0] == 1:
-            show_and_save_image(image[0], "image_reconstructed", self.params.results_folder,
-                flip_for_display=self.params.flip_for_display)
-        else:
-            show_and_save_image(image.mean(dim=0), "image_reconstructed", self.params.results_folder,
-                flip_for_display=self.params.flip_for_display)
-            for nex_index in range(image.shape[0]):
-                show_and_save_image(image[nex_index], f"image_reconstructed_nex_{nex_index + 1:03d}",
-                    self.params.results_folder, flip_for_display=self.params.flip_for_display)
+        show_and_save_image(image, "image_reconstructed", self.params.results_folder,
+            flip_for_display=self.params.flip_for_display)
 
         if self.params.reconstruction_motion_type == "rigid":
             save_final_rigid_motion_plots(motion, self.motion_plot_context, self.params.results_folder,
                 self.params.N_motion_states, self.params.ResolutionLevels, self.params.data_type)
         elif self.params.reconstruction_motion_type == "non-rigid":
-            save_final_nonrigid_alpha_maps(motion, image[0], self.params.results_folder,
+            save_final_nonrigid_alpha_maps(motion, image, self.params.results_folder,
                 flip_for_display=self.params.flip_for_display, motion_plot_context=self.motion_plot_context)

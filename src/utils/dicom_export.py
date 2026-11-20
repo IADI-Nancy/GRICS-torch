@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from types import SimpleNamespace
 
-from src.utils.ismrmrd_io import acquisition_header
 import numpy as np
 import torch
 
@@ -32,15 +31,16 @@ def write_reconstruction_dicom(
     Write a single-frame DICOM file for a reconstructed MR image.
 
     Patient, study, scanner, sequence, and geometry fields are copied from the
-    raw-data ISMRMRD header when available. ``raw_data`` may be a DataLoader
+    raw-data ISMRMRD header when available. ``raw_data`` may be a DataPreparer
     instance produced by this repository; otherwise pass ``ismrmrd_file``.
 
-    ``image`` may be a NumPy array or Torch tensor with shape ``[Nx, Ny]``,
-    ``[Nex, Nx, Ny]``, ``[Nx, Ny, 1]``, or ``[Nex, Nx, Ny, 1]``.
-    Multi-Nex images are averaged before export. Complex images are exported
-    as magnitude. Set use_reference_geometry=False to use acquisition geometry
-    while copying other public metadata from a DICOM donor.
+    ``image`` must be a NumPy array or Torch tensor with shape ``[Nx, Ny]``.
+    Complex images are exported as magnitude. Set use_reference_geometry=False
+    to use acquisition geometry while copying other public metadata from a
+    DICOM donor.
     """
+    from src.utils.ismrmrd_io import acquisition_header
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -78,21 +78,25 @@ def write_reconstruction_dicom(
 
 def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
                         reference_dicom_path=None):
-    """Export [Nex, Nx, Ny, Nz] as a single-frame MR series on its native grid.
+    """Export a postprocessed [Nx, Ny, Nz] volume as a single-frame MR series.
 
     Siemens 3D acquisition positions describe the slab center, not kz partitions.
-    Expand that center opposite slice_dir using encoded z FOV (no z crop is applied
-    by the reconstruction pipeline). Donors provide public metadata, while the
-    reconstructed grid supplies geometry, including when donor resolution differs.
+    Increasing reconstructed z runs opposite to the Siemens slice_dir. Expand
+    the slab center in that direction using encoded z spacing, even if the
+    exported volume was zero-filled or cropped. Donors provide public metadata,
+    while the reconstructed grid supplies geometry, including when donor
+    resolution differs. Export in descending slice location, matching the
+    instance numbering used for 2D acquisitions.
     """
+    from src.utils.ismrmrd_io import acquisition_header
     import ismrmrd
     from pydicom.uid import generate_uid
 
-    if image.ndim != 4 or any(size < 1 for size in image.shape) or image.shape[-1] < 2:
-        raise ValueError('Volume DICOM export requires [Nex, Nx, Ny, Nz] with Nz > 1.')
+    if image.ndim != 3 or any(size < 1 for size in image.shape) or image.shape[-1] < 2:
+        raise ValueError('Volume DICOM export requires [Nx, Ny, Nz] with Nz > 1.')
     header = acquisition_header(raw_data)
     enc = header.encoding[0]
-    slab_geometries = getattr(raw_data, '_source_slice_geometry', None)
+    slab_geometries = getattr(raw_data, '_input_slice_geometry', None)
     if not slab_geometries:
         raise ValueError('3D DICOM export requires raw slab geometry; none was loaded. '
                          'Use raw input or preprocessed HDF5 containing slice_geometry and ismrmrd_header.')
@@ -108,12 +112,10 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
                 raise ValueError('3D DICOM export requires one slab with consistent position and orientation.')
     nz = image.shape[-1]
     fov_z = float(enc.encodedSpace.fieldOfView_mm.z)
-    if not np.isfinite(fov_z) or fov_z <= 0:
-        raise ValueError('3D DICOM export requires a positive encoded z field of view.')
-    spacing = fov_z / nz
-    # Match the Siemens spatial reversal already applied to x/y in the frame
-    # exporter. Associate native z planes with decreasing scanner coordinates;
-    # changing filenames or InstanceNumber alone would not fix patient geometry.
+    encoded_z = int(enc.encodedSpace.matrixSize.z)
+    if not np.isfinite(fov_z) or fov_z <= 0 or encoded_z <= 0:
+        raise ValueError('3D DICOM export requires a positive encoded z field of view and matrix size.')
+    spacing = fov_z / encoded_z
     geometries = {
         z: {**slab, 'position': (center - (z - (nz - 1) / 2) * spacing * direction).tolist(),
             'slice_thickness': spacing}
@@ -121,14 +123,14 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     }
     # Keep the loaded source unmodified and reuse the existing 2D export path.
     volume_source = SimpleNamespace(ismrmrd_header=ismrmrd.xsd.ToXML(header),
-                                    _source_slice_geometry=geometries)
+                                    _input_slice_geometry=geometries)
     uids = {key: generate_uid() for key in
             ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
     paths = []
     for z in range(nz):
         path = Path(output_dir) / f'slice_{z + 1:03d}.dcm'
         write_reconstruction_dicom(
-            image[..., z:z + 1], path, raw_data=volume_source, slice_index=z,
+            image[..., z], path, raw_data=volume_source, slice_index=z,
             series_description='GRICS reconstruction RESEARCH ONLY',
             images_in_acquisition=nz, series_number=series_number,
             reference_dicom_path=reference_dicom_path, use_reference_geometry=False,
@@ -277,17 +279,8 @@ def _prepare_single_frame_image(image: Any, geometry: Any | None = None) -> np.n
     else:
         arr = np.asarray(image)
 
-    if arr.ndim == 4:
-        if arr.shape[-1] != 1:
-            raise ValueError(f"Expected a single slice in the last dimension, got shape {arr.shape}.")
-        arr = arr.mean(axis=0)
-    if arr.ndim == 3:
-        if arr.shape[-1] == 1:
-            arr = arr[..., 0]
-        else:
-            arr = arr.mean(axis=0)
     if arr.ndim != 2:
-        raise ValueError(f"Expected a 2D image after preparation, got shape {arr.shape}.")
+        raise ValueError(f"DICOM export requires a spatial 2D image, got shape {arr.shape}.")
 
     if np.iscomplexobj(arr):
         arr = np.abs(arr)
@@ -442,7 +435,7 @@ def _copy_geometry_fields(
 
 
 def _set_instance_number(ds: Any, raw_data: Any | None, geometry: Any, slice_index: int | None) -> None:
-    geometry_by_slice = getattr(raw_data, "_source_slice_geometry", None) if raw_data is not None else None
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None) if raw_data is not None else None
     current_location = _slice_location_from_geometry(geometry)
     if geometry_by_slice and current_location is not None:
         locations = []
@@ -473,7 +466,7 @@ def _set_slice_geometry_fields(ds: Any, header: Any, fov: Any, raw_data: Any | N
             patient_position = str(raw_patient_position).split(".")[-1]
     _set_if_present(ds, "PatientPosition", patient_position)
 
-    geometry_by_slice = getattr(raw_data, "_source_slice_geometry", None) if raw_data is not None else None
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None) if raw_data is not None else None
     spacing = _slice_spacing_from_geometry(geometry_by_slice)
     if spacing is not None:
         ds.SpacingBetweenSlices = float(spacing)
@@ -512,7 +505,7 @@ def _require_slice_geometry(raw_data: Any | None, slice_index: int | None) -> An
         raise ValueError("DICOM export requires raw_data with Siemens slice geometry.")
     if slice_index is None:
         raise ValueError("DICOM export requires slice_index so slice geometry can be selected.")
-    geometry_by_slice = getattr(raw_data, "_source_slice_geometry", None)
+    geometry_by_slice = getattr(raw_data, "_input_slice_geometry", None)
     if not geometry_by_slice:
         raise ValueError("DICOM export requires raw slice geometry; none was loaded from the raw data.")
     geometry = geometry_by_slice.get(int(slice_index))

@@ -1,7 +1,5 @@
 import torch
 
-from src.utils.plotting import save_clustered_motion_plots
-
 
 class ConstantPhysiologicalSignalError(ValueError):
     """Raised when physiological samples contain no usable motion variation."""
@@ -30,7 +28,7 @@ def _kmeans_torch(x, k, n_iter=20):
     return labels, centers
 
 def _quantize_motion_features(x, n_bins):
-    """Uniformly quantize every physiological channel, as in GRICS++."""
+    """Uniformly quantize each physiological channel into ``n_bins`` levels."""
     if n_bins < 2:
         raise ValueError("motion_quantization_bins must be at least 2.")
     lower = x.amin(dim=0)
@@ -47,35 +45,29 @@ def _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx):
     if kspace is None:
         raise ValueError("kspace must be provided for kspace_energy motion binning.")
     values = torch.as_tensor(kspace)
+    if values.ndim not in (4, 5):
+        raise ValueError("kspace_energy motion binning expects k-space shaped "
+                         "[coil, Nex, kx, ky] or [coil, Nex, kx, ky, kz].")
     if values.ndim == 4:  # [coil, Nex, kx, ky]
-        energy = values.abs().square().sum(dim=(0, 2))
-        if torch.any(nex_idx < 0) or torch.any(nex_idx >= energy.shape[0]):
-            raise ValueError("nex_idx is outside the k-space repetition dimension.")
-        if torch.any(ky_idx < 0) or torch.any(ky_idx >= energy.shape[1]):
-            raise ValueError("ky_idx is outside the k-space phase dimension.")
-        return energy[nex_idx.long(), ky_idx.long()]
-    if values.ndim == 5:  # [coil, Nex, kx, ky, kz/slice]
-        energy = values.abs().square().sum(dim=(0, 2))
-        if kz_idx is None:
-            if energy.shape[2] != 1:
-                raise ValueError("kz_idx is required for multi-partition k-space.")
-            kz_idx = torch.zeros_like(ky_idx)
-        if torch.any(nex_idx < 0) or torch.any(nex_idx >= energy.shape[0]):
-            raise ValueError("nex_idx is outside the k-space repetition dimension.")
-        if torch.any(ky_idx < 0) or torch.any(ky_idx >= energy.shape[1]):
-            raise ValueError("ky_idx is outside the k-space phase dimension.")
-        if torch.any(kz_idx < 0) or torch.any(kz_idx >= energy.shape[2]):
-            raise ValueError("kz_idx is outside the k-space partition dimension.")
-        return energy[nex_idx.long(), ky_idx.long(), kz_idx.long()]
-    raise ValueError(
-        "kspace_energy motion binning expects k-space shaped "
-        "[coil, Nex, kx, ky] or [coil, Nex, kx, ky, kz]."
-    )
+        values = values.unsqueeze(-1)
+        kz_idx = None  # 2D input has no partition index, as in the original path.
+    energy = values.abs().square().sum(dim=(0, 2))
+    if kz_idx is None:
+        if energy.shape[2] != 1:
+            raise ValueError("kz_idx is required for multi-partition k-space.")
+        kz_idx = torch.zeros_like(ky_idx)
+    for indices, size, name, dimension in (
+        (nex_idx, energy.shape[0], "nex_idx", "repetition"),
+        (ky_idx, energy.shape[1], "ky_idx", "phase"),
+        (kz_idx, energy.shape[2], "kz_idx", "partition"),
+    ):
+        if torch.any(indices < 0) or torch.any(indices >= size):
+            raise ValueError(f"{name} is outside the k-space {dimension} dimension.")
+    return energy[nex_idx.long(), ky_idx.long(), kz_idx.long()]
 
 
-def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256,
-                           return_virtual_state_data=False):
-    """GRICS++ virtual-time quantization and k-space-energy state selection."""
+def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256):
+    """Quantize virtual times and select motion states by k-space energy."""
     quantized = _quantize_motion_features(x, n_quantization_bins)
     virtual_states, inverse = torch.unique(quantized, dim=0, return_inverse=True)
     n_virtual = int(virtual_states.shape[0])
@@ -102,43 +94,22 @@ def _kspace_energy_binning(x, k, readout_energy, n_quantization_bins=256,
     virtual_labels = distances.argmin(dim=1)
     labels = virtual_labels[inverse]
 
-    # GRICS++ represents a cluster by its selected high-energy virtual time.
+    # Represent each cluster by the mean samples at its selected high-energy
+    # virtual time, preserving the physiological units of the input features.
     centers = torch.empty((k, x.shape[1]), dtype=x.dtype, device=x.device)
     for state, virtual_idx in enumerate(selected):
         samples = inverse == virtual_idx
         centers[state] = x[samples].mean(dim=0)
-    if not return_virtual_state_data:
-        return labels, centers
-
-    # Keep one representative physiological value for each quantized virtual
-    # time. A multiresolution GRICS++ solve selects from these original
-    # virtual times after its resolution-specific k-space crop.
-    virtual_centers = torch.empty(
-        (n_virtual, x.shape[1]), dtype=x.dtype, device=x.device,
-    )
-    for virtual_idx in range(n_virtual):
-        virtual_centers[virtual_idx] = x[inverse == virtual_idx].mean(dim=0)
-    return labels, centers, inverse, virtual_centers
+    return labels, centers
 
 
 class MotionBinner:
     @staticmethod
-    def _flatten_index_tensor(values, name):
-        if torch.is_tensor(values):
-            return values.reshape(-1)
-        if isinstance(values, list):
-            return torch.cat([value.reshape(-1) for value in values], dim=0)
-        raise TypeError(f"{name} must be a tensor or list of tensors, got {type(values)!r}.")
-
-    @staticmethod
-    def bin_motion(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params,
-        tx=None, ty=None, phi=None, tz=None, rx=None, ry=None, rz=None,
-        y_limits=None, return_debug_data=False, return_virtual_state_data=False,
-        kspace=None):
+    def assign_states(motion_curve, ky_idx, kz_idx, nex_idx, t_device, params, kspace=None):
+        """Return labels and centers for readouts with already-flat index tensors."""
 
         motion_curve = motion_curve.to(t_device)
         Nbins = params.N_motion_states
-        Nex = params.Nex
         if motion_curve.ndim != 2:
             raise ValueError("motion_curve must have shape [Nreadout, Nsensor].")
         motion_features = motion_curve
@@ -146,6 +117,9 @@ class MotionBinner:
 
         if num_motion_samples < 1:
             raise ValueError("motion_curve must contain at least one sample.")
+        if Nbins == 1:
+            labels = torch.zeros(num_motion_samples, dtype=torch.int64, device=t_device)
+            return labels, motion_features.mean(dim=0, keepdim=True)
         if torch.all(motion_features.amax(dim=0) == motion_features.amin(dim=0)):
             raise ConstantPhysiologicalSignalError(
                 "The physiological signal is constant after interpolation; "
@@ -157,59 +131,17 @@ class MotionBinner:
                 f"({num_motion_samples})."
             )
 
-        ky_idx = MotionBinner._flatten_index_tensor(ky_idx, "ky_idx")
-        kz_idx = None if kz_idx is None else MotionBinner._flatten_index_tensor(kz_idx, "kz_idx")
-        nex_idx = MotionBinner._flatten_index_tensor(nex_idx, "nex_idx")
-
         binning_mode = str(params.motion_binning_mode).strip().lower()
         if binning_mode == "kmeans":
             labels, centers = _kmeans_torch(motion_features, Nbins)
         elif binning_mode == "kspace_energy":
             readout_energy = _readout_kspace_energy(kspace, ky_idx, kz_idx, nex_idx).to(device=t_device, dtype=motion_features.dtype)
-            kspace_result = _kspace_energy_binning(
-                motion_features, Nbins, readout_energy,
-                n_quantization_bins=int(params.motion_quantization_bins),
-                return_virtual_state_data=return_virtual_state_data,
-            )
-            if return_virtual_state_data:
-                labels, centers, virtual_labels, virtual_centers = kspace_result
-            else:
-                labels, centers = kspace_result
+            labels, centers = _kspace_energy_binning(motion_features, Nbins, readout_energy,
+                    n_quantization_bins=int(params.motion_quantization_bins))
         else:
             raise ValueError(
                 f"Unsupported motion_binning_mode: {binning_mode!r}. "
                 "Supported modes are 'kmeans' and 'kspace_energy'."
             )
 
-        # ---- Allocate output: [Nex][Nbins] ----
-        binned_ky_indices = [[torch.empty(0, dtype=ky_idx.dtype, device=t_device) for _ in range(Nbins)]
-            for _ in range(Nex)]
-        binned_kz_indices = None
-        if kz_idx is not None:
-            binned_kz_indices = [[torch.empty(0, dtype=kz_idx.dtype, device=t_device) for _ in range(Nbins)]
-                for _ in range(Nex)]
-
-        # ---- Fill bins ----
-        for nex in range(Nex):
-            nex_mask = nex_idx == nex
-
-            for b in range(Nbins):
-                mask = nex_mask & (labels == b)
-                binned_ky_indices[nex][b] = ky_idx[mask]
-                if binned_kz_indices is not None:
-                    binned_kz_indices[nex][b] = kz_idx[mask]
-
-        # save_debug_plots controls diagnostic plots of the input motion bins.
-        if params.save_debug_plots:
-            save_clustered_motion_plots(motion_curve=motion_curve, labels=labels, ky_idx=ky_idx, nex_idx=nex_idx, kz_idx=kz_idx,
-                nbins=Nbins, output_folder=params.initial_data_folder, resolution_levels=params.ResolutionLevels,
-                tx=tx, ty=ty, phi=phi, tz=tz, rx=rx, ry=ry, rz=rz, data_type=params.data_type, y_limits=y_limits)
-
-        if return_debug_data:
-            if return_virtual_state_data:
-                return (
-                    binned_ky_indices, binned_kz_indices, centers, labels,
-                    ky_idx, kz_idx, nex_idx, virtual_labels, virtual_centers,
-                )
-            return (binned_ky_indices, binned_kz_indices, centers, labels, ky_idx, kz_idx, nex_idx)
-        return binned_ky_indices, binned_kz_indices, centers
+        return labels, centers

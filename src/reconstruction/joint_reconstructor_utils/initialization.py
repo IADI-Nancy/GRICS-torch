@@ -16,13 +16,7 @@ def apply_external_initializer(
     spatial = ((data["Nx"], data["Ny"], data["Nz"]) if int(data.get("Nz", 1)) > 1 else (data["Nx"], data["Ny"]))
     if initial_image is not None:
         image = torch.as_tensor(initial_image, device=device)
-        # Accept an omitted image-unknown axis.
-        if image.ndim == len(spatial):
-            image = image.unsqueeze(0)
-        nimages = int(data["Nimages"])
-        if image.shape[0] == 1 and nimages > 1:
-            image = image.expand(nimages, *image.shape[1:])
-        if image.ndim != len(spatial) + 1 or image.shape[0] != nimages:
+        if image.ndim != len(spatial):
             raise ValueError(f"Invalid initial_image shape {tuple(image.shape)}.")
         data["ReconstructedImage"] = resize_img_xy(image.to(torch.complex128), spatial)
     if initial_motion is not None:
@@ -39,20 +33,23 @@ def apply_external_initializer(
             expected = (Nalpha, params.N_motion_states)
             if tuple(motion.shape) != expected:
                 raise ValueError(f"Rigid initial_motion must have shape {expected}.")
-            data["MotionModel"] = motion
+            data["RigidMotionModelFull"] = motion.clone()
+            data["MotionModel"] = motion[:, data["MotionStateIndices"]]
 
 
 def initialize_zero_image_and_motion(Data_res, *, params, device, Nalpha, Nphysio):
     """Create zero image and motion estimates in place for the coarsest level."""
     if int(Data_res.get("Nz", 1)) > 1:
         Data_res["ReconstructedImage"] = torch.zeros(
-            (Data_res["Nimages"], Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]),
+            (Data_res["Nx"], Data_res["Ny"], Data_res["Nz"]),
             dtype=torch.complex128, device=device)
     else:
-        Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nimages"], Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=device)
+        Data_res["ReconstructedImage"] = torch.zeros((Data_res["Nx"], Data_res["Ny"]), dtype=torch.complex128, device=device)
 
     if params.reconstruction_motion_type == "rigid":
-        Data_res["MotionModel"] = torch.zeros((Nalpha, params.N_motion_states), device=device)
+        # Retain initial transforms for states that first appear at finer resolutions.
+        Data_res["RigidMotionModelFull"] = torch.zeros((Nalpha, params.N_motion_states), device=device)
+        Data_res["MotionModel"] = Data_res["RigidMotionModelFull"][:, Data_res["MotionStateIndices"]]
     elif params.reconstruction_motion_type == "non-rigid":
         if int(Data_res.get("Nz", 1)) > 1:
             Data_res["MotionModel"] = torch.zeros(

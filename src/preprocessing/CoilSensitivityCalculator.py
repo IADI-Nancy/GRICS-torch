@@ -1,9 +1,8 @@
 import numpy as np
-import sigpy as sp
-import sigpy.mri as spmri
 import torch
 
-from src.utils.fftnc import fftnc, ifftnc
+from src.utils.fftnc import ifftnc
+from src.preprocessing.utils.spline import spline_fft_solver
 
 
 class CoilSensitivityCalculator:
@@ -25,7 +24,7 @@ class CoilSensitivityCalculator:
 
         if method == "espirit":
             return self.calculate_espirit(kspace, reference_kspace=reference_kspace)
-        return self.calculate_iadi_spline(kspace, reference_kspace=reference_kspace)
+        return self.calculate_odille_spline(kspace, reference_kspace=reference_kspace)
 
     @staticmethod
     def _average_repetitions(kspace):
@@ -54,9 +53,13 @@ class CoilSensitivityCalculator:
     def _resolved_espirit_device(self, kspace):
         if self.sp_device is not None:
             return self.sp_device
-        return sp.Device(0 if kspace.device.type == "cuda" else -1)
+        from src.runtime.sigpy_backend import resolve_espirit_device
+
+        return resolve_espirit_device(kspace.device.type == "cuda")
 
     def _run_espirit_calibration_cpu(self, kspace_block, calib_width, kernel_width, sp_device=None):
+        import sigpy.mri as spmri
+
         if sp_device is None:
             sp_device = self._resolved_espirit_device(kspace_block)
         kspace_np = kspace_block.detach().cpu().numpy().astype(np.complex64, copy=False)
@@ -71,6 +74,7 @@ class CoilSensitivityCalculator:
 
     def _run_espirit_calibration_gpu(self, kspace_block, calib_width, kernel_width, sp_device):
         import cupy as cp
+        import sigpy.mri as spmri
 
         kspace_cp = cp.asarray(kspace_block.contiguous(), dtype=cp.complex64)
         maps_cp = spmri.app.EspiritCalib(
@@ -86,8 +90,8 @@ class CoilSensitivityCalculator:
         return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
 
     def _run_espirit_calibration(self, kspace_block, calib_width, kernel_width):
-        use_gpu = kspace_block.device.type == "cuda"
         sp_device = self._resolved_espirit_device(kspace_block)
+        use_gpu = sp_device.id >= 0
 
         if not use_gpu:
             return self._run_espirit_calibration_cpu(
@@ -101,6 +105,8 @@ class CoilSensitivityCalculator:
                 kspace_block, calib_width, kernel_width, sp_device,
             )
         except cp.cuda.memory.OutOfMemoryError:
+            import sigpy as sp
+
             print("[coil sensitivity] GPU memory exhausted; running ESPIRiT on CPU.", flush=True)
             self._cupy_cleanup(cp)
             return self._run_espirit_calibration_cpu(
@@ -129,51 +135,18 @@ class CoilSensitivityCalculator:
             espirit_maps[:, :, :, z] = self._run_espirit_calibration(kspace_calib[:, :, :, z], calib_width_eff, kernel_width_eff)
         return espirit_maps
 
-    @staticmethod
-    def _spline_weight(nx, ny, device, dtype):
-        if nx < 3 or ny < 3:
-            return torch.zeros((nx, ny), dtype=dtype, device=device)
-
-        ghg_x = torch.zeros(nx, dtype=dtype, device=device)
-        ghg_x[nx // 2 - 1] = -0.25
-        ghg_x[nx // 2] = 0.5
-        ghg_x[nx // 2 + 1] = -0.25
-
-        ghg_y = torch.zeros(ny, dtype=dtype, device=device)
-        mid_y = int(np.floor(ny / 2))
-        ghg_y[mid_y - 1] = -0.25
-        ghg_y[mid_y] = 0.5
-        ghg_y[mid_y + 1] = -0.25
-
-        f_x = fftnc(ghg_x, dims=(-1,)).real[:, None]
-        f_y = fftnc(ghg_y, dims=(-1,)).real[None, :]
-        return (f_x + f_y) * 16.0
-
-    def _spline_fft_solver(self, y, regularization_weight):
-        if regularization_weight <= 0:
-            return y
-
-        nx, ny = y.shape[-2:]
-        weight = self._spline_weight(nx, ny, y.device, y.real.dtype)
-        denominator = 1.0 + float(regularization_weight) * weight
-        y_fft = fftnc(y, dims=(-2, -1))
-        smoothed = ifftnc(y_fft / denominator, dims=(-2, -1))
-        return smoothed
-
-    def calculate_iadi_spline(self, kspace, reference_kspace=None):
-        # Match GRICS++ AutoCalibrationSensitivityReader: the classic GRICS
-        # input contains the imaging KspaceData, not the separate ISMRMRD
-        # reference buffer.  For these fully sampled TSE acquisitions the full
-        # averaged imaging k-space is used to form the autocalibration images.
+    def calculate_odille_spline(self, kspace, reference_kspace=None):
         del reference_kspace
         kspace_calib = self._average_repetitions(kspace).to(torch.complex64)
         coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
 
         surface_abs = torch.abs(coil_images)
+        if not torch.isfinite(surface_abs).all() or surface_abs.max() <= 0:
+            raise ValueError("Odille-spline coil images must be finite with positive magnitude; check imaging k-space.")
         reference_abs = torch.sqrt(torch.sum(surface_abs ** 2, dim=0).clamp_min(0.0))
 
-        # Match GRICS++ SensitivityMapCalculator::create_SensitivityMaps:
-        # stabilize the phase proxy at 5% of the global surface-coil maximum.
+        # Stabilize phase estimation in low-signal regions by flooring coil
+        # magnitudes at 5% of the global surface-coil maximum.
         threshold = 0.05 * torch.max(surface_abs)
         nonzero_surface_abs = torch.clamp(surface_abs, min=threshold.item())
         surface_phase = coil_images / nonzero_surface_abs
@@ -182,32 +155,26 @@ class CoilSensitivityCalculator:
         lambda_phase = float(self.params.spline_phase_smoothing)
 
         if lambda_magnitude > 0:
-            surface_abs = self._spline_fft_solver(
+            surface_abs = spline_fft_solver(
                 surface_abs.permute(0, 3, 1, 2).to(torch.complex128),
                 lambda_magnitude,
             ).abs().permute(0, 2, 3, 1)
-            reference_abs = self._spline_fft_solver(
+            reference_abs = spline_fft_solver(
                 reference_abs.permute(2, 0, 1).to(torch.complex128),
                 lambda_magnitude,
             ).abs().permute(1, 2, 0)
 
-        reference_sum = torch.sum(torch.abs(reference_abs))
-        if float(reference_sum.real.item()) <= 0.0:
-            raise ValueError("GRICS reference image has non-positive sum; cannot normalize.")
-        self.grics_reference_image = reference_abs * (
-            float(reference_abs.numel()) / float(reference_sum.real.item())
-        )
-
         if lambda_phase > 0:
-            surface_phase = self._spline_fft_solver(
+            surface_phase = spline_fft_solver(
                 surface_phase.permute(0, 3, 1, 2),
                 lambda_phase,
             ).permute(0, 2, 3, 1)
 
         phase_factor = torch.exp(1j * torch.angle(surface_phase))
         eps = float(self.params.coil_sensitivity_eps)
-        # C++ divides by the smoothed reference directly.  Only guard exact
-        # numerical zeros; do not impose an additional relative intensity floor.
+        # Preserve the smoothed reference magnitude wherever it is positive;
+        # replace only exact zeros to avoid introducing an intensity-dependent
+        # floor into the sensitivity maps.
         reference_denominator = torch.where(
             reference_abs > 0,
             reference_abs,

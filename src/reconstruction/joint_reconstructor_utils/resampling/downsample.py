@@ -2,7 +2,7 @@
 
 import torch
 
-from .fourier_crop import fourier_crop_spatial
+from .resize import resize_img_xy
 
 
 def downsample_sampling_indices(Data_full, Sampling_full, Nx_res, Ny_res, Nz_res=1):
@@ -80,7 +80,7 @@ def downsample_kspace(Data_full, Nx_res, Ny_res, Nz_res=1):
 
 def reduce_motion_states(sampling_indices, target_states, motion_signal, params, device, kspace=None):
     full_states = int(motion_signal.shape[0])
-    if target_states == full_states:
+    if target_states >= full_states:
         return sampling_indices, motion_signal
 
     weights = torch.tensor(
@@ -97,16 +97,16 @@ def reduce_motion_states(sampling_indices, target_states, motion_signal, params,
             raise ValueError(
                 "Resolution-specific k-space is required for kspace_energy reduction."
             )
-        # Recompute state energy after the resolution crop, exactly where
-        # GRICS++ selects its resolution-specific virtual times.
+        # Recompute state energy after cropping so state selection reflects the
+        # frequencies that are present at this resolution.
         weights.zero_()
         for nex in range(params.Nex):
             for state in range(full_states):
                 indices = sampling_indices[nex][state].long()
                 if indices.numel() > 0:
                     weights[state] += kspace[:, nex, indices].abs().square().sum()
-        # GRICS++ keeps the highest-energy states at each resolution and
-        # attaches every remaining state to its nearest retained state.
+        # Keep the highest-energy states at this resolution and attach every
+        # remaining state to its nearest retained state in motion-signal space.
         selected = torch.argsort(weights, descending=True, stable=True)[:target_states]
         centers = motion_signal[selected].clone()
         labels = torch.cdist(motion_signal, centers).argmin(dim=1)
@@ -157,47 +157,50 @@ def reduce_motion_states(sampling_indices, target_states, motion_signal, params,
     return reduced, centers
 
 
-def downsample_data(Data_full, res_factor, target_states, motion_signal, params, device,
-                    source_sampling_indices=None, source_motion_signal=None):
-    # Coarse dimensions are truncated and rounded down to even values.
-    # The final resolution retains the original dimensions.
-    def level_size(full_size):
-        if res_factor == 1:
-            return full_size
-        return max(1, 2 * (int(full_size * res_factor) // 2))
-
-    Nx = level_size(Data_full["Nx"])
-    Ny = level_size(Data_full["Ny"])
+def downsample_data(Data_full, res_factor, target_states, motion_signal, params, device):
+    Nx = int(round(Data_full["Nx"] * res_factor))
+    Ny = int(round(Data_full["Ny"] * res_factor))
     Nz_full = int(Data_full.get("Nz", 1))
     # Preserve 3D motion at every level: its spatial gradients require at
     # least two depth samples. A singleton depth would select 2D operators
     # and misinterpret the original volume axis during sensitivity resizing.
-    Nz = max(2, level_size(Nz_full)) if Nz_full > 1 else 1
+    Nz = max(2, int(round(Nz_full * res_factor))) if Nz_full > 1 else 1
 
     Data_res = {}
     Data_res["Nx"] = Nx
     Data_res["Ny"] = Ny
     Data_res["Nz"] = Nz
-    Data_res["Nimages"] = int(Data_full["Nimages"])
 
     resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
-    smaps = Data_full["SensitivityMaps"]
-    if Nz_full == 1:
-        # The 2D coil-map convention keeps a trailing singleton z axis.
-        Data_res["SensitivityMaps"] = fourier_crop_spatial(smaps[..., 0], resize_shape).unsqueeze(-1)
-    else:
-        Data_res["SensitivityMaps"] = fourier_crop_spatial(smaps, resize_shape)
+    Data_res["SensitivityMaps"] = resize_img_xy(Data_full["SensitivityMaps"], resize_shape)
     sampling_indices = downsample_sampling_indices(
-        Data_full,
-        Data_full["SamplingIndices"] if source_sampling_indices is None else source_sampling_indices,
-        Nx, Ny, Nz_res=Nz,
+        Data_full, Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
     )
     Data_res["KspaceData"] = downsample_kspace(Data_full, Nx, Ny, Nz_res=Nz)
+    # Exclude empty states before clustering so they cannot occupy cluster centers.
+    # Preserve original IDs whenever states are retained without merging (including rigid motion).
+    active_states = [state for state in range(motion_signal.shape[0])
+                     if any(states[state].numel() > 0 for states in sampling_indices)]
+    if not active_states:
+        raise ValueError(f"No acquired k-space samples remain at resolution factor {res_factor}; increase the coarsest resolution.")
+    state_indices = torch.tensor(active_states, dtype=torch.long, device=device)
+    sampling_indices = [[states[state] for state in active_states] for states in sampling_indices]
+    motion_signal = motion_signal[state_indices]
+    if target_states < len(active_states):
+        # Merged non-rigid states use cluster IDs rather than original state IDs.
+        state_indices = torch.arange(target_states, dtype=torch.long, device=device)
     Data_res["SamplingIndices"], Data_res["MotionSignal"] = reduce_motion_states(
-        sampling_indices, target_states,
-        motion_signal if source_motion_signal is None else source_motion_signal,
-        params, device, kspace=Data_res["KspaceData"],
-    )
+        sampling_indices, target_states, motion_signal, params, device, kspace=Data_res["KspaceData"])
+    # Clustering can itself leave empty clusters, e.g. for identical signal values.
+    active_states = [state for state in range(Data_res["MotionSignal"].shape[0])
+                     if any(states[state].numel() > 0 for states in Data_res["SamplingIndices"])]
+    if not active_states:
+        raise ValueError(f"No acquired k-space samples remain at resolution factor {res_factor}; increase the coarsest resolution.")
+    active_indices = torch.tensor(active_states, dtype=torch.long, device=device)
+    Data_res["MotionStateIndices"] = state_indices[active_indices]
+    Data_res["SamplingIndices"] = [[states[state] for state in active_states]
+                                   for states in Data_res["SamplingIndices"]]
+    Data_res["MotionSignal"] = Data_res["MotionSignal"][active_indices]
     Data_res["Nsamples"] = Data_res["KspaceData"].shape[2]
 
     return Data_res

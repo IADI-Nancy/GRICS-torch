@@ -1,7 +1,7 @@
 #!/bin/bash
 
 IMAGE_NAME=${IMAGE_NAME:-ghcr.io/iadi-nancy/grics-torch}
-IMAGE_VERSION=${IMAGE_VERSION:-1.0.2}
+IMAGE_VERSION=${IMAGE_VERSION:-1.0.3}
 DOCKERFILE=${DOCKERFILE:-build/Dockerfile}
 
 IMAGE="${IMAGE_NAME}:${IMAGE_VERSION}"
@@ -55,7 +55,6 @@ touch ~/.gitconfig
 #   /home/<user>/wkdir/data
 MOUNTS=(
   -v "$WKDIR":/home/pyuser/wkdir
-  -v ~/.ssh:/home/pyuser/.ssh
   -v ~/.gitconfig:/home/pyuser/.gitconfig
 )
 

@@ -1,20 +1,20 @@
 [motion]
 # Shared spatial envelope for all synthetic non-rigid motion modes.
-# Inferior activation center in normalized SI coordinates [-1, 1].
+# Inferior activation center in normalized SI coordinates; use a finite value in [-1, 1].
 nonrigid_diaphragm_level = 0.2
-# Steepness of the inferior activation transition.
+# Steepness of the inferior activation transition; use any finite value > 0.
 nonrigid_diaphragm_sharpness = 10.0
-# Lateral spread of the respiratory envelope along the left-right axis.
+# Lateral spread along the left-right axis; use any finite value > 0 in normalized coordinates.
 nonrigid_lateral_sigma_lr = 0.45
-# Lateral spread of the respiratory envelope along the anterior-posterior axis.
+# Lateral spread along the anterior-posterior axis; use any finite value > 0 in normalized coordinates.
 nonrigid_lateral_sigma_ap = 0.30
-# Relative left-right displacement strength compared with SI displacement.
+# Relative left-right displacement strength compared with SI displacement; use any finite value >= 0.
 nonrigid_lr_fraction = 0.15
-# Relative anterior-posterior displacement strength compared with SI displacement.
+# Relative anterior-posterior displacement strength compared with SI displacement; use any finite value >= 0.
 nonrigid_ap_fraction = 0.35
-# Anterior bias for supine imaging: 0 is symmetric and 1 is fully anterior.
+# Anterior bias for supine imaging; use a finite value in [0, 1], from symmetric to fully anterior.
 nonrigid_anterior_bias = 0.7
-# Extra SI displacement gain in the most inferior region.
+# Extra SI displacement gain in the most inferior region; use any finite value >= 0.
 nonrigid_inferior_gain = 0.0
-# Attenuation toward the superior region; larger values give stronger decay.
+# Attenuation toward the superior region; use any finite value >= 0, with larger values giving stronger decay.
 nonrigid_top_decay = 1.0

@@ -1,12 +1,12 @@
 [sampling]
-# Sampling order model used by simulated acquisition.
+# Sampling order model; choose "linear", "interleaved", or "random" for simulation, or "from-data" for real recorded order.
 # Simulated sampling requires NshotsPerNex, Nex, acceleration_factor and calibration_lines.
 kspace_sampling_type = "linear"
-# Number of shots per average (Nex). Higher means more motion states for shot-wise simulations.
+# Number of shots per repetition; use a positive integer no greater than the acquired readouts per repetition.
 NshotsPerNex = 8
-# Number of averages/repetitions acquired.
+# Number of simulated averages/repetitions; use any positive integer.
 Nex = 1
-# Values greater than 1 require calibration_lines > 0.
+# Regular phase-encoding acceleration factor; use a positive integer, with values > 1 requiring calibration_lines > 0.
 acceleration_factor = 1
-# Required even without acceleration; zero is allowed only when acceleration_factor = 1.
+# Central calibration-band width in ky lines; use an integer from 0 through Ny, with 0 allowed only at acceleration 1.
 calibration_lines = 24

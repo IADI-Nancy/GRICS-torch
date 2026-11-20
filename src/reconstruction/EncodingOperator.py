@@ -3,25 +3,24 @@ from src.utils.fftnc import fftnc, ifftnc
 
 class EncodingOperator:
     """
-    MRI encoding operator.
+    MRI encoding of one shared image into all acquisition repetitions.
 
     SamplingIndices describes complete readout lines, assigned to disjoint
-    motion states within each repetition, as produced by Sampling.
+    motion states within each repetition, as produced by MotionSamplingPreparer.
+    Forward encoding uses the same image for every repetition; the adjoint
+    sums their contributions without averaging. Nex counts acquisitions,
+    while the reconstructed image has only spatial axes.
 
     Methods:
-    - __init__(smaps, Nsamples, SamplingIndices, KspaceOffset, motionOperator=None)
     - forward(x)   : forward operator (image -> k-space)
     - adjoint(y)  : adjoint operator (k-space -> image)
     - normal(x)   : normal operator (image -> image)
     """
 
-    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, motionOperator, Nimages=None):
+    def __init__(self, smaps, Nsamples, SamplingIndices, Nex, motionOperator):
         self.device = smaps.device
         self.smaps = smaps
-        self.Nex = int(Nex)
-        self.Nimages = self.Nex if Nimages is None else int(Nimages)
-        if self.Nimages not in (1, self.Nex):
-            raise ValueError("Nimages must be 1 (shared image) or equal Nex (independent images).")
+        self.Nex = Nex
         self.Nsamples = Nsamples
         self.SamplingIndices = SamplingIndices
         self.motionOperator = motionOperator
@@ -35,10 +34,10 @@ class EncodingOperator:
         KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex128, device=self.device)
 
         if Nz > 1:
-            image = image.reshape(self.Nimages, Nx, Ny, Nz)
+            image = image.reshape(Nx, Ny, Nz)
             fft_dims = (0, 1, 2)
         else:
-            image = image.reshape(self.Nimages, Nx, Ny)
+            image = image.reshape(Nx, Ny)
             fft_dims = (0, 1)
 
         # ---- Loop over motion states ----
@@ -47,8 +46,7 @@ class EncodingOperator:
 
             for nex in range(self.Nex):
                 SamplingIndices = self.SamplingIndices[nex][motion_state]
-                image_nex = image[0 if self.Nimages == 1 else nex]
-                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(image_nex.shape)
+                WarpedImage = (MotionOp @ image.flatten()).reshape(image.shape)
 
                 # ---- Loop over coils ----
                 for coil in range(Ncoils):
@@ -72,11 +70,11 @@ class EncodingOperator:
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
         KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples)
         if Nz > 1:
-            Image = torch.zeros((self.Nimages, Nx, Ny, Nz), dtype=torch.complex128, device=device)
+            Image = torch.zeros((Nx, Ny, Nz), dtype=torch.complex128, device=device)
             fft_dims = (0, 1, 2)
             kspace_shape = (Nx, Ny, Nz)
         else:
-            Image = torch.zeros((self.Nimages, Nx, Ny), dtype=torch.complex128, device=device)
+            Image = torch.zeros((Nx, Ny), dtype=torch.complex128, device=device)
             fft_dims = (0, 1)
             kspace_shape = (Nx, Ny)
 
@@ -106,8 +104,8 @@ class EncodingOperator:
                 Unwarped = MotionOp @ WarpedImage.reshape(-1)
                 Unwarped = Unwarped.reshape(kspace_shape)
 
-                # Accumulate into full image
-                Image[0 if self.Nimages == 1 else nex] += Unwarped
+                # Sum contributions from every repetition into the shared image
+                Image += Unwarped
 
         return Image.flatten()
     
@@ -148,7 +146,7 @@ class EncodingOperator:
         Ncoils, Nx, Ny, Nz = self.smaps.shape
         kspace_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
         fft_dims = (1, 2) if Nz > 1 else (1,)
-        image = image.reshape(self.Nimages, *kspace_shape)
+        image = image.reshape(*kspace_shape)
         Image = torch.zeros(image.shape, dtype=torch.complex128, device=self.device)
 
         for nex, nex_masks in enumerate(self._phase_encoding_masks):
@@ -156,8 +154,7 @@ class EncodingOperator:
                 if phase_mask is None:
                     continue
                 MotionOp = self.motionOperator._get_sparse_operator(motion_state)
-                image_nex = image[0 if self.Nimages == 1 else nex]
-                WarpedImage = (MotionOp @ image_nex.flatten()).reshape(kspace_shape)
+                WarpedImage = (MotionOp @ image.flatten()).reshape(kspace_shape)
                 ImageSum = torch.zeros(kspace_shape, dtype=torch.complex128, device=self.device)
 
                 for coil in range(Ncoils):
@@ -173,6 +170,6 @@ class EncodingOperator:
                 # matching the existing general encoding operator.
                 MotionOp = MotionOp.coalesce().transpose(0, 1)
                 Unwarped = (MotionOp @ ImageSum.flatten()).reshape(kspace_shape)
-                Image[0 if self.Nimages == 1 else nex] += Unwarped
+                Image += Unwarped
 
         return Image.flatten()

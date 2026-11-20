@@ -3,8 +3,7 @@ import torch
 
 from src.reconstruction.EncodingOperator import EncodingOperator
 from src.reconstruction.MotionOperator import MotionOperator
-from src.preprocessing.SamplingSimulator import SamplingSimulator
-from src.preprocessing.Sampling import Sampling
+from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 from src.utils.fftnc import ifftnc # normalised ifft for n dimensions
 from src.utils.plotting import (
     save_motion_debug_plots, save_nonrigid_alpha_plots,
@@ -12,7 +11,7 @@ from src.utils.plotting import (
 from src.utils.nonrigid_display import (
     flip_nonrigid_alpha_for_display,
 )
-from src.preprocessing.motion_simulator_utils.motion_simulator_utils import (
+from src.preprocessing.utils.motion_simulator_helpers import (
     build_event_transition_curve,
     build_navigator_from_motion_matrix,
     build_rigid_rotation_centers,
@@ -68,12 +67,18 @@ class MotionSimulator:
             motion_type = self.params.simulated_motion_type.split("-", 1)[0]
 
         self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz)
-        E = EncodingOperator(self.smaps, self.TotalKspaceSamples, self.sampling_idx, self.params.Nex, self.MotionOperator)
-        kspace_corruped = E.forward(self.image)
-        self.kspace = kspace_corruped.reshape(self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nz)
+        encoding = EncodingOperator(
+            self.smaps, self.TotalKspaceSamples, self.sampling_idx,
+            self.params.Nex, self.MotionOperator,
+        )
+        self.kspace = encoding.forward(self.image).reshape(
+            self.Ncha, self.params.Nex, self.Nx, self.Ny, self.Nz,
+        )
 
-        img_cplx = ifftnc(self.kspace, dims=(-3, -2, -1)).to(self.t_device)
-        self.image_no_moco = torch.sum(img_cplx * self.smaps.conj().unsqueeze(1).expand(-1, self.params.Nex, -1, -1, -1), dim=0)
+        averaged_kspace = torch.mean(self.kspace, dim=1)
+        img_cplx = ifftnc(averaged_kspace, dims=(-3, -2, -1)).to(self.t_device)
+        image_no_moco = torch.sum(img_cplx * self.smaps.conj(), dim=0)
+        self.image_no_moco = image_no_moco if self.Nz > 1 else image_no_moco.squeeze(-1)
 
     # =============================================================================
     # ============================== RIGID MOTION =================================
@@ -84,10 +89,10 @@ class MotionSimulator:
     # =============================================================================
 
     # ---------------------------------------------------------------------------
-    # ------------------------ RIGID: REALISTIC CURVES --------------------------
+    # ------------------------ RIGID: PER-READOUT CURVES --------------------------
     # ---------------------------------------------------------------------------
 
-    def _create_realistic_motion_curves_2d(self):
+    def _create_per_readout_motion_curves_2d(self):
         # Time axis: one value per k-space line (Ny)
         total_lines = num_motion_readouts(self.ky_idx)
         n_events = int(require_motion_param(self.params, "num_motion_events"))
@@ -133,7 +138,7 @@ class MotionSimulator:
         # Return the motion curve, parameter curves, and event times
         return navigator, tx, ty, phi
 
-    def _create_realistic_motion_curves_3d(self):
+    def _create_per_readout_motion_curves_3d(self):
         # Time axis: one value per acquired 3D readout.
         n_states = num_motion_readouts(self.ky_idx)
         n_events = int(require_motion_param(self.params, "num_motion_events"))
@@ -188,13 +193,13 @@ class MotionSimulator:
 
         return navigator, tx, ty, tz, rx, ry, rz
 
-    def simulate_realistic_rigid_motion(self):
+    def simulate_per_readout_rigid_motion(self):
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
         n_states = num_motion_readouts(self.ky_idx)
 
         if self.Nz > 1:
             # Generate 3D realistic rigid curves and parameters.
-            self.navigator, self.tx, self.ty, self.tz, self.rx, self.ry, self.rz = self._create_realistic_motion_curves_3d()
+            self.navigator, self.tx, self.ty, self.tz, self.rx, self.ry, self.rz = self._create_per_readout_motion_curves_3d()
 
             alpha = torch.zeros(6, n_states, device=self.t_device)
             alpha[0, :] = self.tx
@@ -208,7 +213,7 @@ class MotionSimulator:
             centers = build_rigid_rotation_centers(lim, n_states, device=self.t_device, Nx=self.Nx, Ny=self.Ny, Nz=self.Nz)
         else:
             # 2D realistic rigid (existing behavior).
-            self.navigator, self.tx, self.ty, self.phi = self._create_realistic_motion_curves_2d()
+            self.navigator, self.tx, self.ty, self.phi = self._create_per_readout_motion_curves_2d()
 
             alpha = torch.zeros(3, n_states, device=self.t_device)
             alpha[0, :] = self.tx
@@ -319,7 +324,7 @@ class MotionSimulator:
 
         # self.sampling_idx = \
         #     build_sampling_from_motion_states(ky_per_mot_state_idx, self.ky_idx, self.nex_idx, self.Nx, self.Ny, self.t_device)
-        self.sampling_idx = Sampling.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout) # ← for debugging only, ignore output
+        self.sampling_idx = MotionSamplingPreparer.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout) # ← for debugging only, ignore output
         
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
@@ -333,7 +338,7 @@ class MotionSimulator:
     # This block handles non-rigid-motion simulation:
     # 1) shared spatial alpha-field generators
     # 2) discrete non-rigid simulation
-    # 3) realistic non-rigid simulation
+    # 3) per-readout non-rigid simulation
     # =============================================================================
 
     # ---------------------------------------------------------------------------
@@ -432,7 +437,7 @@ class MotionSimulator:
         kz_readout_layout = None
         if self.kz_per_motion_state is not None:
             kz_readout_layout = globalize_per_shot_readout_layout(self.kz_per_motion_state, device=self.t_device)
-        self.sampling_idx = Sampling.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout)
+        self.sampling_idx = MotionSamplingPreparer.build_sampling_per_nex_per_motion(ky_readout_layout, self.t_device, self.Nx, self.Ny, Nz=self.Nz, binned_kz_indices=kz_readout_layout)
         self.TotalKspaceSamples = self.Ny * self.Nx * self.Nz
 
         # One unique motion state per total shot across the acquisition.
@@ -449,17 +454,17 @@ class MotionSimulator:
         self.alpha_maps = alpha_maps
 
         if self.params.save_debug_plots:
-            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
+            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image, "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
 
         self._apply_motion(alpha_maps, centers=None, motion_signal=s, motion_type='non-rigid')
         expanded_curves = expand_motion_states_to_readouts(ky_readout_layout, {"navigator": s[:, 0]}, device=self.t_device)
         self.navigator = expanded_curves["navigator"].reshape(-1, 1)
 
     # ---------------------------------------------------------------------------
-    # ------------------ NON-RIGID: REALISTIC SIMULATION  -----------------------
+    # ------------------ NON-RIGID: PER-READOUT SIMULATION  -----------------------
     # ---------------------------------------------------------------------------
 
-    def _create_realistic_non_rigid_motion_curve(self):
+    def _create_per_readout_non_rigid_motion_curve(self):
         """
         Create a respiratory-like sinusoidal motion curve with unit amplitude.
         Frequency (cycles per image/Nex block) and phase are randomized.
@@ -482,7 +487,7 @@ class MotionSimulator:
         signal = signal / torch.clamp(torch.max(torch.abs(signal)), min=1e-12)
         return signal
 
-    def simulate_realistic_non_rigid_motion(self):
+    def simulate_per_readout_non_rigid_motion(self):
         print("Simulating realistic non-rigid motion fields...")
 
         # One global motion state per acquired readout.
@@ -494,10 +499,10 @@ class MotionSimulator:
         alpha_maps = (alpha_maps * amp).unsqueeze(-1)
         self.alpha_maps = alpha_maps
 
-        self.navigator = self._create_realistic_non_rigid_motion_curve().reshape(-1, 1)
+        self.navigator = self._create_per_readout_non_rigid_motion_curve().reshape(-1, 1)
         self._apply_motion(alpha_maps, centers=None, motion_signal=self.navigator, motion_type='non-rigid')
 
         if self.params.save_debug_plots:
-            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image[0], "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
+            save_nonrigid_alpha_plots(alpha_maps[..., 0], self.image, "simulated", self.params.initial_data_folder, flip_vertical=self.params.flip_for_display)
 
     

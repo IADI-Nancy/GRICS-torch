@@ -1,10 +1,8 @@
 from contextlib import nullcontext
+import math
 
 import torch
 
-"""
-Source: ChatGPT + Wikipedia
-"""
 class ConjugateGradientSolver:
     """
     CG and PCG solver for equations of the form:
@@ -25,13 +23,19 @@ class ConjugateGradientSolver:
         self.regularizer = regularizer
         self.regularization_shape = regularization_shape
         self.regularization_spatial_dims = regularization_spatial_dims
-        self.preconditioner = preconditioner
         self.regularization_spacing = regularization_spacing
-        if self.regularizer in ("Tikhonov_gradient", "Tikhonov_laplacian"):
+        self.preconditioner = preconditioner
+        if self.regularizer == "Tikhonov_gradient":
             if self.regularization_shape is None:
                 raise ValueError(f"regularization_shape must be set for {self.regularizer} regularization.")
             if self.regularization_spatial_dims is None:
                 raise ValueError(f"regularization_spatial_dims must be set for {self.regularizer} regularization.")
+            if self.regularization_spacing is not None:
+                if len(self.regularization_spacing) != len(self.regularization_spatial_dims):
+                    raise ValueError("regularization_spacing must have one value per spatial dimension.")
+                if any(not math.isfinite(float(value)) or float(value) <= 0
+                       for value in self.regularization_spacing):
+                    raise ValueError("regularization_spacing must contain finite positive values.")
         self.verbose = verbose
         self.stop_on_stagnation = stop_on_stagnation
         self.true_residual_interval = true_residual_interval
@@ -92,8 +96,6 @@ class ConjugateGradientSolver:
             return x
         elif self.regularizer == "Tikhonov_gradient":
             return self._gradient_op(x)
-        elif self.regularizer == "Tikhonov_laplacian":
-            return self._laplacian_op(x)
         else:
             raise ValueError("Unknown regularizer")
     
@@ -108,7 +110,8 @@ class ConjugateGradientSolver:
 
         # Compute -div(grad(field)) along selected spatial dimensions.
         for index, d in enumerate(spatial_dims):
-            spacing_squared = (self.regularization_spacing[index] ** 2 if self.regularization_spacing is not None else 1.0)
+            spacing_squared = (float(self.regularization_spacing[index]) ** 2
+                               if self.regularization_spacing is not None else 1.0)
             # Forward difference along dimension d (zero-gradient boundary).
             df = torch.zeros_like(field)
             slc_src = [slice(None)] * field.ndim
@@ -135,57 +138,16 @@ class ConjugateGradientSolver:
 
         return result.reshape(-1)
     
-    def _gradient_diagonal(self, *, dtype, device):
-        """Diagonal of the zero-gradient-boundary G^H G used by _gradient_op."""
-        diagonal = torch.zeros(self.regularization_shape, dtype=dtype, device=device)
-        for index, dim in enumerate(self.regularization_spatial_dims):
-            length = self.regularization_shape[dim]
-            if length < 2:
-                continue
-            spacing = self.regularization_spacing[index] if self.regularization_spacing is not None else 1.0
-            contribution = 1.0 / (spacing * spacing)
-            diagonal += 2.0 * contribution
-            first = [slice(None)] * diagonal.ndim
-            last = [slice(None)] * diagonal.ndim
-            first[dim] = 0
-            last[dim] = -1
-            diagonal[tuple(first)] -= contribution
-            diagonal[tuple(last)] -= contribution
-        return diagonal.flatten()
-
-    def _laplacian_op(self, x):
-        if self.regularization_shape is None:
-            raise ValueError("regularization_shape must be set for Tikhonov_laplacian regularization.")
-        field = x.view(*self.regularization_shape)
-        spatial_dims = self.regularization_spatial_dims
-        if spatial_dims is None:
-            raise ValueError("regularization_spatial_dims must be set for Tikhonov_laplacian regularization.")
-
-        # Guard: need at least 2 pixels in every spatial dimension.
-        for d in spatial_dims:
-            if field.shape[d] < 2:
-                return torch.zeros_like(field).reshape(-1)
-
-        result = torch.zeros_like(field)
-        for d in spatial_dims:
-            prev_idx = [slice(None)] * field.ndim
-            curr_idx = [slice(None)] * field.ndim
-            next_idx = [slice(None)] * field.ndim
-            inner_idx = [slice(None)] * field.ndim
-            prev_idx[d] = slice(None, -2)
-            curr_idx[d] = slice(1, -1)
-            next_idx[d] = slice(2, None)
-            inner_idx[d] = slice(1, -1)
-            result[tuple(inner_idx)] += (-field[tuple(prev_idx)] + 2 * field[tuple(curr_idx)] - field[tuple(next_idx)])
-        return result.reshape(-1)
-
-
     # --------------------------------------------------------------
     # Conjugate Gradient Solver
     # --------------------------------------------------------------
     def cg(self, b, x0=None, max_iter=20, tol=1e-3, differentiable=False):
         """
         Solve _A(x) = b using Conjugate Gradient.
+
+        Return the final iterate on verified convergence; otherwise return the
+        lowest-residual candidate among the initial guess, residual refreshes,
+        and final iterate. Candidate residuals are evaluated directly as b - A(x).
 
         Parameters:
             b        : RHS vector, shape (NxNy,)
@@ -221,7 +183,7 @@ class ConjugateGradientSolver:
             # bound on image or motion error.
             tolb = tol * b_norm
 
-            z = self.preconditioner(r) if self.preconditioner is not None else r.clone()
+            z = r.clone() if self.preconditioner is None else self.preconditioner(r)
             p = z.clone()
             rz_old = torch.dot(torch.conj(r), z).real
             eps = torch.finfo(r.real.dtype).eps
@@ -232,8 +194,6 @@ class ConjugateGradientSolver:
                 stagnation_countdown_steps = max(1, min(n // 50, 5, max(n - max_iter, 1)))
             else:
                 stagnation_countdown_steps = max(1, int(self.stagnation_countdown_steps))
-            best_x = x.clone()
-            best_rel = torch.linalg.norm(r) / b_norm
             iters_done = 0
             res_norm = torch.linalg.norm(r)
             rel_res = (res_norm / b_norm).item()
@@ -241,8 +201,11 @@ class ConjugateGradientSolver:
             relres_history = [float(rel_res)]
             converged = bool(res_norm <= tolb)
             stop_reason = "initial_tolerance"
+            best_x = x.clone()
+            best_res_norm = res_norm
+            best_iteration = 0
 
-            for it in range(max_iter):
+            for it in range(0 if converged else max_iter):
                 Ap = self._A(p)
                 iters_done = it + 1
 
@@ -286,14 +249,15 @@ class ConjugateGradientSolver:
                     # a fresh one; this does not reset x or the search direction.
                     r = b - self._A(x)
                     res_norm = torch.linalg.norm(r)
+                    if res_norm < best_res_norm:
+                        best_x = x.clone()
+                        best_res_norm = res_norm
+                        best_iteration = iters_done
                 rel_res = (res_norm / b_norm).item()
                 # History uses the direct residual on refresh steps and the
                 # recursive residual on other steps.
                 residual_norm_history.append(float(res_norm.item()))
                 relres_history.append(float(rel_res))
-                if rel_res < best_rel:
-                    best_rel = rel_res
-                    best_x = x.clone()
                 if self.verbose:
                     print(
                         f"CG Iter {it+1}/{max_iter}, Residual norm: {res_norm.item():.6e}, "
@@ -323,7 +287,7 @@ class ConjugateGradientSolver:
                         stop_reason = "early_stopping"
                         break
 
-                z = self.preconditioner(r) if self.preconditioner is not None else r.clone()
+                z = r.clone() if self.preconditioner is None else self.preconditioner(r)
 
                 rz_new = torch.dot(torch.conj(r), z).real
                 if rz_old.abs() < 1e-15:
@@ -339,20 +303,28 @@ class ConjugateGradientSolver:
             elif stop_reason == "initial_tolerance":
                 stop_reason = "max_iter"
 
+            # Verify the final candidate even when stopping between refreshes
+            # or on breakdown. Selection always uses the unpreconditioned system.
+            res_norm = torch.linalg.norm(b - self._A(x))
+            final_rel_res = float((res_norm / b_norm).item())
+            converged = bool(res_norm <= tolb)
+            if converged or res_norm < best_res_norm:
+                best_x = x
+                best_res_norm = res_norm
+                best_iteration = iters_done
+
             self.last_info = {
                 "flag": 0 if converged else 1,
                 "iterations": int(iters_done),
-                "relres": float(rel_res),
-                "residual_norm": float(res_norm.item()),
+                "selected_iteration": int(best_iteration),
+                "relres": float((best_res_norm / b_norm).item()),
+                "residual_norm": float(best_res_norm.item()),
+                "final_relres": final_rel_res,
                 "residual_norm_history": residual_norm_history,
                 "relres_history": relres_history,
                 "stop_reason": stop_reason,
             }
 
-            # Return the iterate with the smallest recorded relative residual,
-            # which need not be the last iterate. last_info above describes the
-            # final attempted iteration; residual history is not all "true"
-            # residuals because direct recomputation happens only on refreshes.
             return best_x
         
     # --------------------------------------------------------------
