@@ -1,0 +1,20 @@
+# Temporary installation-reproduction environment: no CUDA toolkit or GRICS dependencies.
+FROM python:3.11-slim-bookworm
+
+# Use HTTPS for Debian repositories because plain HTTP was rejected on the IADI network.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client sudo \
+ && rm -rf /var/lib/apt/lists/*
+
+# Optional IADI mirror; leave empty for the public-PyPI-only reproduction.
+ARG IADI_PIP_INDEX=""
+RUN if [ -n "$IADI_PIP_INDEX" ]; then \
+      printf '[global]\nindex-url = https://pypi.org/simple/\nextra-index-url = %s\ntrusted-host = virtus.iadi.lan\n' "$IADI_PIP_INDEX" > /etc/pip.conf; \
+    fi \
+ && printf 'pyuser ALL=(ALL) NOPASSWD: ALL\nDefaults env_keep += "http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY"\n' > /etc/sudoers.d/pyuser \
+ && chmod 0440 /etc/sudoers.d/pyuser
+
+COPY startup-env-test.sh /usr/local/bin/startup-env-test.sh
+RUN chmod 0755 /usr/local/bin/startup-env-test.sh
+ENTRYPOINT ["/usr/local/bin/startup-env-test.sh"]
