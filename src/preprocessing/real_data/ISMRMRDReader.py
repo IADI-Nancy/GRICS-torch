@@ -121,13 +121,6 @@ class ISMRMRDReader:
             enc = header.encoding[0]
             limits = enc.encodingLimits
             self._oversampling_factor = self._readout_oversampling_factor(enc)
-
-            # Readout oversampling from the header; 2.0 assumed 2x for every file and
-            # cropped half of the field of view when there was none.
-            encoded_x, recon_x = int(enc.encodedSpace.matrixSize.x), int(enc.reconSpace.matrixSize.x)
-            if recon_x <= 0 or encoded_x % recon_x != 0 or encoded_x // recon_x not in (1, 2):
-                raise ValueError(f"Unsupported readout oversampling: encodedSpace.x={encoded_x}, reconSpace.x={recon_x}.")
-            self._oversampling_factor = encoded_x // recon_x
             if self._oversampling_factor == 1:
                 print("[ismrmrd] no readout oversampling declared (encodedSpace.x == reconSpace.x): the readout is kept whole.", flush=True)
 
