@@ -128,6 +128,18 @@ Use `--device cpu` in every command for a CPU installation. Keep the standard re
 
 For Siemens users, run `python tests/validate_siemens_phantom_2d.py --device gpu` to check Siemens conversion, reconstruction, and DICOM export; use `--device cpu` for CPU execution. See the [Siemens phantom test](docs/usage/tests.md#siemens-phantom-check).
 
+## GRICS-torch 3.0
+
+This repository is GRICS-torch 3.0, based on GRICS-torch 2.0. The reconstruction algorithm is the same.
+
+- GPU implementation of the encoding operator and of its Jacobian: coils batched in one FFT per motion state, warped images and gradients cached per Gauss-Newton iteration, coalesced sparse warps, one host synchronisation per CG iteration. Optional single precision and gather-based warps (`compute_precision`, `warp_backend`). Details: [docs/performance.md](docs/performance.md).
+- Corrections to the solver and to the data readers: [docs/fixes.md](docs/fixes.md). The corrections that change the numerics have a switch in the reconstruction TOML.
+- Benchmarks against 2.0 ([benchmarks/](benchmarks/README.md)) and unit tests (`python -m pytest tests/unit`).
+
+![](docs/figures/readme_timings.png)
+
+Reconstruction time for the four shipped validation settings and the Zenodo breast slice, same seeds, on an RTX PRO 6000 and on an A100 PCIe 40 GB. Labels: speed-up with respect to 2.0.
+
 ## Documentation
 
 Please check the [documentation](docs/index.md) to further usage instructions and details regarding architecture or implementation.

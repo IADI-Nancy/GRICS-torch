@@ -1,0 +1,8 @@
+{
+ "tag": "reference",
+ "case": "real",
+ "precision": "none",
+ "backend": "none",
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "elapsed_s": 11.452440307999495
+}

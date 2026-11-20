@@ -1,0 +1,8 @@
+{
+ "tag": "reference",
+ "case": "2d_nonrigid",
+ "precision": "none",
+ "backend": "none",
+ "gpu": "NVIDIA A100-PCIE-40GB",
+ "elapsed_s": 5.386166068725288
+}

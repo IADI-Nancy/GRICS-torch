@@ -1,0 +1,8 @@
+{
+ "tag": "batched_double_gather",
+ "case": "2d_rigid",
+ "precision": "double",
+ "backend": "gather",
+ "gpu": "NVIDIA A100-PCIE-40GB",
+ "elapsed_s": 1.0565313249826431
+}

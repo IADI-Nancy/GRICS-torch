@@ -1,0 +1,224 @@
+{
+ "ceilings": {
+  "bandwidth_GBs_copy": 1392.1894479911161,
+  "bandwidth_GBs_inplace_scale": 1340.8377731771936,
+  "matmul_TFLOPS_fp32": 18.20187360449826,
+  "matmul_TFLOPS_fp64": 15.10015074955349,
+  "fft3_128x128x64_c64": {
+   "ms_4coils": 0.20571593195199966,
+   "effective_GBs": 326.2210338461229,
+   "GFLOPS": 2038.8814615382682
+  },
+  "fft3_128x128x64_c128": {
+   "ms_4coils": 0.4062976688146591,
+   "effective_GBs": 330.3433376607093,
+   "GFLOPS": 1032.3229301897168
+  },
+  "fft3_192x192x56_c64": {
+   "ms_4coils": 0.4437558352947235,
+   "effective_GBs": 297.73259412408896,
+   "GFLOPS": 1951.7562404033754
+  },
+  "fft3_192x192x56_c128": {
+   "ms_4coils": 0.8326670154929161,
+   "effective_GBs": 317.3431240621156,
+   "GFLOPS": 1040.1555539451501
+  },
+  "fft3_256x208x160_c64": {
+   "ms_4coils": 1.7385270446538925,
+   "effective_GBs": 313.6330387707893,
+   "GFLOPS": 2256.4297427809142
+  },
+  "fft3_256x208x160_c128": {
+   "ms_4coils": 4.044045135378838,
+   "effective_GBs": 269.6604522189247,
+   "GFLOPS": 970.0347055643235
+  }
+ },
+ "cases": {
+  "2D 128x128, 8 coils, 8 states, rigid": {
+   "model_bytes_c128": {
+    "E_forward": 104857600,
+    "E_adjoint": 104857600,
+    "E_normal": 209715200,
+    "J_forward": 92274688,
+    "J_adjoint": 92274688
+   },
+   "model_bytes_c64": {
+    "E_forward": 54525952,
+    "E_adjoint": 54525952,
+    "E_normal": 109051904,
+    "J_forward": 46137344,
+    "J_adjoint": 46137344
+   },
+   "reference": {
+    "E_forward": 0.011072272807359696,
+    "E_adjoint": 0.016523770429193972,
+    "E_normal": 0.019013644009828568,
+    "J_forward": 0.015433255955576897,
+    "J_adjoint": 0.019046587869524956,
+    "build_s": 0.005734976846724749,
+    "operator_memory_MB": 16.00244140625,
+    "peak_MB": 49.1435546875
+   },
+   "layer1": {
+    "E_forward": 0.002016638405621052,
+    "E_adjoint": 0.0024288954213261605,
+    "E_normal": 0.0031084811314940454,
+    "J_forward": 0.0022477278485894202,
+    "J_adjoint": 0.0030225543305277824,
+    "build_s": 0.005705134943127632,
+    "operator_memory_MB": 16.00244140625,
+    "peak_MB": 71.2685546875
+   },
+   "layer2_single_gather": {
+    "E_forward": 0.0005335742607712746,
+    "E_adjoint": 0.0006380340084433556,
+    "E_normal": 0.00039378609508275984,
+    "J_forward": 0.001586814783513546,
+    "J_adjoint": 0.0019509313628077508,
+    "build_s": 0.005512940231710672,
+    "operator_memory_MB": 6.00244140625,
+    "peak_MB": 74.88720703125
+   }
+  },
+  "2D 320x532, 24 coils, 4 states, non-rigid (Zenodo slice size)": {
+   "model_bytes_c128": {
+    "E_forward": 1416396800,
+    "E_adjoint": 1416396800,
+    "E_normal": 2832793600,
+    "J_forward": 1351024640,
+    "J_adjoint": 1351024640
+   },
+   "model_bytes_c64": {
+    "E_forward": 719093760,
+    "E_adjoint": 719093760,
+    "E_normal": 1438187520,
+    "J_forward": 675512320,
+    "J_adjoint": 675512320
+   },
+   "reference": {
+    "E_forward": 0.015176809206604958,
+    "E_adjoint": 0.022561479173600674,
+    "E_normal": 0.025558856129646302,
+    "J_forward": 0.016606459580361842,
+    "J_adjoint": 0.021232092939317226,
+    "build_s": 0.002368650399148464,
+    "operator_memory_MB": 83.125,
+    "peak_MB": 353.63037109375
+   },
+   "layer1": {
+    "E_forward": 0.005196567811071873,
+    "E_adjoint": 0.006241258047521114,
+    "E_normal": 0.007563352957367897,
+    "J_forward": 0.005138483084738255,
+    "J_adjoint": 0.006129671074450016,
+    "build_s": 0.0023919539526104927,
+    "operator_memory_MB": 83.125,
+    "peak_MB": 718.5947265625
+   },
+   "layer2_single_gather": {
+    "E_forward": 0.0024602038785815237,
+    "E_adjoint": 0.0027845799922943115,
+    "E_normal": 0.0029311809688806535,
+    "J_forward": 0.002435804158449173,
+    "J_adjoint": 0.0028413387015461923,
+    "build_s": 0.002266448922455311,
+    "operator_memory_MB": 31.171875,
+    "peak_MB": 951.0869140625
+   }
+  },
+  "3D 128x128x64, 4 coils, 8 states, rigid": {
+   "model_bytes_c128": {
+    "E_forward": 5100273664,
+    "E_adjoint": 5100273664,
+    "E_normal": 10200547328,
+    "J_forward": 3221225472,
+    "J_adjoint": 3221225472
+   },
+   "model_bytes_c64": {
+    "E_forward": 2818572288,
+    "E_adjoint": 2818572288,
+    "E_normal": 5637144576,
+    "J_forward": 1610612736,
+    "J_adjoint": 1610612736
+   },
+   "reference": {
+    "E_forward": 0.011181393265724182,
+    "E_adjoint": 0.08738129623234273,
+    "E_normal": 0.09338784869760275,
+    "J_forward": 0.028585752472281456,
+    "J_adjoint": 0.03220365699380636,
+    "build_s": 0.08628193940967321,
+    "operator_memory_MB": 2048.0029296875,
+    "peak_MB": 5224.32275390625
+   },
+   "layer1": {
+    "E_forward": 0.013645442388951778,
+    "E_adjoint": 0.015678111277520657,
+    "E_normal": 0.023912770301103593,
+    "J_forward": 0.01866032984107733,
+    "J_adjoint": 0.021940256655216216,
+    "build_s": 0.02381481509655714,
+    "operator_memory_MB": 2048.0029296875,
+    "peak_MB": 7792.32275390625
+   },
+   "layer2_single_gather": {
+    "E_forward": 0.007888608425855637,
+    "E_adjoint": 0.008666847459971904,
+    "E_normal": 0.013496647775173187,
+    "J_forward": 0.013733120821416377,
+    "J_adjoint": 0.014837144687771798,
+    "build_s": 0.015117555391043425,
+    "operator_memory_MB": 768.0029296875,
+    "peak_MB": 2968.32275390625
+   }
+  },
+  "3D 192x192x56, 24 coils, 16 states, non-rigid (paper 3D size class)": {
+   "model_bytes_c128": {
+    "E_forward": 72930557952,
+    "E_adjoint": 72930557952,
+    "E_normal": 145861115904,
+    "J_forward": 65531805696,
+    "J_adjoint": 65531805696
+   },
+   "model_bytes_c64": {
+    "E_forward": 37522243584,
+    "E_adjoint": 37522243584,
+    "E_normal": 75044487168,
+    "J_forward": 32765902848,
+    "J_adjoint": 32765902848
+   },
+   "reference": {
+    "E_forward": 0.24455081168562173,
+    "E_adjoint": 0.5943045256659388,
+    "E_normal": 0.7289731016382575,
+    "J_forward": 0.264468677341938,
+    "J_adjoint": 0.32560398522764444,
+    "build_s": 0.3341468619182706,
+    "operator_memory_MB": 8064.0,
+    "peak_MB": 19648.71484375
+   },
+   "layer1": {
+    "E_forward": 0.2402374219149351,
+    "E_adjoint": 0.2771178221330047,
+    "E_normal": 0.39123844970017674,
+    "J_forward": 0.23630996495485307,
+    "J_adjoint": 0.2734547108411789,
+    "build_s": 0.08721037488430738,
+    "operator_memory_MB": 8064.0,
+    "peak_MB": 28326.96484375
+   },
+   "layer2_single_gather": {
+    "E_forward": 0.13103752098977567,
+    "E_adjoint": 0.15287903230637312,
+    "E_normal": 0.20856483634561301,
+    "J_forward": 0.13030776102095842,
+    "J_adjoint": 0.14696297980844975,
+    "build_s": 0.0519035211764276,
+    "operator_memory_MB": 3024.0,
+    "peak_MB": 10009.71484375
+   }
+  }
+ }
+}

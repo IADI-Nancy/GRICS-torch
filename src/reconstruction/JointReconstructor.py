@@ -16,7 +16,7 @@ from src.reconstruction.joint_reconstructor_utils.initialization import (
     apply_external_initializer, initialize_zero_image_and_motion,
 )
 from src.reconstruction.joint_reconstructor_utils.operators import (
-    build_motion_operator, build_encoding_operator, build_motion_perturbation_simulator,
+    RealNormalOperator, build_motion_operator, build_encoding_operator, build_motion_perturbation_simulator,
 )
 from src.reconstruction.joint_reconstructor_utils.state import (
     remove_temporary_operators, extract_image_and_motion_for_next_level,
@@ -265,7 +265,9 @@ class JointReconstructor:
         if max_iterations is None:
             max_iterations = self.params.max_iter_motion
         Nparams = self._n_motion_params(Data_res)
-        J = Data_res["J"]
+        J_complex = Data_res["J"]
+        real_step = bool(getattr(self.params, "motion_step_real", True))
+        J = RealNormalOperator(J_complex) if real_step else J_complex
         # Project the k-space mismatch into motion-parameter space. Start from
         # zero because CG estimates an increment, not the full motion model.
         b_data = J.adjoint(residual)
@@ -302,7 +304,11 @@ class JointReconstructor:
                 _assign_cached_reg_scale(self.params, Data_res, "motion_nonrigid", solver, b_data.flatten())
             b = b_data - solver._effective_lambda() * solver._regularization(Data_res["MotionModel"].flatten())
             if self.params.motion_preconditioner and torch.count_nonzero(b).item():
-                solver.preconditioner = self._build_pseudo_gauss_seidel_motion_preconditioner(J, solver, Data_res)
+                preconditioner = self._build_pseudo_gauss_seidel_motion_preconditioner(J_complex, solver, Data_res)
+                if real_step:
+                    solver.preconditioner = lambda r: preconditioner(r.to(torch.complex128)).real
+                else:
+                    solver.preconditioner = preconditioner
             mot_pert_vec = solver.cg(
                 b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         else:
@@ -433,9 +439,12 @@ class JointReconstructor:
                 Data_res, params=self.params, device=self.device,
                 Nalpha=self.Nalpha, Nphysio=self.Nphysio,
             )
+            full_shape = ((self.Data_full["Nx"], self.Data_full["Ny"], self.Data_full["Nz"]) if self.Nz_full > 1
+                          else (self.Data_full["Nx"], self.Data_full["Ny"]))
             apply_external_initializer(
                 Data_res, initial_image=self.initial_image, initial_motion=self.initial_motion,
                 params=self.params, device=self.device, Nalpha=self.Nalpha, Nphysio=self.Nphysio,
+                full_shape=full_shape,
             )
         return Data_res
 

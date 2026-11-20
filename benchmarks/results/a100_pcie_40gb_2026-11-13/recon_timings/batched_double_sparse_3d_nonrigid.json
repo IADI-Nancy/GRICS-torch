@@ -1,0 +1,8 @@
+{
+ "tag": "batched_double_sparse",
+ "case": "3d_nonrigid",
+ "precision": "none",
+ "backend": "none",
+ "gpu": "NVIDIA A100-PCIE-40GB",
+ "elapsed_s": 4.112638024613261
+}

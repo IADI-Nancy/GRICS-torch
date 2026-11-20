@@ -1,0 +1,8 @@
+{
+ "tag": "batched_double_gather",
+ "case": "3d_nonrigid",
+ "precision": "double",
+ "backend": "gather",
+ "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+ "elapsed_s": 3.069377399981022
+}

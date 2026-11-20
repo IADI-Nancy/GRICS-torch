@@ -13,6 +13,12 @@ def upsample_data(Data_prev, Data_res, params, Nalpha, device):
         (Data_res["Nx"], Data_res["Ny"])
     )
     img_res = resize_img_xy(img_prev, resize_shape)
+    if getattr(params, "warm_start_rescale", True):
+        # downsample_data crops k-space with a unitary FFT, so a level with n voxels is
+        # brighter by sqrt(n_full / n) than the full-resolution image; undo that for the warm start.
+        n_prev = Data_prev["Nx"] * Data_prev["Ny"] * int(Data_prev.get("Nz", 1))
+        n_res = Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
+        img_res = img_res * (n_prev / n_res) ** 0.5
     Data_res["ReconstructedImage"] = img_res
 
     mot_prev = Data_prev["MotionModel"]

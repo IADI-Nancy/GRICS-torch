@@ -1,0 +1,254 @@
+=== node fiber.nmr.mgh.harvard.edu Fri Nov 13 01:04:56 PM EST 2026
+NVIDIA RTX PRO 6000 Blackwell Server Edition, 580.159.03, 0 %, 21 MiB
+=== reference: <scratch>/clone_test/GRICS-torch-upstream (4b9f2f5)
+=== batched:   <scratch>/clone_test/GRICS-torch-batched (3be865c)
+=== operators Fri Nov 13 01:04:56 PM EST 2026
+2d_rigid_128 {'E_forward': '5.6 ms', 'E_adjoint': '8.7 ms', 'E_normal': '10.3 ms', 'J_forward': '8.4 ms', 'J_adjoint': '9.9 ms', 'J_normal': '18.1 ms', 'build_MotionOperator': '3.1 ms'}
+3d_rigid_128x128x64 {'E_forward': '10.5 ms', 'E_adjoint': '66.3 ms', 'E_normal': '71.6 ms', 'J_forward': '19.1 ms', 'J_adjoint': '20.8 ms', 'J_normal': '39.9 ms', 'build_MotionOperator': '60.6 ms'}
+2d_nonrigid_128 {'E_forward': '5.6 ms', 'E_adjoint': '8.6 ms', 'E_normal': '10.4 ms', 'J_forward': '7.1 ms', 'J_adjoint': '8.7 ms', 'J_normal': '15.8 ms', 'build_MotionOperator': '2.5 ms'}
+saved <scratch>/clone_test/GRICS-torch-batched/benchmarks/out/ops_reference.pt
+2d_rigid_128 {'E_forward': '0.9 ms', 'E_adjoint': '1.1 ms', 'E_normal': '1.4 ms', 'J_forward': '1.1 ms', 'J_adjoint': '1.4 ms', 'J_normal': '2.5 ms', 'build_MotionOperator': '3.6 ms'}
+3d_rigid_128x128x64 {'E_forward': '10.2 ms', 'E_adjoint': '11.4 ms', 'E_normal': '16.3 ms', 'J_forward': '11.1 ms', 'J_adjoint': '12.6 ms', 'J_normal': '23.8 ms', 'build_MotionOperator': '14.0 ms'}
+2d_nonrigid_128 {'E_forward': '0.9 ms', 'E_adjoint': '1.1 ms', 'E_normal': '1.4 ms', 'J_forward': '0.8 ms', 'J_adjoint': '1.1 ms', 'J_normal': '2.0 ms', 'build_MotionOperator': '2.9 ms'}
+saved <scratch>/clone_test/GRICS-torch-batched/benchmarks/out/ops_batched_double.pt
+2d_rigid_128 {'E_forward': '0.3 ms', 'E_adjoint': '0.3 ms', 'E_normal': '0.2 ms', 'J_forward': '0.8 ms', 'J_adjoint': '1.0 ms', 'J_normal': '1.8 ms', 'build_MotionOperator': '3.0 ms'}
+3d_rigid_128x128x64 {'E_forward': '4.0 ms', 'E_adjoint': '4.0 ms', 'E_normal': '6.0 ms', 'J_forward': '5.9 ms', 'J_adjoint': '6.9 ms', 'J_normal': '12.7 ms', 'build_MotionOperator': '8.5 ms'}
+2d_nonrigid_128 {'E_forward': '0.3 ms', 'E_adjoint': '0.3 ms', 'E_normal': '0.2 ms', 'J_forward': '0.3 ms', 'J_adjoint': '0.4 ms', 'J_normal': '0.7 ms', 'build_MotionOperator': '2.4 ms'}
+saved <scratch>/clone_test/GRICS-torch-batched/benchmarks/out/ops_batched_single_gather.pt
+--- operators batched_double vs reference
+2d_rigid_small           E_forward=0.0e+00  E_adjoint=0.0e+00  E_normal=0.0e+00  J_forward=0.0e+00  J_adjoint=0.0e+00  J_normal=0.0e+00
+2d_rigid_nex2_empty      E_forward=0.0e+00  E_adjoint=1.7e-16  E_normal=1.3e-16  J_forward=0.0e+00  J_adjoint=2.3e-16  J_normal=1.4e-16
+2d_nonrigid              E_forward=0.0e+00  E_adjoint=0.0e+00  E_normal=0.0e+00  J_forward=0.0e+00  J_adjoint=0.0e+00  J_normal=0.0e+00
+3d_rigid                 E_forward=0.0e+00  E_adjoint=0.0e+00  E_normal=0.0e+00  J_forward=0.0e+00  J_adjoint=0.0e+00  J_normal=0.0e+00
+3d_rigid_nex2_empty      E_forward=0.0e+00  E_adjoint=1.9e-16  E_normal=1.4e-16  J_forward=0.0e+00  J_adjoint=3.2e-16  J_normal=7.4e-17
+3d_nonrigid              E_forward=0.0e+00  E_adjoint=0.0e+00  E_normal=0.0e+00  J_forward=0.0e+00  J_adjoint=0.0e+00  J_normal=0.0e+00
+2d_rigid_128             E_forward=0.0e+00  E_adjoint=2.1e-16  E_normal=1.2e-16  J_forward=0.0e+00  J_adjoint=3.6e-16  J_normal=1.1e-16
+3d_rigid_128x128x64      E_forward=0.0e+00  E_adjoint=0.0e+00  E_normal=0.0e+00  J_forward=0.0e+00  J_adjoint=0.0e+00  J_normal=0.0e+00
+2d_nonrigid_128          E_forward=0.0e+00  E_adjoint=2.0e-16  E_normal=1.2e-16  J_forward=0.0e+00  J_adjoint=1.9e-16  J_normal=1.4e-16
+WORST relative difference: 3.63e-16
+2d_rigid_128             E_forward: 5.6->0.9 ms (6.2x)  E_adjoint: 8.7->1.1 ms (7.9x)  E_normal: 10.3->1.4 ms (7.2x)  J_forward: 8.4->1.1 ms (8.0x)  J_adjoint: 9.9->1.4 ms (6.9x)  J_normal: 18.1->2.5 ms (7.2x)  build_MotionOperator: 3.1->3.6 ms (0.9x)
+3d_rigid_128x128x64      E_forward: 10.5->10.2 ms (1.0x)  E_adjoint: 66.3->11.4 ms (5.8x)  E_normal: 71.6->16.3 ms (4.4x)  J_forward: 19.1->11.1 ms (1.7x)  J_adjoint: 20.8->12.6 ms (1.6x)  J_normal: 39.9->23.8 ms (1.7x)  build_MotionOperator: 60.6->14.0 ms (4.3x)
+2d_nonrigid_128          E_forward: 5.6->0.9 ms (6.3x)  E_adjoint: 8.6->1.1 ms (8.0x)  E_normal: 10.4->1.4 ms (7.3x)  J_forward: 7.1->0.8 ms (8.4x)  J_adjoint: 8.7->1.1 ms (7.7x)  J_normal: 15.8->2.0 ms (7.9x)  build_MotionOperator: 2.5->2.9 ms (0.8x)
+--- operators batched_single_gather vs reference
+2d_rigid_small           E_forward=1.4e-07  E_adjoint=1.5e-07  E_normal=1.1e-07  J_forward=1.5e-07  J_adjoint=2.0e-07  J_normal=3.4e-08
+2d_rigid_nex2_empty      E_forward=1.4e-07  E_adjoint=1.4e-07  E_normal=1.1e-07  J_forward=1.5e-07  J_adjoint=8.3e-08  J_normal=5.0e-08
+2d_nonrigid              E_forward=1.4e-07  E_adjoint=1.4e-07  E_normal=1.2e-07  J_forward=1.5e-07  J_adjoint=1.5e-07  J_normal=1.6e-07
+3d_rigid                 E_forward=1.4e-07  E_adjoint=1.6e-07  E_normal=1.2e-07  J_forward=1.6e-07  J_adjoint=1.3e-07  J_normal=8.0e-08
+3d_rigid_nex2_empty      E_forward=1.4e-07  E_adjoint=1.6e-07  E_normal=1.4e-07  J_forward=1.6e-07  J_adjoint=1.4e-07  J_normal=8.5e-08
+3d_nonrigid              E_forward=1.4e-07  E_adjoint=1.6e-07  E_normal=1.2e-07  J_forward=1.5e-07  J_adjoint=1.5e-07  J_normal=1.7e-07
+2d_rigid_128             E_forward=2.2e-07  E_adjoint=2.4e-07  E_normal=2.1e-07  J_forward=2.3e-07  J_adjoint=2.0e-07  J_normal=2.0e-07
+3d_rigid_128x128x64      E_forward=2.4e-07  E_adjoint=2.5e-07  E_normal=2.1e-07  J_forward=2.5e-07  J_adjoint=2.9e-07  J_normal=2.1e-07
+2d_nonrigid_128          E_forward=2.2e-07  E_adjoint=2.4e-07  E_normal=2.1e-07  J_forward=2.2e-07  J_adjoint=2.3e-07  J_normal=2.7e-07
+WORST relative difference: 2.91e-07
+2d_rigid_128             E_forward: 5.6->0.3 ms (21.0x)  E_adjoint: 8.7->0.3 ms (30.0x)  E_normal: 10.3->0.2 ms (56.8x)  J_forward: 8.4->0.8 ms (10.2x)  J_adjoint: 9.9->1.0 ms (10.0x)  J_normal: 18.1->1.8 ms (10.0x)  build_MotionOperator: 3.1->3.0 ms (1.0x)
+3d_rigid_128x128x64      E_forward: 10.5->4.0 ms (2.7x)  E_adjoint: 66.3->4.0 ms (16.5x)  E_normal: 71.6->6.0 ms (12.0x)  J_forward: 19.1->5.9 ms (3.3x)  J_adjoint: 20.8->6.9 ms (3.0x)  J_normal: 39.9->12.7 ms (3.1x)  build_MotionOperator: 60.6->8.5 ms (7.1x)
+2d_nonrigid_128          E_forward: 5.6->0.3 ms (21.5x)  E_adjoint: 8.6->0.3 ms (30.2x)  E_normal: 10.4->0.2 ms (58.8x)  J_forward: 7.1->0.3 ms (20.9x)  J_adjoint: 8.7->0.4 ms (22.4x)  J_normal: 15.8->0.7 ms (21.2x)  build_MotionOperator: 2.5->2.4 ms (1.0x)
+=== reconstructions Fri Nov 13 01:05:12 PM EST 2026
+2d_rigid GRICS-torch-upstream: run() 3.5 s; |image| 1.0912e-01; motion max 1.087
+2d_rigid GRICS-torch-batched: run() 1.1 s; |image| 1.0912e-01; motion max 1.087
+2d_rigid GRICS-torch-batched: run() 0.8 s; |image| 1.0912e-01; motion max 1.087
+2d_nonrigid GRICS-torch-upstream: run() 4.1 s; |image| 1.0646e-01; motion max 0.769
+2d_nonrigid GRICS-torch-batched: run() 2.1 s; |image| 1.0646e-01; motion max 0.769
+2d_nonrigid GRICS-torch-batched: run() 1.3 s; |image| 1.0646e-01; motion max 0.769
+3d_rigid GRICS-torch-upstream: run() 8.8 s; |image| 6.1748e-02; motion max 1.405
+3d_rigid GRICS-torch-batched: run() 2.7 s; |image| 6.1748e-02; motion max 1.405
+3d_rigid GRICS-torch-batched: run() 2.3 s; |image| 6.1748e-02; motion max 1.405
+3d_nonrigid GRICS-torch-upstream: run() 6.6 s; |image| 6.1884e-02; motion max 0.216
+3d_nonrigid GRICS-torch-batched: run() 2.7 s; |image| 6.1884e-02; motion max 0.216
+3d_nonrigid GRICS-torch-batched: run() 2.2 s; |image| 6.1884e-02; motion max 0.216
+real GRICS-torch-upstream: run() 12.4 s; |image| 8.4647e-05; motion max 5.838
+real GRICS-torch-batched: run() 3.0 s; |image| 8.4647e-05; motion max 5.838
+real GRICS-torch-batched: run() 2.6 s; |image| 8.4647e-05; motion max 5.838
+--- reconstructions batched_double vs reference
+2d_rigid     image rel diff 0.00e+00 | motion rel diff 0.00e+00 | run() 3.5 s -> 1.1 s (3.3x) | raw NRMSE vs truth 0.5393 / 0.5393
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+2d_nonrigid  image rel diff 0.00e+00 | motion rel diff 0.00e+00 | run() 4.1 s -> 2.1 s (2.0x) | raw NRMSE vs truth 0.0546 / 0.0546
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+3d_rigid     image rel diff 0.00e+00 | motion rel diff 0.00e+00 | run() 8.8 s -> 2.7 s (3.3x) | raw NRMSE vs truth 0.2692 / 0.2692
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+3d_nonrigid  image rel diff 0.00e+00 | motion rel diff 0.00e+00 | run() 6.6 s -> 2.7 s (2.5x) | raw NRMSE vs truth 0.1054 / 0.1054
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+real         image rel diff 2.86e-15 | motion rel diff 1.18e-15 | run() 12.4 s -> 3.0 s (4.1x)
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+--- reconstructions batched_single vs reference
+2d_rigid     image rel diff 1.05e-06 | motion rel diff 2.56e-07 | run() 3.5 s -> 0.8 s (4.1x) | raw NRMSE vs truth 0.5393 / 0.5393
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+2d_nonrigid  image rel diff 2.99e-07 | motion rel diff 5.93e-07 | run() 4.1 s -> 1.3 s (3.2x) | raw NRMSE vs truth 0.0546 / 0.0546
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+3d_rigid     image rel diff 4.29e-07 | motion rel diff 5.36e-08 | run() 8.8 s -> 2.3 s (3.9x) | raw NRMSE vs truth 0.2692 / 0.2692
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+3d_nonrigid  image rel diff 1.98e-07 | motion rel diff 7.33e-07 | run() 6.6 s -> 2.2 s (3.1x) | raw NRMSE vs truth 0.1054 / 0.1054
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+real         image rel diff 5.69e-07 | motion rel diff 7.35e-07 | run() 12.4 s -> 2.6 s (4.7x)
+             ACCEPTANCE (NRMSE vs reference <= 1e-4): PASS
+=== roofline model Fri Nov 13 01:07:55 PM EST 2026
+ceilings: {
+"bandwidth_GBs_copy": 1458.8,
+"bandwidth_GBs_inplace_scale": 1455.9,
+"matmul_TFLOPS_fp32": 74.2,
+"matmul_TFLOPS_fp64": 1.5,
+"fft3_128x128x64_c64": {
+"ms_4coils": 0.07320099975913763,
+"effective_GBs": 916.7752383275728,
+"GFLOPS": 5729.845239547329
+},
+"fft3_128x128x64_c128": {
+"ms_4coils": 0.4812158062122762,
+"effective_GBs": 278.9137976502651,
+"GFLOPS": 871.6056176570785
+},
+"fft3_192x192x56_c64": {
+"ms_4coils": 0.12555159628391266,
+"effective_GBs": 1052.3209573634792,
+"GFLOPS": 6898.384778743477
+},
+"fft3_192x192x56_c128": {
+"ms_4coils": 1.0739848017692566,
+"effective_GBs": 246.0380738765535,
+"GFLOPS": 806.4389918042524
+},
+"fft3_256x208x160_c64": {
+"ms_4coils": 1.494514592923224,
+"effective_GBs": 364.8405459417358,
+"GFLOPS": 2624.8416380552335
+},
+"fft3_256x208x160_c128": {
+"ms_4coils": 6.90325100440532,
+"effective_GBs": 157.9718076749757,
+"GFLOPS": 568.2632906847316
+}
+}
+
+2D 128x128, 8 coils, 8 states, rigid
+  E_forward  roofline bound    0.1 ms (c128) /    0.0 ms (c64) | reference:     5.6 ms (   1 % of roofline) | batched_double:     0.9 ms (   8 % of roofline) | batched_single_gather:     0.3 ms (  14 % of roofline) |
+  E_adjoint  roofline bound    0.1 ms (c128) /    0.0 ms (c64) | reference:     8.6 ms (   1 % of roofline) | batched_double:     1.2 ms (   6 % of roofline) | batched_single_gather:     0.3 ms (  11 % of roofline) |
+  E_normal   roofline bound    0.1 ms (c128) /    0.1 ms (c64) | reference:    10.3 ms (   1 % of roofline) | batched_double:     1.5 ms (  10 % of roofline) | batched_single_gather:     0.2 ms (  38 % of roofline) |
+  J_forward  roofline bound    0.1 ms (c128) /    0.0 ms (c64) | reference:     8.1 ms (   1 % of roofline) | batched_double:     1.1 ms (   6 % of roofline) | batched_single_gather:     0.9 ms (   4 % of roofline) |
+  J_adjoint  roofline bound    0.1 ms (c128) /    0.0 ms (c64) | reference:     9.9 ms (   1 % of roofline) | batched_double:     1.5 ms (   4 % of roofline) | batched_single_gather:     1.0 ms (   3 % of roofline) |
+  reference              operators      16 MB, peak      49 MB, build    3.1 ms
+  batched_double         operators      16 MB, peak      70 MB, build    3.8 ms
+  batched_single_gather  operators       6 MB, peak      75 MB, build    3.0 ms
+
+2D 320x532, 24 coils, 4 states, non-rigid (Zenodo slice size)
+  E_forward  roofline bound    1.0 ms (c128) /    0.5 ms (c64) | reference:    11.6 ms (   8 % of roofline) | batched_double:     4.5 ms (  21 % of roofline) | batched_single_gather:     2.1 ms (  24 % of roofline) |
+  E_adjoint  roofline bound    1.0 ms (c128) /    0.5 ms (c64) | reference:    14.5 ms (   7 % of roofline) | batched_double:     4.8 ms (  20 % of roofline) | batched_single_gather:     2.4 ms (  20 % of roofline) |
+  E_normal   roofline bound    1.9 ms (c128) /    1.0 ms (c64) | reference:    17.2 ms (  11 % of roofline) | batched_double:     5.8 ms (  33 % of roofline) | batched_single_gather:     2.8 ms (  35 % of roofline) |
+  J_forward  roofline bound    0.9 ms (c128) /    0.5 ms (c64) | reference:    12.0 ms (   8 % of roofline) | batched_double:     4.4 ms (  21 % of roofline) | batched_single_gather:     2.1 ms (  22 % of roofline) |
+  J_adjoint  roofline bound    0.9 ms (c128) /    0.5 ms (c64) | reference:    12.8 ms (   7 % of roofline) | batched_double:     4.7 ms (  20 % of roofline) | batched_single_gather:     2.9 ms (  16 % of roofline) |
+  reference              operators      83 MB, peak     354 MB, build    1.2 ms
+  batched_double         operators      83 MB, peak     719 MB, build    1.6 ms
+  batched_single_gather  operators      31 MB, peak     951 MB, build    1.2 ms
+
+3D 128x128x64, 4 coils, 8 states, rigid
+  E_forward  roofline bound    3.5 ms (c128) /    1.9 ms (c64) | reference:    10.4 ms (  34 % of roofline) | batched_double:     9.9 ms (  35 % of roofline) | batched_single_gather:     4.0 ms (  49 % of roofline) |
+  E_adjoint  roofline bound    3.5 ms (c128) /    1.9 ms (c64) | reference:    65.3 ms (   5 % of roofline) | batched_double:    11.1 ms (  32 % of roofline) | batched_single_gather:     3.8 ms (  50 % of roofline) |
+  E_normal   roofline bound    7.0 ms (c128) /    3.9 ms (c64) | reference:    70.4 ms (  10 % of roofline) | batched_double:    16.0 ms (  44 % of roofline) | batched_single_gather:     5.7 ms (  67 % of roofline) |
+  J_forward  roofline bound    2.2 ms (c128) /    1.1 ms (c64) | reference:    18.3 ms (  12 % of roofline) | batched_double:    10.7 ms (  21 % of roofline) | batched_single_gather:     5.6 ms (  20 % of roofline) |
+  J_adjoint  roofline bound    2.2 ms (c128) /    1.1 ms (c64) | reference:    20.1 ms (  11 % of roofline) | batched_double:    12.4 ms (  18 % of roofline) | batched_single_gather:     6.5 ms (  17 % of roofline) |
+  reference              operators    2048 MB, peak    5224 MB, build   59.3 ms
+  batched_double         operators    2048 MB, peak    7608 MB, build   14.3 ms
+  batched_single_gather  operators     768 MB, peak    2968 MB, build    8.4 ms
+
+3D 192x192x56, 24 coils, 16 states, non-rigid (paper 3D size class)
+  E_forward  roofline bound   50.0 ms (c128) /   25.7 ms (c64) | reference:   194.3 ms (  26 % of roofline) | batched_double:   251.0 ms (  20 % of roofline) | batched_single_gather:   117.1 ms (  22 % of roofline) |
+  E_adjoint  roofline bound   50.0 ms (c128) /   25.7 ms (c64) | reference:   433.9 ms (  12 % of roofline) | batched_double:   292.7 ms (  17 % of roofline) | batched_single_gather:   138.3 ms (  19 % of roofline) |
+  E_normal   roofline bound  100.0 ms (c128) /   51.4 ms (c64) | reference:   508.8 ms (  20 % of roofline) | batched_double:   392.0 ms (  26 % of roofline) | batched_single_gather:   179.5 ms (  29 % of roofline) |
+  J_forward  roofline bound   44.9 ms (c128) /   22.5 ms (c64) | reference:   203.8 ms (  22 % of roofline) | batched_double:   246.8 ms (  18 % of roofline) | batched_single_gather:   115.2 ms (  19 % of roofline) |
+  J_adjoint  roofline bound   44.9 ms (c128) /   22.5 ms (c64) | reference:   216.7 ms (  21 % of roofline) | batched_double:   287.6 ms (  16 % of roofline) | batched_single_gather:   135.1 ms (  17 % of roofline) |
+  reference              operators    8064 MB, peak   19649 MB, build  242.4 ms
+  batched_double         operators    8064 MB, peak   27965 MB, build   42.9 ms
+  batched_single_gather  operators    3024 MB, peak   10010 MB, build   24.8 ms
+saved <scratch>/clone_test/GRICS-torch-batched/benchmarks/out/roofline.json
+=== paper-size 2D slice (Zenodo breast slice, nonrigid_2d.toml, 3 repeats) Fri Nov 13 01:08:36 PM EST 2026
+  run 1: 12.2 s
+  run 2: 11.7 s
+  run 3: 11.8 s
+reference paper2d double/sparse: prep 0.5 s, run ['12.2', '11.7', '11.8'] s, peak 0.7 GiB, shape [320, 532, 1], coils 24, states 4
+  run 1: 3.0 s
+  run 2: 2.5 s
+  run 3: 2.4 s
+batched_double paper2d double/sparse: prep 0.5 s, run ['3.0', '2.5', '2.4'] s, peak 1.1 GiB, shape [320, 532, 1], coils 24, states 4
+  run 1: 2.5 s
+  run 2: 1.9 s
+  run 3: 1.8 s
+batched_single paper2d single/gather: prep 0.5 s, run ['2.5', '1.9', '1.8'] s, peak 1.4 GiB, shape [320, 532, 1], coils 24, states 4
+=== summary
+wrote <scratch>/clone_test/GRICS-torch-batched/benchmarks/out/summary.md
+# GRICS-torch reference vs GRICS-torch-batched on NVIDIA RTX PRO 6000 Blackwell Server Edition
+
+## Operator calls, ms per call (speed-up); identity = max relative difference of outputs vs reference
+
+**2d_rigid_128**
+
+| operator | reference | batched, double/sparse | batched, single/gather |
+|---|---|---|---|
+| E_forward | 5.6 | 0.9 (6.2x) | 0.3 (21.0x) |
+| E_adjoint | 8.7 | 1.1 (7.9x) | 0.3 (30.0x) |
+| E_normal | 10.3 | 1.4 (7.2x) | 0.2 (56.8x) |
+| J_forward | 8.4 | 1.1 (8.0x) | 0.8 (10.2x) |
+| J_adjoint | 9.9 | 1.4 (6.9x) | 1.0 (10.0x) |
+| J_normal | 18.1 | 2.5 (7.2x) | 1.8 (10.0x) |
+
+Identity vs reference: batched, double/sparse: 3.6e-16, batched, single/gather: 2.4e-07
+
+**2d_nonrigid_128**
+
+| operator | reference | batched, double/sparse | batched, single/gather |
+|---|---|---|---|
+| E_forward | 5.6 | 0.9 (6.3x) | 0.3 (21.5x) |
+| E_adjoint | 8.6 | 1.1 (8.0x) | 0.3 (30.2x) |
+| E_normal | 10.4 | 1.4 (7.3x) | 0.2 (58.8x) |
+| J_forward | 7.1 | 0.8 (8.4x) | 0.3 (20.9x) |
+| J_adjoint | 8.7 | 1.1 (7.7x) | 0.4 (22.4x) |
+| J_normal | 15.8 | 2.0 (7.9x) | 0.7 (21.2x) |
+
+Identity vs reference: batched, double/sparse: 2.0e-16, batched, single/gather: 2.7e-07
+
+**3d_rigid_128x128x64**
+
+| operator | reference | batched, double/sparse | batched, single/gather |
+|---|---|---|---|
+| E_forward | 10.5 | 10.2 (1.0x) | 4.0 (2.7x) |
+| E_adjoint | 66.3 | 11.4 (5.8x) | 4.0 (16.5x) |
+| E_normal | 71.6 | 16.3 (4.4x) | 6.0 (12.0x) |
+| J_forward | 19.1 | 11.1 (1.7x) | 5.9 (3.3x) |
+| J_adjoint | 20.8 | 12.6 (1.6x) | 6.9 (3.0x) |
+| J_normal | 39.9 | 23.8 (1.7x) | 12.7 (3.1x) |
+
+Identity vs reference: batched, double/sparse: 0.0e+00, batched, single/gather: 2.9e-07
+
+## Full reconstructions: seconds for run() (speed-up, relative image difference vs reference)
+
+| case | reference | batched, double/sparse | batched, single/gather |
+|---|---|---|---|
+| 2d_rigid | 3.5 s | 1.1 s (3.3x, diff 0e+00) | 0.8 s (4.1x, diff 1e-06) |
+| 2d_nonrigid | 4.1 s | 2.1 s (2.0x, diff 0e+00) | 1.3 s (3.2x, diff 3e-07) |
+| 3d_rigid | 8.8 s | 2.7 s (3.3x, diff 0e+00) | 2.3 s (3.9x, diff 4e-07) |
+| 3d_nonrigid | 6.6 s | 2.7 s (2.5x, diff 0e+00) | 2.2 s (3.1x, diff 2e-07) |
+| real | 12.4 s | 3.0 s (4.1x, diff 3e-15) | 2.6 s (4.7x, diff 6e-07) |
+
+## Roofline model (bandwidth-bound time = modelled bytes / measured copy bandwidth 1459 GB/s)
+
+| case | operator | bound c128 (ms) | reference | batched double/sparse | batched single/gather (bound c64) |
+|---|---|---|---|---|---|
+| 2D 128x128, 8 coils, 8 states, rigid | E_normal | 0.1 | 10.3 ms (1 %) | 1.5 ms (10 %) | 0.2 ms (38 %) |
+| 2D 128x128, 8 coils, 8 states, rigid | J_forward | 0.1 | 8.1 ms (1 %) | 1.1 ms (6 %) | 0.9 ms (4 %) |
+| 2D 128x128, 8 coils, 8 states, rigid | J_adjoint | 0.1 | 9.9 ms (1 %) | 1.5 ms (4 %) | 1.0 ms (3 %) |
+| 2D 320x532, 24 coils, 4 states, non-rigid (Zenodo slice size) | E_normal | 1.9 | 17.2 ms (11 %) | 5.8 ms (33 %) | 2.8 ms (35 %) |
+| 2D 320x532, 24 coils, 4 states, non-rigid (Zenodo slice size) | J_forward | 0.9 | 12.0 ms (8 %) | 4.4 ms (21 %) | 2.1 ms (22 %) |
+| 2D 320x532, 24 coils, 4 states, non-rigid (Zenodo slice size) | J_adjoint | 0.9 | 12.8 ms (7 %) | 4.7 ms (20 %) | 2.9 ms (16 %) |
+| 3D 128x128x64, 4 coils, 8 states, rigid | E_normal | 7.0 | 70.4 ms (10 %) | 16.0 ms (44 %) | 5.7 ms (67 %) |
+| 3D 128x128x64, 4 coils, 8 states, rigid | J_forward | 2.2 | 18.3 ms (12 %) | 10.7 ms (21 %) | 5.6 ms (20 %) |
+| 3D 128x128x64, 4 coils, 8 states, rigid | J_adjoint | 2.2 | 20.1 ms (11 %) | 12.4 ms (18 %) | 6.5 ms (17 %) |
+| 3D 192x192x56, 24 coils, 16 states, non-rigid (paper 3D size class) | E_normal | 100.0 | 508.8 ms (20 %) | 392.0 ms (26 %) | 179.5 ms (29 %) |
+| 3D 192x192x56, 24 coils, 16 states, non-rigid (paper 3D size class) | J_forward | 44.9 | 203.8 ms (22 %) | 246.8 ms (18 %) | 115.2 ms (19 %) |
+| 3D 192x192x56, 24 coils, 16 states, non-rigid (paper 3D size class) | J_adjoint | 44.9 | 216.7 ms (21 %) | 287.6 ms (16 %) | 135.1 ms (17 %) |
+
+## Zenodo breast slice with the paper's nonrigid_2d.toml, seconds for run() over 3 repeats
+
+| run | shape | coils | states | precision/backend | run() s | peak GiB |
+|---|---|---|---|---|---|---|
+| batched_double | 320x532x1 | 24 | 4 | double/sparse | 3.0, 2.5, 2.4 | 1.1 |
+| batched_single | 320x532x1 | 24 | 4 | single/gather | 2.5, 1.9, 1.8 | 1.4 |
+| reference | 320x532x1 | 24 | 4 | double/sparse | 12.2, 11.7, 11.8 | 0.7 |
+=== done Fri Nov 13 01:09:38 PM EST 2026

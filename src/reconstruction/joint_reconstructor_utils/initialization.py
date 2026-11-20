@@ -6,14 +6,17 @@ from .resampling import resize_img_xy
 
 
 def apply_external_initializer(
-    data, *, initial_image, initial_motion, params, device, Nalpha, Nphysio,
+    data, *, initial_image, initial_motion, params, device, Nalpha, Nphysio, full_shape=None,
 ):
     """Update data in place from supplied estimates, keeping defaults if absent.
 
     Images and non-rigid fields are interpolated to the level's spatial grid.
-    Motion values are used as supplied, without displacement rescaling.
+    Displacements in initial_motion are in full-resolution voxels; when full_shape is
+    given they are rescaled to this level's grid the same way upsample_data does
+    between levels (2.0 applied them unscaled at the coarsest level).
     """
     spatial = ((data["Nx"], data["Ny"], data["Nz"]) if int(data.get("Nz", 1)) > 1 else (data["Nx"], data["Ny"]))
+    ratios = [1.0] * len(spatial) if full_shape is None else [s / f for s, f in zip(spatial, full_shape)]
     if initial_image is not None:
         image = torch.as_tensor(initial_image, device=device)
         if image.ndim != len(spatial):
@@ -27,13 +30,19 @@ def apply_external_initializer(
                 motion = motion.unsqueeze(-1)
             if motion.shape[0] != Nalpha or motion.shape[-1] != Nphysio:
                 raise ValueError(f"Invalid initial_motion shape {tuple(motion.shape)}; expected Nalpha={Nalpha}, Nsensor={Nphysio}.")
-            data["MotionModel"] = resize_img_xy(motion, spatial)
+            motion = resize_img_xy(motion, spatial)
+            for axis, ratio in enumerate(ratios):
+                motion[axis] = motion[axis] * ratio
+            data["MotionModel"] = motion
         else:
             # Rigid parameters are indexed by motion state, not spatial position.
             expected = (Nalpha, params.N_motion_states)
             if tuple(motion.shape) != expected:
                 raise ValueError(f"Rigid initial_motion must have shape {expected}.")
-            data["RigidMotionModelFull"] = motion.clone()
+            motion = motion.clone()
+            for axis, ratio in enumerate(ratios):
+                motion[axis, :] *= ratio
+            data["RigidMotionModelFull"] = motion
             data["MotionModel"] = motion[:, data["MotionStateIndices"]]
 
 
