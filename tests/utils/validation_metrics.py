@@ -18,6 +18,17 @@ def print_step(label, boundary, step):
     print(f"[{label}] {boundary} {step}", flush=True)
 
 
+def print_simulation_device(run_number, requested_device, runtime, console):
+    """Show the selected devices and any fallback before data preparation."""
+    prefix = f"Simulation {run_number:03d}"
+    if requested_device == "gpu" and runtime.t_device.type != "cuda":
+        reason = "installed PyTorch has no CUDA support" if torch.version.cuda is None else "PyTorch CUDA is unavailable"
+        print(f"{prefix}: GPU requested but {reason}; using CPU. CPU processing, especially 3D ESPIRiT, can be slow.", file=console, flush=True)
+    elif requested_device == "gpu" and runtime.sp_device is not None and runtime.sp_device.id < 0:
+        print(f"{prefix}: GPU requested but the CuPy/SigPy GPU backend is unavailable; ESPIRiT will use CPU and may be slow.", file=console, flush=True)
+    print(f"{prefix}: preparing input data on {runtime.t_device} ...", file=console, flush=True)
+
+
 def print_validation_separator(label):
     """Separate terminal sections emitted by a simulation validation batch."""
     print(f"\n{'=' * 20} {label} {'=' * 20}", flush=True)

@@ -49,20 +49,58 @@ For a comfortable VS Code setup, install [Dev Containers](https://marketplace.vi
 
 ### Without Docker
 
-The basic installation requires Linux (Ubuntu 22.04) with Python 3.11 or 3.12. You can create and activate a Python environment using your preferred environment manager before installing. Run the command pair for your device from the repository root in your chosen environment:
+The basic installation requires Linux (Ubuntu 22.04) with Python 3.11 or 3.12. The GPU mode select CUDA 12.1 PyTorch and CUDA 12.x CuPy for GPU ESPIRiT; execution requires a compatible NVIDIA driver [2]. You can create and activate a Python environment using your preferred environment manager before installing. From the repository root in your chosen environment, first upgrade pip:
+
+```bash
+python -m pip install --upgrade "pip>=23.2.1"
+```
+
+After the upgrade succeeds, run the commands for your device:
 
 ```bash
 # CPU
-python -m pip install "torch==2.5.1+cpu" --index-url https://download.pytorch.org/whl/cpu
+python -m pip install "torch==2.5.1+cpu" --index-url https://download.pytorch.org/whl/cpu &&
 python -m pip install -e .
-# NVIDIA GPU
-python -m pip install "torch==2.5.1+cu121" --index-url https://download.pytorch.org/whl/cu121
-python -m pip install -e ".[gpu]"
 ```
 
-The commands install dependencies and the project in editable mode using `pyproject.toml`, making `src` importable outside the repository. Basic includes simulation, preprocessed HDF5 and ISMRMRD `.h5` input, reconstruction, ESPIRiT, DICOM export, and notebook kernels/widgets. The GPU commands select CUDA 12.1 PyTorch and CUDA 12.x CuPy for GPU ESPIRiT; execution requires a compatible NVIDIA driver and CUDA libraries [2]. For SAEC support or Siemens `.dat` conversion, see the corresponding commands in the [Dockerfile](build/Dockerfile).
+```bash
+# NVIDIA GPU
+python -m pip install "torch==2.5.1+cu121" --index-url https://download.pytorch.org/whl/cu121 &&
+python -m pip install -e ".[gpu]" &&
+CUDA_WHEEL_LIBS=$(python -c 'import site; from pathlib import Path; libs = sorted({str(p) for root in site.getsitepackages() for p in Path(root).glob("nvidia/*/lib") if p.is_dir()}); assert libs, "No pip-installed NVIDIA library directories found; check the GPU installation and active Python environment"; print(":".join(libs))') &&
+export LD_LIBRARY_PATH="$CUDA_WHEEL_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" &&
+python -c 'from cupy_backends.cuda.libs import cusolver; print("CuPy cuSOLVER import succeeded")'
+```
+
+The commands install dependencies and the project in editable mode using `pyproject.toml`, making `src` importable outside the repository. Basic includes simulation, preprocessed HDF5 and ISMRMRD `.h5` input, reconstruction, ESPIRiT, DICOM export, and notebook kernels/widgets. For SAEC support or Siemens `.dat` conversion, see the corresponding commands in the [Dockerfile](build/Dockerfile).
+
+The GPU sequence also exposes the CUDA libraries installed by pip to CuPy, including `libcusolver.so.11`, which ESPIRiT needs for its singular value decomposition, and verifies that cuSOLVER imports successfully.
 
 Basic pip installation normally needs no additional apt packages when binary wheels are available. For native builds of the Siemens converter and its dependencies, the Ubuntu/Debian packages used by the Dockerfile are: `git`, `build-essential`, `cmake`, `pkg-config`, `libboost-all-dev`, `libpugixml-dev`, `libhdf5-dev`, `libxml2-dev`, `libxslt1-dev`, `libfftw3-dev`, `liblapacke-dev`, and `libopenblas-dev`.
+
+### Windows users
+
+We recommend **WSL 2 with Ubuntu and Docker Desktop**.
+
+**1. Install WSL 2 and Ubuntu.** Run in **Windows PowerShell as administrator**:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Follow the first-launch prompts to create your Linux username and password. Password characters do not appear while typing.
+
+**2. Configure Docker Desktop.** Install and launch [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/). In Settings → General, enable Use the WSL 2 based engine if shown; under Resources → WSL Integration, enable Ubuntu. Apply the changes and restart Docker Desktop if prompted.
+
+**3. Open the project in Ubuntu.** Open **Start → Ubuntu**. **IADI lab users:** configure the proxy inside Ubuntu (see the internal Wiki), before cloning. Then clone into your Linux home directory:
+
+```bash
+cd ~
+git clone https://github.com/IADI-Nancy/GRICS-torch.git
+cd GRICS-torch
+```
+
+Follow the [Docker instructions](#docker) to start the container and configure VS Code. **Optional:** To move Docker storage or Ubuntu from C: to another drive, see [Docker storage](docs/usage/specific_instructions_windows_users.md#move-docker-desktop-storage) and [Ubuntu storage](docs/usage/specific_instructions_windows_users.md#move-the-ubuntu-wsl-distribution).
 
 ## Getting started
 
