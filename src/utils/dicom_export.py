@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from types import SimpleNamespace
 
-from src.utils.ismrmrd_io import acquisition_header
 import numpy as np
 import torch
 
@@ -40,6 +39,8 @@ def write_reconstruction_dicom(
     to use acquisition geometry while copying other public metadata from a
     DICOM donor.
     """
+    from src.utils.ismrmrd_io import acquisition_header
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -80,11 +81,14 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     """Export a postprocessed [Nx, Ny, Nz] volume as a single-frame MR series.
 
     Siemens 3D acquisition positions describe the slab center, not kz partitions.
-    Expand that center along slice_dir using encoded z spacing, even if the
+    Increasing reconstructed z runs opposite to the Siemens slice_dir. Expand
+    the slab center in that direction using encoded z spacing, even if the
     exported volume was zero-filled or cropped. Donors provide public metadata,
     while the reconstructed grid supplies geometry, including when donor
-    resolution differs.
+    resolution differs. Export in descending slice location, matching the
+    instance numbering used for 2D acquisitions.
     """
+    from src.utils.ismrmrd_io import acquisition_header
     import ismrmrd
     from pydicom.uid import generate_uid
 
@@ -113,7 +117,7 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
         raise ValueError('3D DICOM export requires a positive encoded z field of view and matrix size.')
     spacing = fov_z / encoded_z
     geometries = {
-        z: {**slab, 'position': (center + (z - (nz - 1) / 2) * spacing * direction).tolist(),
+        z: {**slab, 'position': (center - (z - (nz - 1) / 2) * spacing * direction).tolist(),
             'slice_thickness': spacing}
         for z in range(nz)
     }

@@ -2,6 +2,7 @@ from src.utils.ismrmrd_io import ReadOnlyDataset
 import ismrmrd
 import torch
 import math
+import warnings
 from src.utils.fftnc import fftnc, ifftnc
 
 
@@ -63,6 +64,19 @@ class ISMRMRDReader:
         acquired_lines = math.ceil(float(n_lines) / float(accel))
         return int(2 * math.ceil((float(accel) * float(acquired_lines)) / 2.0))
 
+    @staticmethod
+    def _readout_oversampling_factor(enc):
+        """Use the encoded/reconstruction matrix ratio, or warn and assume 2x."""
+        try:
+            encoded_x = int(enc.encodedSpace.matrixSize.x)
+            recon_x = int(enc.reconSpace.matrixSize.x)
+            if encoded_x <= 0 or recon_x <= 0 or encoded_x % recon_x != 0 or encoded_x // recon_x not in (1, 2):
+                raise ValueError(f"Unsupported readout oversampling: encodedSpace.x={encoded_x}, reconSpace.x={recon_x}.")
+            return encoded_x // recon_x
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            warnings.warn(f"Cannot determine readout oversampling from the ISMRMRD header ({exc}); falling back to 2x readout oversampling.", RuntimeWarning, stacklevel=2)
+            return 2
+
     def _remove_oversampling(self, kspace: torch.Tensor):
 
         device = kspace.device
@@ -81,8 +95,8 @@ class ISMRMRDReader:
 
             img = ifftnc(kspace_slice, dims=(2,))
 
-            crop_start = readout // 4
-            crop_end = 3 * readout // 4
+            crop_start = readout // 2 - cropped_readout // 2
+            crop_end = crop_start + cropped_readout
             img_cropped = img[:, :, crop_start:crop_end, :]
 
             kspace_cropped[..., iz] = fftnc(img_cropped, dims=(2,))
@@ -98,6 +112,7 @@ class ISMRMRDReader:
             header = ismrmrd.xsd.CreateFromDocument(self.ismrmrd_header)
             enc = header.encoding[0]
             limits = enc.encodingLimits
+            self._oversampling_factor = self._readout_oversampling_factor(enc)
 
             N_SLI = self._encoding_limit_size(limits.slice)
             # Nex currently follows repetition, not the Siemens average counter.
@@ -238,14 +253,16 @@ class ISMRMRDReader:
     def read_data(self):
         """Read decoded MRI tensors and full-sequence acquisition metadata.
 
-        Readout oversampling is removed from imaging and reference k-space.
+        Readout oversampling is removed from imaging and reference k-space using
+        the header matrix ratio (1x or 2x), with a warning and 2x fallback when invalid.
         Physiological processing and slice selection are handled downstream.
         """
         (kspace, times, slices, ky, kz, nex, nex_source, nex_values,
          geometry) = self._extract_mri_data()
-        kspace = self._remove_oversampling(kspace)
-        reference_kspace = (None if self.reference_kspace is None
-                            else self._remove_oversampling(self.reference_kspace))
+        reference_kspace = self.reference_kspace
+        if self._oversampling_factor == 2:
+            kspace = self._remove_oversampling(kspace)
+            reference_kspace = None if reference_kspace is None else self._remove_oversampling(reference_kspace)
         return {
             "ismrmrd_header": self.ismrmrd_header,
             "kspace": kspace, "time_seconds": times, "slice_indices": slices,

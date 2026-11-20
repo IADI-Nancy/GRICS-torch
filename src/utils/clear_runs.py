@@ -6,7 +6,6 @@ import json
 import math
 from pathlib import Path
 import shutil
-import tomllib
 
 
 def clear_runs(output_root, *, workflow_label=None, older_than_days=None, dry_run=False):
@@ -78,6 +77,8 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='List matching runs without deleting them.')
     args = parser.parse_args()
     if args.output_root is None:
+        import tomllib
+
         config = Path(__file__).resolve().parents[2] / 'config' / 'general.toml'
         with config.open('rb') as handle:
             args.output_root = tomllib.load(handle)['paths']['output_root']

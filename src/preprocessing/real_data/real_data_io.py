@@ -91,7 +91,8 @@ def convert_siemens_to_ismrmrd(path_to_siemens, cache):
             raise RuntimeError(f"Siemens conversion failed: {exc.stdout}\n{exc.stderr}") from exc
 
     lease = cache.acquire_converted(key, build)
-    print(f"[InputDataLoader] Using cached conversion: {lease.path}")
+    action = "Reusing cached conversion" if lease.cache_hit else "Created fresh conversion"
+    print(f"[InputDataLoader] {action}: {lease.path}")
     return str(lease.path)
 
 

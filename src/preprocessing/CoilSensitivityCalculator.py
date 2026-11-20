@@ -1,6 +1,4 @@
 import numpy as np
-import sigpy as sp
-import sigpy.mri as spmri
 import torch
 
 from src.utils.fftnc import ifftnc
@@ -55,9 +53,13 @@ class CoilSensitivityCalculator:
     def _resolved_espirit_device(self, kspace):
         if self.sp_device is not None:
             return self.sp_device
-        return sp.Device(0 if kspace.device.type == "cuda" else -1)
+        from src.runtime.sigpy_backend import resolve_espirit_device
+
+        return resolve_espirit_device(kspace.device.type == "cuda")
 
     def _run_espirit_calibration_cpu(self, kspace_block, calib_width, kernel_width, sp_device=None):
+        import sigpy.mri as spmri
+
         if sp_device is None:
             sp_device = self._resolved_espirit_device(kspace_block)
         kspace_np = kspace_block.detach().cpu().numpy().astype(np.complex64, copy=False)
@@ -72,6 +74,7 @@ class CoilSensitivityCalculator:
 
     def _run_espirit_calibration_gpu(self, kspace_block, calib_width, kernel_width, sp_device):
         import cupy as cp
+        import sigpy.mri as spmri
 
         kspace_cp = cp.asarray(kspace_block.contiguous(), dtype=cp.complex64)
         maps_cp = spmri.app.EspiritCalib(
@@ -87,8 +90,8 @@ class CoilSensitivityCalculator:
         return torch.complex(maps_t[..., 0], maps_t[..., 1]).to(torch.complex128)
 
     def _run_espirit_calibration(self, kspace_block, calib_width, kernel_width):
-        use_gpu = kspace_block.device.type == "cuda"
         sp_device = self._resolved_espirit_device(kspace_block)
+        use_gpu = sp_device.id >= 0
 
         if not use_gpu:
             return self._run_espirit_calibration_cpu(
@@ -102,6 +105,8 @@ class CoilSensitivityCalculator:
                 kspace_block, calib_width, kernel_width, sp_device,
             )
         except cp.cuda.memory.OutOfMemoryError:
+            import sigpy as sp
+
             print("[coil sensitivity] GPU memory exhausted; running ESPIRiT on CPU.", flush=True)
             self._cupy_cleanup(cp)
             return self._run_espirit_calibration_cpu(

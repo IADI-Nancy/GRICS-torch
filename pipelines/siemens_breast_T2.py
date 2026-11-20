@@ -18,8 +18,6 @@ import copy
 import sys
 from pathlib import Path
 
-from pydicom.uid import generate_uid
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -89,6 +87,8 @@ def run_pipeline(raw_data_file, saec_file, *, output_root=OUTPUT_ROOT, max_worke
     indices = list(range(int(data.input_loader.Nz)))
     data.params._output_unit_count = len(indices)
     results = reconstruct_slices_in_parallel(data, indices, reconstruct_slice, max_workers)
+
+    from pydicom.uid import generate_uid
 
     uids = {key: generate_uid() for key in
             ("study_instance_uid", "series_instance_uid", "frame_of_reference_uid")}

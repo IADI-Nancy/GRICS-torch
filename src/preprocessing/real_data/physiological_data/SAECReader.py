@@ -2,8 +2,6 @@
 import os
 import numpy as np
 from scipy.signal import butter, filtfilt
-from scipy.interpolate import interp1d
-from h5Saec import *
 from src.utils.plotting import save_line_plot
 
 '''
@@ -111,6 +109,8 @@ class SAECReader:
 
     @staticmethod
     def _get_respiration_from_saec(filename, sensor_type, flag_LR=False):
+        from h5Saec import h5Saec
+
         SAECData = h5Saec.from_file(filename.strip())
         ticksTo1s = SAECData.attributes.ticksTo1s
         respiratory_data = []

@@ -5,9 +5,6 @@ import os
 
 import numpy as np
 import torch
-from skimage import io as skio
-from skimage.data import shepp_logan_phantom
-from skimage.transform import resize
 
 from src.preprocessing.SamplingSimulator import SamplingSimulator
 from src.utils.fftnc import fftnc
@@ -107,6 +104,8 @@ class SyntheticDataGenerator:
             raise ValueError("image_resize_factor must be > 0.")
         if factor == 1.0:
             return img_np
+        from skimage.transform import resize
+
         h, w = img_np.shape
         new_h = max(1, int(round(h * factor)))
         new_w = max(1, int(round(w * factor)))
@@ -123,6 +122,8 @@ class SyntheticDataGenerator:
                 raise ValueError(f"No arrays found in NPZ file: {path_to_image}")
             img_np = npz[keys[0]]
         else:
+            from skimage import io as skio
+
             img_np = skio.imread(path_to_image)
 
         img_np = self._normalize_real_image(img_np)
@@ -133,6 +134,9 @@ class SyntheticDataGenerator:
 
 
     def _build_shepp_logan_2d(self, N, fill_fraction):
+        from skimage.data import shepp_logan_phantom
+        from skimage.transform import resize
+
         if not math.isfinite(fill_fraction) or not 0 < fill_fraction <= 1:
             raise ValueError("SheppLoganFillFraction must be finite and in (0, 1].")
         phantom_native = shepp_logan_phantom()

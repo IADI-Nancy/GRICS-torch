@@ -1,0 +1,46 @@
+# --- Build system ---
+[build-system]
+# Build dependencies; requires setuptools 66.1 or newer and wheel.
+requires = ["setuptools>=66.1", "wheel"]
+# PEP 517 backend; setuptools builds the project's editable installation.
+build-backend = "setuptools.build_meta"
+
+# --- Project metadata ---
+[project]
+# Distribution name; Python imports retain the existing src package name.
+name = "GRICS-torch"
+# Local development distribution version; replace when defining a package release.
+version = "2.0.0"
+# Supported Python range: 3.11 and 3.12 only.
+requires-python = ">=3.11,<3.13"
+# Runtime dependencies; install the CPU or CUDA PyTorch build with the same public version.
+dependencies = [
+    "torch==2.5.1",
+    "numpy==2.3.5",
+    "scipy==1.16.3",
+    "numba==0.63.1",
+    "matplotlib==3.10.8",
+    "scikit-image==0.26.0",
+    "h5py>=3.11,<4",
+    "sigpy==0.1.27",
+    "tqdm>=4.67,<5",
+    "ipykernel==7.1.0",
+    "ipywidgets>=8.1,<9",
+    "ismrmrd==1.14.2",
+    "pydicom==3.0.1",
+]
+
+# --- Optional dependencies ---
+[project.optional-dependencies]
+# Optional CUDA 12.x CuPy for GPU ESPIRiT; requires compatible NVIDIA drivers and CUDA libraries.
+gpu = ["cupy-cuda12x==13.6.0"]
+
+# --- Package discovery ---
+[tool.setuptools.packages.find]
+# Search from the repository root so src remains part of import paths.
+where = ["."]
+# Include src and its subpackages; exclude unrelated repository directories.
+include = ["src", "src.*"]
+# Discover directories without __init__.py as namespace packages; allowed values: true or false.
+namespaces = true
+

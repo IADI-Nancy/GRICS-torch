@@ -1,7 +1,6 @@
 """Empty inactive GRICS cache data: python -m src.utils.clear_cache [--cache-root PATH]."""
 import argparse
 from pathlib import Path
-import tomllib
 from src.preprocessing.real_data.RawDataCache import RawDataCache
 
 
@@ -10,6 +9,8 @@ def main():
     parser.add_argument('--cache-root', default=None)
     args = parser.parse_args()
     if args.cache_root is None:
+        import tomllib
+
         config = Path(__file__).resolve().parents[2] / 'config' / 'general.toml'
         with config.open('rb') as handle:
             args.cache_root = tomllib.load(handle)['paths']['cache_root']

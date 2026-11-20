@@ -117,6 +117,9 @@ class MotionBinner:
 
         if num_motion_samples < 1:
             raise ValueError("motion_curve must contain at least one sample.")
+        if Nbins == 1:
+            labels = torch.zeros(num_motion_samples, dtype=torch.int64, device=t_device)
+            return labels, motion_features.mean(dim=0, keepdim=True)
         if torch.all(motion_features.amax(dim=0) == motion_features.amin(dim=0)):
             raise ConstantPhysiologicalSignalError(
                 "The physiological signal is constant after interpolation; "

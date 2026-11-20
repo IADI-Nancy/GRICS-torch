@@ -2,7 +2,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 import math
-import tomllib
 
 ISMRMRD_READER_DATA_TYPES = {
     f'{source}-{physiology}'
@@ -124,6 +123,8 @@ def _load_toml_flat(path, kind, _include_chain=()):
     included settings are read first, and the selecting file may not redefine them.
     This keeps every effective setting unambiguous.
     """
+    import tomllib
+
     path = Path(path).resolve()
     if path in _include_chain:
         chain = ' -> '.join(str(item) for item in (*_include_chain, path))

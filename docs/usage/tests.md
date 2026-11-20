@@ -1,8 +1,8 @@
 # Tests and simulation validation
 
-The scripts in `tests/` validate the complete Shepp-Logan workflow: synthetic acquisition, motion simulation, reconstruction, image comparison, and output writing. Run them directly from the repository root in the installed project environment. They are manual integration validations with statistical quality checks, rather than a pytest unit-test suite.
+The simulation scripts in `tests/` validate the complete Shepp-Logan workflow: synthetic acquisition, motion simulation, reconstruction, image comparison, and output writing. Run them directly from the repository root in the installed project environment. An additional [Siemens phantom check](#recorded-siemens-phantom-check) is described at the end for users working with Siemens/ISMRMRD raw data.
 
-## Available cases
+## Available simulation cases
 
 | Script in `tests/` | Simulated motion | Quality metric space |
 | --- | --- | --- |
@@ -11,9 +11,11 @@ The scripts in `tests/` validate the complete Shepp-Logan workflow: synthetic ac
 | `validate_shepp_logan_3d_nonrigid.py` | Nonrigid motion per shot | Magnitudes without registration |
 | `validate_shepp_logan_3d_rigid.py` | Rigid motion per shot | Globally rigid-registered magnitudes |
 
-Each script owns its configuration selection and randomized motion parameters. The modules in `tests/utils/` are shared helpers, not executable tests: `validation_metrics.py` computes and prints metrics, `validation_registration.py` registers rigid-case comparison images, and `validation_quality.py` holds reference limits and evaluates batch quality.
+Each simulation script owns its configuration selection and randomized motion parameters. The modules in `tests/utils/` are shared helpers.
 
-## Running the validations
+## Running the Shepp-Logan validations
+
+The [README installation instructions](../../Readme.md#environment-setup) provide the required simulation dependencies through native CPU/GPU pip installation or the Docker environment.
 
 Run a complete reference-sized batch with an explicit device:
 
@@ -34,7 +36,7 @@ python tests/validate_shepp_logan_2d_nonrigid.py --runs 1 --device cpu --output-
 
 A batch with any count other than 20 reports quality as `INCONCLUSIVE`, even if its simulations complete successfully. The frozen limits were calibrated for batches of 20.
 
-The scripts load phantom, sampling, coil calibration, and reconstruction settings from the normal TOML files; they do not use a reduced solver schedule. They override motion samples, execution controls, and the seed (`20261101 + run_number`). Reconstruction logs and tensors are enabled, while debug plots are disabled. The comparison PNG is always saved separately. See [configuration](configuration/configuration.md) for configuration ownership and overrides.
+The scripts load phantom, sampling, coil calibration, and reconstruction settings from the configuration TOML files. They override motion samples, execution controls, and the seed (`20261101 + run_number`). Reconstruction logs and tensors are enabled, while debug plots are disabled. The comparison PNG is always saved separately. See [configuration](configuration/configuration.md) for configuration ownership and overrides.
 
 ## Progress and verdicts
 
@@ -50,22 +52,16 @@ After all simulations finish, the summary prints medians and quartiles, acceptan
 
 ```text
 ==================== SSIM statistics ====================
-SSIM relative improvement: 16.43% [11.30%, 20.92%]; criterion: >= SSIM_imp_ref = 10.39% — PASSED
+SSIM relative improvement: 16.43% [11.30%, 20.92%]; criterion: >= SSIM_imp_ref = 11.55% — PASSED
 
 ==================== NRMSE statistics ====================
-NRMSE relative improvement: 54.55% [38.76%, 61.20%]; criterion: >= NRMSE_imp_ref = 35.34% — PASSED
+NRMSE relative improvement: 54.55% [38.76%, 61.20%]; criterion: >= NRMSE_imp_ref = 39.27% — PASSED
 
 ==================== Overall quality ====================
 Overall quality: PASSED
 ```
 
-| Quality verdict | Meaning |
-| --- | --- |
-| `PASSED` | All six checks meet their limits for a comparable batch. |
-| `QUALITY CHECK NOT MET` | At least one absolute-quality, improvement, or p-value check misses its limit. Individual checks print `NOT MET`. |
-| `INCONCLUSIVE` | The batch size, checked configuration settings, or metric space differs from the reference. The reason is printed. |
-
-Quality misses and inconclusive results are reports, not raised exceptions; they do not by themselves produce a nonzero process exit status. Automation must read `quality_assessment.status` in `similarity_summary.json` to enforce a quality gate.
+Quality misses and inconclusive results are reports, not raised exceptions; they do not by themselves produce a nonzero process exit status. After the run, check the terminal’s `Overall quality` result. `PASSED` means all image-quality checks passed; `QUALITY CHECK NOT MET` means at least one failed; `INCONCLUSIVE` means the run cannot be compared with the reference. You can also find this result in `similarity_summary.json`, under `quality_assessment.status`. A script finishing without an error does not by itself mean that image quality passed.
 
 ## Image metrics
 
@@ -86,25 +82,28 @@ Image residual diagnostics measure k-space fit. Motion residual diagnostics meas
 
 ## Reference limits
 
-Limits apply to batch medians. Both percentage improvements must also be positive, and each metric's paired, two-sided Wilcoxon p-value must be below `0.025`.
+The validation uses provisional reference-based thresholds: the step 2 bootstrap bounds directly, without additional tolerance margins. Limits apply to batch medians. Both percentage improvements must also be positive, and each metric's paired, two-sided Wilcoxon p-value must be below `0.025`.
 
 | Case | SSIM minimum | NRMSE maximum | SSIM improvement minimum | NRMSE reduction minimum |
 | --- | ---: | ---: | ---: | ---: |
-| 2D nonrigid | 0.883 | 0.077 | 5.00% | 39.46% |
-| 2D rigid | 0.901 | 0.086 | 3.12% | 38.72% |
-| 3D nonrigid | 0.964 | 0.150 | 1.00% | 25.24% |
-| 3D rigid | 0.931 | 0.232 | 10.39% | 35.34% |
+| 2D nonrigid | 0.89 | 0.07 | 5.56% | 43.84% |
+| 2D rigid | 0.91 | 0.08 | 3.47% | 43.02% |
+| 3D nonrigid | 0.97 | 0.14 | 1.11% | 28.05% |
+| 3D rigid | 0.94 | 0.21 | 11.55% | 39.27% |
 
-The reference batches each contain 20 CUDA simulations. Their identifiers, bootstrap bounds, checked settings, and calculation comments are stored in [validation_quality.py](../../tests/utils/validation_quality.py). Both rigid references use calibration weighting and registered metrics; both nonrigid references have calibration weighting disabled. The 3D rigid reference is `shepp_logan_3d_rigid/2026-11-04_10-20-02_707423`.
+Metric values and thresholds are displayed with two decimal places (`%.2f`). Comparisons and JSON output retain full precision, so values that look equal after display rounding can still fall on opposite sides of a threshold. P-values and their threshold are displayed in scientific notation with two decimal places to preserve small values; `0.025` is shown as `2.50e-02`. Full-precision bounds are stored in [validation_quality.py](../../tests/utils/validation_quality.py).
 
-The limits are derived as follows:
+### How the limits were derived
+
+The limits come from reference batches of 20 simulations. A batch median depends on which simulations it contains. To estimate that variation, bootstrap resampling repeatedly draws a new batch from the reference records, allowing a record to be selected more than once. The resulting medians provide the lower and upper bounds used directly as the acceptance limits above.
+
+The calculation is:
 
 1. Order the reference records by simulation number and draw 100,000 bootstrap resamples of 20 paired records, using NumPy's `default_rng(42)`. Keep each corrupted/corrected pair together.
-2. Compute corrected medians and medians of paired percentage improvements within each resample. Take the 1st percentile for SSIM and improvement lower bounds, and the 99th percentile for the NRMSE upper bound.
-3. Apply explicit engineering margins: subtract 0.01 from the SSIM bound, multiply the NRMSE bound by 1.10, and multiply each improvement bound by 0.90. Round lower limits downward and upper limits upward, to 0.001 for absolute metrics and 0.01 percentage points for improvements.
-4. Require each Wilcoxon p-value to be below `0.05 / 2 = 0.025`, applying a Bonferroni correction for the two metric tests. Wilcoxon uses the raw paired metric differences; the positive improvement requirements establish the desired direction.
+2. Compute corrected medians and medians of paired percentage improvements within each resample. Take the 1st percentile for SSIM and improvement lower bounds, and the 99th percentile for the NRMSE upper bound. Set the acceptance thresholds to these percentile values.
+3. Require each Wilcoxon p-value to be below `0.05 / 2 = 0.025`, applying a Bonferroni correction for the two metric tests. Wilcoxon uses the raw paired metric differences; the positive improvement requirements establish the desired direction.
 
-The bootstrap bounds describe uncertainty in the reference medians. They are not simultaneous confidence bounds or guaranteed prediction limits for new batches or hardware. The extra margins are engineering choices, not measured CPU/GPU tolerances. Limits remain frozen during validation; a batch never sets its own passing thresholds.
+The reference batches each contain 20 simulations. Their identifiers, bootstrap bounds, checked settings, and calculation comments are stored in [validation_quality.py](../../tests/utils/validation_quality.py). Both rigid references use calibration weighting and registered metrics; both nonrigid references have calibration weighting disabled. The 3D rigid reference is `shepp_logan_3d_rigid/2026-11-04_10-20-02_707423`.
 
 Comparability checks cover phantom dimensions, acquisition counts, coil method, calibration weighting, resolution and iteration schedules, regularization settings, and motion-state count. Device is unrestricted. These checks are not a complete configuration fingerprint: changes to other settings or motion sampling may also require new reference batches. Recalibrate with independent batches and devices when changing the validation protocol.
 
@@ -126,6 +125,71 @@ Each invocation creates a batch directory:
         └── motion_parameters.pt
 ```
 
-Additional simulations have their own log and run directory. The console log captures library progress, warnings, and device fallback notices. `simulation_metrics.json` records the seed, sampled motion parameters, device, residual diagnostics, image metrics, and checked validation settings. `similarity_summary.json` contains aggregate metrics and `quality_assessment`, including limits, reference settings, method, individual checks, and verdict. It is written only after all requested simulations complete.
+The console log captures library progress, warnings, and device fallback notices. `simulation_metrics.json` records the seed, sampled motion parameters, device, residual diagnostics, image metrics, and checked validation settings. `similarity_summary.json` contains aggregate metrics and `quality_assessment`, including limits, reference settings, method, individual checks, and verdict. It is written only after all requested simulations complete.
 
 The comparison PNG shows corrupted, corrected, and ground-truth images: one row for 2D, and three central orthogonal planes for 3D. See [outputs](outputs.md) for the shared run metadata and reconstruction artifacts.
+
+## Siemens phantom check
+
+This additional check is intended for users who will reconstruct Siemens or ISMRMRD raw data.
+
+[validate_siemens_phantom_2d.py](../../tests/validate_siemens_phantom_2d.py) exercises the complete recorded-data path: download, Siemens-to-ISMRMRD conversion, acquisition loading, preparation, sequential reconstruction, and image export. It uses `config/reconstruction/nonrigid_2d.toml` with the standard solver schedule and `N_motion_states=1`. No motion is simulated.
+
+### Running the check
+
+Use the [Docker setup](../../Readme.md#docker), defined in the [Dockerfile](../../build/Dockerfile), for this check. Run from the repository root with that Python environment and ensure `siemens_to_ismrmrd` is on `PATH`:
+
+```bash
+python tests/validate_siemens_phantom_2d.py --device gpu
+```
+
+`--device` accepts `cpu` or `gpu` and defaults to `gpu`. `--output-root` defaults to `runs/`. To use another local phantom acquisition, pass `--raw-data-file /path/to/acquisition.dat`; its matching `acquisition.physio.txt` must already exist. The zero-physiology checks also apply to custom inputs.
+
+### Inputs and execution
+
+The default input is `meas_MID00020_FID552369_AX_T2_TSE_HR_1NEX_SAT.dat`, a three-slice 2D TSE Siemens acquisition. The script downloads this file and its `.physio.txt` sidecar from Zenodo [1] into `demos_data/` only when each file is absent. Existing inputs are reused without being overwritten, and interrupted downloads are not retained as completed files. The script downloads the pre-generated physiology; it does not generate physiological samples.
+
+The physiological text contains one `0 -1 0` row per retained imaging readout in full acquisition order, before slice selection. The columns are sensor identifier, timestamp marker, and physiological value. The `-1` marker denotes already-synchronized samples without timestamps. The loader uses `ismrmrd-physio_text` after conversion and checks alignment with the MRI readouts.
+
+Every invocation runs `siemens_to_ismrmrd` directly into a fresh temporary directory and loads that output through `ismrmrd-physio_text`, with preprocessing caching disabled. Conversion caching is bypassed entirely. The acquisition is converted and read once. All slices are then prepared, reconstructed, and exported sequentially, in zero-based index order. Temporary converted data are removed when the execution ends.
+
+### Checks and progress
+
+The script requires zero loaded physiology, one zero-valued binned motion signal, and all readouts assigned to motion state zero. For each slice, the reconstructed image must match the prepared spatial dimensions, contain finite values, and be nonempty. Reconstructed motion must be finite and exactly zero. A failed assertion or conversion, loading, reconstruction, or export exception stops the run with a nonzero exit status.
+
+Success banners identify conversion, ISMRMRD reading, and each slice's preparation, reconstruction, DICOM export, and PNG export. Export banners include the saved path. A final banner appears only after all slices and exports complete:
+
+```text
+========================================================================
+[phantom] SUCCESS: ALL 3 SLICES
+========================================================================
+```
+
+This is an execution check without a ground-truth image or SSIM/NRMSE acceptance threshold. A success banner confirms the completed stage, not an improvement in image quality. Constant physiological channels are supported because one motion state is explicitly requested; multiple-state reconstruction retains the constant-signal error.
+
+### Saved outputs
+
+Each invocation creates a timestamped run directory:
+
+```text
+<output-root>/siemens_phantom_2d/<run timestamp>/
+├── config_resolved.json
+├── manifest.json
+├── exports/dicom/
+│   ├── slice_001.dcm
+│   ├── slice_002.dcm
+│   └── slice_003.dcm
+├── slice_001/
+│   └── results/
+│       ├── image_reconstructed.pt
+│       ├── image_reconstructed.png
+│       └── motion_parameters.pt
+├── slice_002/
+└── slice_003/
+```
+
+Every slice folder contains its own results and reconstruction logs. Folder and DICOM filenames use one-based slice numbers; progress messages use zero-based indices. DICOM export uses the acquisition header and each selected slice's geometry. All exported slices share study, series, and frame-of-reference identifiers. See [outputs](outputs.md) for shared run metadata and reconstruction artifacts.
+
+## References
+
+[1] [Small phantom MRI data for reconstruction code testing, Zenodo record 24314067](https://zenodo.org/records/24314067).

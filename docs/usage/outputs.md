@@ -59,7 +59,7 @@ Generated ISMRMRD (`.mrd`) files and optional preprocessed HDF5 files live outsi
 
 `cache_root = "auto"` defaults to `<repository-parent>/data/cache/grics`, outside this code repository.
 
-Existing entries are reused. `remove_temporary_data_after_run=true` is the default. At the end of a managed execution (`@managed_execution` or `execution_scope()`), generated cache entries used by that execution are removed when no process still uses them. Set `remove_temporary_data_after_run=false` to retain files for reuse across later executions. Standalone callers release cache leases at interpreter exit or by calling `src.runtime.data_cache.release_leases()`.
+Existing entries are reused. In `config/general.toml`, `remove_temporary_data_after_run=true` is the global default for notebooks, pipelines, and other callers using `InputDataLoader`. At the end of a managed execution (`@managed_execution` or `execution_scope()`), generated cache entries used by that execution are removed when no process still uses them, including when execution fails. Original Siemens `.dat` files, physiology inputs, and user-supplied ISMRMRD files are retained. Set `remove_temporary_data_after_run=false` to retain generated conversions and preprocessing caches for reuse across later executions, or pass `overrides={"remove_temporary_data_after_run": False}` to `load_config(...)` for one execution. Standalone callers release cache leases at interpreter exit or by calling `data.input_loader.raw_data_cache.close()` on their `DataPreparer` instance; in notebooks, use a managed execution to ensure cleanup without waiting for kernel shutdown.
 
 To empty the cache:
 

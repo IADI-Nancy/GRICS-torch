@@ -41,7 +41,7 @@ from src.reconstruction.JointReconstructor import JointReconstructor
 from src.runtime.output_layout import execution_scope, write_json, write_reconstruction
 from src.runtime.runtime_config import load_config
 from src.runtime.runtime_setup import initialize_runtime
-from utils.validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary
+from utils.validation_metrics import image_metrics, summarize_residuals, summarize_similarity, print_similarity_summary, print_simulation_device
 from utils.validation_quality import assess_quality, validation_settings
 from utils.validation_registration import register_rigid_to_reference
 
@@ -85,6 +85,7 @@ def run_simulation(run_number, device, output_root, console):
         params = build_config(run_number, device, output_root, sampled_parameters)
 
         runtime = initialize_runtime(params)
+        print_simulation_device(run_number, device, runtime, console)
 
         data = DataPreparer(params=params, runtime=runtime)
         data.load_input_data()
@@ -165,6 +166,7 @@ def main():
     console = sys.stdout
     for run_number in range(1, args.runs + 1):
         log_path = batch_folder / f"simulation_{run_number:03d}.log"
+        print(f"Simulation {run_number:03d}: initializing (details: {log_path})", file=console, flush=True)
         try:
             # Preserve library progress, warnings, and fallback notices on disk.
             with log_path.open("w") as log, redirect_stdout(log), redirect_stderr(log):

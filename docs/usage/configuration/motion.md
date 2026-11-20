@@ -51,7 +51,7 @@ Spatial maps are the same fixed non-rigid basis (`alpha_x`, `alpha_y` + `alpha_z
 
 ## Motion binning and reconstruction states
 
-Physiological signals from real acquisitions are standardized after reader-specific processing and synchronization, before slice grouping and motion binning. Each sensor is normalized independently as `(signal - mean) / std`, using the population standard deviation (`sqrt(mean((signal - mean)**2))`, denominator N). Statistics cover every MRI readout in the full acquisition, before slice selection and motion binning. This gives each sensor zero mean and unit variance over the acquisition. Constant sensors and non-finite samples raise an error. Simulated signals are unaffected.
+Physiological signals from real acquisitions are standardized after reader-specific processing and synchronization, before slice grouping and motion binning. Each sensor is normalized independently as `(signal - mean) / std`, using the population standard deviation (`sqrt(mean((signal - mean)**2))`, denominator N). Statistics cover every MRI readout in the full acquisition, before slice selection and motion binning. This gives each sensor zero mean and unit variance over the acquisition. Constant sensors raise an error unless `N_motion_states=1`, in which case they are centered to zero without division by zero. Non-finite samples always raise an error. Simulated signals are unaffected.
 
 After loading or simulation, motion signals are grouped into reconstruction states using `motion_binning_mode` from the reconstruction configuration:
 

@@ -28,10 +28,10 @@ The figure shows non-rigid motion regularization, which encourages a smooth upda
 The reconstruction assigns every acquired k-space line to a discrete motion state $m$. Each state has a warp $M_m$ that maps the shared reference image $\rho$ into the anatomy observed in that state. At a grid position $r$, the warp samples the reference image at the displaced coordinate $r'_m(r)$:
 
 $$
-(M_m\rho)(r)=\rho\bigl(r'_m(r)\bigr),\qquad r'_m(r)=\operatorname{clamp}\bigl(r+u_m(r)\bigr),
+(M_m\rho)(r)=\rho\bigl(r'_m(r)\bigr),\qquad r'_m(r)=\mathrm{clamp}\bigl(r+u_m(r)\bigr),
 $$
 
-where $u_m(r)$ is the state displacement in grid units. $\operatorname{clamp}$ restricts every coordinate to the valid image bounds; a point moved outside the image samples the nearest boundary voxel. The implementation represents $M_m$ as a sparse bilinear (2D) or trilinear (3D) interpolation matrix. Clamping gives edge-value extension when a sampling coordinate leaves the reconstructed grid. The encoding operator applies $M_m$ before coil sensitivity weighting, Fourier transformation, and selection of the lines acquired in state $m$.
+where $u_m(r)$ is the state displacement in grid units. $\mathrm{clamp}$ restricts every coordinate to the valid image bounds; a point moved outside the image samples the nearest boundary voxel. The implementation represents $M_m$ as a sparse bilinear (2D) or trilinear (3D) interpolation matrix. Clamping gives edge-value extension when a sampling coordinate leaves the reconstructed grid. The encoding operator applies $M_m$ before coil sensitivity weighting, Fourier transformation, and selection of the lines acquired in state $m$.
 
 ### Rigid motion
 
