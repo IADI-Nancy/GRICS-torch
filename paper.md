@@ -9,18 +9,24 @@ tags:
 authors:
   - name: Karyna Isaieva
     affiliation: '1'
+  - name: Mohamed Aziz Zeroual
+    affiliation: '2, 3'
   - name: Henri Weber
-    affiliation: '2'
+    affiliation: '4'
   - name: Marc Fauvel
-    affiliation: '3'
+    affiliation: '5'
   - name: Freddy Odille
-    affiliation: '1, 3'
+    affiliation: '1, 5'
 affiliations:
   - index: 1
     name: 'Université de Lorraine, Inserm, IADI, F-54000 Nancy, France'
   - index: 2
-    name: 'Institute of Medical Informatics, University of Lübeck, D-23562 Lübeck, Germany'
+    name: 'A. A. Martinos Center for Biomedical Imaging, Department of Radiology, Massachusetts General Hospital, Charlestown, MA, USA'
   - index: 3
+    name: 'Harvard Medical School, Boston, MA, USA'
+  - index: 4
+    name: 'Institute of Medical Informatics, University of Lübeck, D-23562 Lübeck, Germany'
+  - index: 5
     name: 'CHRU-Nancy, INSERM, Université de Lorraine, CIC, Innovation Technologique, F-54000 Nancy, France'
 date: 02 October 2026
 bibliography: paper.bib
