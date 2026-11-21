@@ -67,6 +67,12 @@ The GRICS algorithm is implemented in the `reconstruction/JointReconstructor` cl
 
 At the time of publication, it supports only Cartesian sampling trajectories.
 
+## GPU optimizations in GRICS-torch
+
+GRICS-torch repeatedly applies the MRI encoding operator $E$ and its adjoint $E^H$ during conjugate-gradient (CG) reconstruction. For each motion state, we replaced the separate FFT calls for individual receive coils with one batched call across all coils. We sorted each sparse motion-interpolation matrix $W_t$ by output voxel and cached its adjoint $W_t^H$ for reuse while the motion estimate remains fixed. We also reduced device-to-host scalar reads from seven to one per CG iteration. This default configuration retains double-precision complex arithmetic. With solver corrections disabled, the batched and coil-sequential reconstructions agreed to approximately $10^{-14}$ in relative norm.
+
+The optional gather backend stores neighbour indices and interpolation weights for each output voxel (four neighbours in 2D, eight in 3D). The forward operation gathers weighted voxel values, and the adjoint accumulates contributions at the same indices. For up to $2^{19}$ voxels per state, all states are processed in one call. In the single precision + gather configuration, warps, coil sensitivities and FFTs use complex64, while CG scalars and motion parameters remain in double precision. Across the tested cases, reconstructed images differed from the default configuration by at most $10^{-6}$ in relative norm.
+
 ## Data preparation
 
 Data preparation is managed by the [`DataPreparer`](https://github.com/IADI-Nancy/GRICS-torch/blob/main/docs/architecture/data_preparation.md) class and includes loading the input (real or synthetic) data, estimation of coil sensitivity maps, optional motion simulation, and binning into different motion states. The output data represents a single slice for 2D acquisitions or a volume for 3D acquisitions, ready for use by `JointReconstructor`. `DataPreparer` first loads the acquisition once, then prepares it for reconstruction, using two separate commands. This choice was made to enable the reuse of the loaded data for several 2D slices without reading the same file repeatedly.
