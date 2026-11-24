@@ -1,14 +1,14 @@
-# GRICS-torch 3.0: performance
+# Performance comparison with v2.0
 
-GRICS-torch 3.0 is based on GRICS-torch 2.0. The three commits on top of it leave the algorithm, the regularisation, the damping, the iteration counts, the early stopping and the CG stopping rules untouched; they change how the operators and the solver use the GPU. Everything below was measured on a dedicated NVIDIA A100 PCIe 40 GB (the GPU of the JOSS paper); the raw outputs are in `benchmarks/results/a100_pcie_40gb_2026-11-13/` and the procedure in `benchmarks/README.md`.
+The performance optimizations benchmarked here preserve the algorithm, regularisation, damping, iteration counts, early stopping, and CG stopping rules used in the GRICS-torch 2.0 reference; they change how the operators and the solver use the GPU. Everything below was measured on a dedicated NVIDIA A100 PCIe 40 GB; the raw outputs are in `benchmarks/results/a100_pcie_40gb_2026-11-13/` and the procedure in `benchmarks/README.md`.
 
 ![pipeline and optimisations](figures/performance/figure_schematic.png)
 
 ## 1. What changed
 
-The numbers in this document were measured with the performance changes alone (the first three 3.0 commits). The solver corrections of `docs/fixes.md` came later and are on by default; `jacobian_rotation_factor = false`, `motion_step_real = false` and `warm_start_rescale = false` in the reconstruction TOML give the GRICS-torch 2.0 numerics back, and that is the setting the identity figures below refer to.
+The numbers in this document were measured with the performance changes alone. The solver corrections described in [corrections](fixes.md) came later and are enabled by default. Setting `jacobian_rotation_factor = false`, `motion_step_real = false` and `warm_start_rescale = false` disables those three corrections; other solver, reader, and initialization changes remain active. The identity figures below describe the historical benchmark runs with these settings.
 
-**Batched operators, same arithmetic (the first 3.0 commit).** Relative differences to GRICS-torch 2.0 4e-16, i.e. summation order only.
+**Batched operators, same arithmetic.** Relative differences to GRICS-torch 2.0 4e-16, i.e. summation order only.
 
 1. The coil axis is one batched tensor: one FFT call per motion state instead of one per coil, in the forward, adjoint and normal operators.
 2. The warped image of a state and, in the Jacobian, its spatial gradients are computed once per Gauss-Newton iteration and reused for every repetition and every CG iteration; GRICS-torch 2.0 recomputed them inside the repetition loop and at every call. Constant derivative fields of the rigid Jacobian are cached per state.
@@ -23,13 +23,13 @@ The numbers in this document were measured with the performance changes alone (t
 - In double precision the gather backend is slower than the pre-sorted sparse default in 3D (its adjoint is an `index_add_` on complex128 values: 4.85 versus 4.49 s on the 3D rigid validation case on the A100, 3.05 versus 2.69 s on an RTX PRO 6000), so it is meant to be combined with `compute_precision = "single"`, where it wins (timings of both GPUs in `benchmarks/results/*/recon_timings`).
 - With the gather backend, all motion states of a call go through one gather, one batched FFT over states x coils, one mask multiply and one `index_add_`, chunked under a memory budget (`GRICS_STATE_BATCH_BUDGET_GB`, default 2). It pays off on launch-bound problems and costs memory traffic on large ones, so it is on by default only when a state has at most 2^19 voxels (`GRICS_STATE_BATCH=auto|1|0`, `GRICS_STATE_BATCH_MAX_VOXELS`).
 
-**Asynchronous CG.** `ConjugateGradientSolver.cg` keeps the identical iteration, stopping rules and candidate selection, but reads the scalars of one iteration (denominators, residual norms, stagnation test) in a single device-to-host transfer instead of seven synchronisations. Reconstructions are bit-identical (relative difference 0.0 on the four synthetic validation cases).
+**Asynchronous CG.** The performance change grouped the scalars of one iteration (denominators, residual norms, stagnation test) into a single device-to-host transfer instead of seven synchronisations, preserving the iteration, stopping rules, and candidate selection used in that benchmark. Those historical runs reported bit-identical reconstructions (relative difference 0.0 on the four synthetic validation cases). The current solver also includes the corrections described in [corrections](fixes.md).
 
 ![one picture per optimisation](figures/performance/figure_explainer.png)
 
 ## 2. Operator calls (A100, ms per call, mean of 5 after warm-up)
 
-Columns: GRICS-torch 2.0; batched operators in double precision (the first 3.0 commit; the operators of the default settings of GRICS-torch 3.0); GRICS-torch 3.0 with `single` + `gather`. Identity = max relative difference of the operator outputs with respect to GRICS-torch 2.0 over all operators of the case.
+Columns: GRICS-torch 2.0; batched operators in double precision with the sparse backend; the current implementation with `single` + `gather`. Identity = max relative difference of the operator outputs with respect to GRICS-torch 2.0 over all operators of the case.
 
 **2D rigid, 128x128, 8 coils, 8 states** (identity 3.0e-16 / 2.1e-7)
 
@@ -71,7 +71,7 @@ In 3D the forward operator was already a single batched pass GRICS-torch 2.0, so
 
 Shipped synthetic validation settings (Shepp-Logan 128x128 or 128x128x64, simulated motion) and the Zenodo breast slice (320x532, 24 coils, non-rigid). Relative image difference with respect to GRICS-torch 2.0 in brackets.
 
-| case | GRICS-torch 2.0 | batched operators, double (first 3.0 commit) | GRICS-torch 3.0, double + gather | GRICS-torch 3.0, single + gather |
+| case | GRICS-torch 2.0 | Batched operators, double + sparse | Current, double + gather | Current, single + gather |
 |---|---|---|---|---|
 | 2D rigid | 6.2 | 2.0 (3.0x, 0.0) | 1.5 (4.1x, 8e-15) | 1.6 (3.9x, 1e-6) |
 | 2D non-rigid | 6.0 | 2.2 (2.7x, 0.0) | 1.7 (3.4x, 1e-15) | 1.8 (3.4x, 3e-7) |
@@ -103,5 +103,5 @@ A second run of `benchmarks/run_all.sh` on an idle NVIDIA RTX PRO 6000 Blackwell
 
 - All timings are on one dedicated A100 PCIe 40 GB; on a shared GPU the GRICS-torch 2.0 code, with its seven host synchronisations per CG iteration, slows down more than the batched one, so speed-ups measured there are larger and not comparable.
 - The simulation path keeps its own complex128 sparse operators; only the reconstruction operators changed.
-- The default settings cache a transposed sparse operator per motion state (the first 3.0 commit), so their stored operators take twice the memory of GRICS-torch 2.0's: at 256×208×160 with 8 states and 4 coils this exceeds 40 GB on an A100, where the gather backend (2.7x smaller than GRICS-torch 2.0, no transposed copy) runs.
+- The default settings cache a transposed sparse operator per motion state, so their stored operators take twice the memory of GRICS-torch 2.0's: at 256×208×160 with 8 states and 4 coils this exceeds 40 GB on an A100, where the gather backend (2.7x smaller than GRICS-torch 2.0, no transposed copy) runs.
 - `compute_precision = "single"` is an opt-in: the images differ from the double-precision ones by 2e-7 to 1e-6 in relative norm, far below the 1e-4 acceptance threshold used in `benchmarks/compare_recons.py`, but not zero.

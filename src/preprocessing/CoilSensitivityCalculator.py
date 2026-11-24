@@ -158,6 +158,7 @@ class CoilSensitivityCalculator:
             )
 
         import cupy as cp
+        import sigpy as sp
         from cupy_backends.cuda.libs import cusolver
 
         try:
@@ -165,8 +166,6 @@ class CoilSensitivityCalculator:
                 kspace_block, calib_width, kernel_width, sp_device,
             )
         except cp.cuda.memory.OutOfMemoryError:
-            import sigpy as sp
-
             print("[coil sensitivity] GPU memory exhausted; running ESPIRiT on CPU.", flush=True)
         except (cusolver.CUSOLVERError, RuntimeError) as error:
             # 2.0 only caught out-of-memory, so a cuSOLVER failure (e.g. the 2^31 workspace limit,
@@ -176,7 +175,6 @@ class CoilSensitivityCalculator:
                   "running ESPIRiT on CPU. This can take hours in 3D: consider smaller espirit widths.", flush=True)
         finally:
             self._cupy_cleanup(cp)
-        self._cupy_cleanup(cp)
         return self._run_espirit_calibration_cpu(
             kspace_block, calib_width, kernel_width, sp_device=sp.Device(-1),
         )

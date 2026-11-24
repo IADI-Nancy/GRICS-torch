@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 B = Path(sys.argv[1]); REF, ACC = sys.argv[2], sys.argv[3]; OPS_REF, OPS_ACC = sys.argv[4], sys.argv[5]; OUT = sys.argv[6]
-REF_NAME, ACC_NAME = "GRICS-torch 2.0", "GRICS-torch 3.0"
+REF_NAME, ACC_NAME = "GRICS-torch 2.0", "Current"
 INK, INK2, MUTED, SURF, GRID = "#0b0b0b", "#52514e", "#b5b4ad", "#ffffff", "#e8e7e2"
 C_REF, C_ACC = "#2a78d6", "#eb6834"
 diff_cmap = LinearSegmentedColormap.from_list("blue_seq", ["#ffffff", "#9cc3ef", "#2a78d6", "#0b2f5e"])

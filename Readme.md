@@ -2,9 +2,9 @@
 
 This repository contains a 2D/3D MRI reconstruction pipeline with joint image-motion estimation using the GRICS algorithm [1], implemented in PyTorch with GPU support. GRICS models MRI acquisition and motion and does not require AI priors. It requires motion-related data (e.g. respiratory belt measurements, navigators, PilotTone amplitude variations, or similar signals). This implementation aims to improve understanding of the algorithm in the MRI community and support its reuse.
 
-The code currently supports only Cartesian sampling and performs best with fully sampled data. The algorithm was developed primarily for non-rigid motion correction. Rigid motion correction is also available, but has been less extensively validated; users are encouraged to assess its performance for their application as we continue to refine it.
+For a stable version, use one of the published [releases](https://github.com/IADI-Nancy/GRICS-torch/releases). The latest development version provides access to new features and improvements that may benefit your workflow, but it has not been extensively tested.
 
-Please contact Karyna Isaieva (karyna [dot] isaieva [at] univ-lorraine [dot] fr) for any bug reports, questions or suggestions.
+Please use GitHub Issues for any bug reports, questions or suggestions.
 
 ## License and citation
 
@@ -127,18 +127,6 @@ python tests/validate_shepp_logan_3d_rigid.py --runs 20 --device gpu
 Use `--device cpu` in every command for a CPU installation. Keep the standard reconstruction iteration schedules; `--runs 20` counts simulations, not solver iterations. Confirm that each test completes and reports `Overall quality: PASSED`; a zero exit status alone does not confirm the quality checks passed. See the [test and simulation-validation guide](docs/usage/tests.md) for output locations, device fallback notices, and result details.
 
 For Siemens users, run `python tests/validate_siemens_phantom_2d.py --device gpu` to check Siemens conversion, reconstruction, and DICOM export; use `--device cpu` for CPU execution. See the [Siemens phantom test](docs/usage/tests.md#siemens-phantom-check).
-
-## GRICS-torch 3.0
-
-This repository is GRICS-torch 3.0, based on GRICS-torch 2.0. The reconstruction algorithm is the same.
-
-- GPU implementation of the encoding operator and of its Jacobian: coils batched in one FFT per motion state, warped images and gradients cached per Gauss-Newton iteration, coalesced sparse warps, one host synchronisation per CG iteration. Optional single precision and gather-based warps (`compute_precision`, `warp_backend`). Details: [docs/performance.md](docs/performance.md).
-- Corrections to the solver and to the data readers: [docs/fixes.md](docs/fixes.md). The corrections that change the numerics have a switch in the reconstruction TOML.
-- Benchmarks against 2.0 ([benchmarks/](benchmarks/README.md)) and unit tests (`python -m pytest tests/unit`).
-
-![](docs/figures/readme_timings.png)
-
-Reconstruction time for the four shipped validation settings and the Zenodo breast slice, same seeds, on an RTX PRO 6000 and on an A100 PCIe 40 GB. Labels: speed-up with respect to 2.0.
 
 ## Documentation
 

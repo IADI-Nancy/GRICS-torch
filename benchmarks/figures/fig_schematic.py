@@ -1,4 +1,4 @@
-"""Schematic of the GRICS-torch reconstruction pipeline and of the optimisations of GRICS-torch 3.0.
+"""Schematic of the GRICS-torch reconstruction pipeline and of the optimisations of the current implementation.
 Usage: python fig_schematic.py <out_stem>"""
 import sys
 import matplotlib
@@ -8,7 +8,7 @@ from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Rectangle
 OUT = sys.argv[1]
 INK, INK2, MUTED, SURF = "#0b0b0b", "#52514e", "#b5b4ad", "#ffffff"
 BLUE, ORANGE, BLUE_L, ORANGE_L, GREY_L = "#2a78d6", "#eb6834", "#e6f0fb", "#fdeee6", "#f2f1ee"
-REF, ACC = "GRICS-torch 2.0", "GRICS-torch 3.0"
+REF, ACC = "GRICS-torch 2.0", "Current"
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9})
 fig = plt.figure(figsize=(13.5, 8.6), facecolor=SURF)
 ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, 100); ax.set_ylim(0, 100); ax.axis("off")

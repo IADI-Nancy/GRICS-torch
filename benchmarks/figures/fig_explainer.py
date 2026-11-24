@@ -1,5 +1,5 @@
 """Schematic: one picture per optimisation, for readers new to GPU programming.
-GRICS-torch 2.0 (blue) vs GRICS-torch 3.0 (orange). Usage: python fig_explainer.py <out_stem>"""
+GRICS-torch 2.0 (blue) vs the current implementation (orange). Usage: python fig_explainer.py <out_stem>"""
 import sys
 import matplotlib
 matplotlib.use("Agg")
@@ -8,7 +8,7 @@ from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Rectangle, Polyg
 OUT = sys.argv[1]
 INK, INK2, MUTED, SURF = "#0b0b0b", "#52514e", "#b5b4ad", "#ffffff"
 BLUE, ORANGE, BLUE_L, ORANGE_L, BLUE_M, ORANGE_M, GREY_L = "#2a78d6", "#eb6834", "#e6f0fb", "#fdeee6", "#7fa9e0", "#f3a27d", "#f2f1ee"
-REF, ACC = "GRICS-torch 2.0", "GRICS-torch 3.0"
+REF, ACC = "GRICS-torch 2.0", "Current"
 plt.rcParams.update({"font.family": "DejaVu Sans", "hatch.linewidth": 0.6})
 FW, FH = 14.0, 11.6
 fig = plt.figure(figsize=(FW, FH), facecolor=SURF)

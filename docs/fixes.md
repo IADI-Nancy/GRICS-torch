@@ -1,50 +1,60 @@
-# GRICS-torch 3.0: corrections with respect to 2.0
+# Corrections relative to GRICS-torch 2.0
 
-Problems found in GRICS-torch 2.0 and corrected in 3.0. Each one was reproduced on that commit before being changed; the scripts that reproduce them are in `tests/unit/`. Three of the fixes change the numerics of the solver and can be switched off in the reconstruction TOML to get the GRICS-torch 2.0 results back (`jacobian_rotation_factor`, `motion_step_real`, `warm_start_rescale`); `benchmarks/recon_dump.py` does that with `GRICS_COMPAT=1`.
+This document describes corrections and remaining limitations in the current implementation relative to GRICS-torch 2.0. Focused unit tests cover selected corrections. GPU performance changes are described separately in [performance](performance.md).
 
 ## Data reading and preparation
 
-**ESPIRiT in 3D crashed on the GPU with 7 coils or more** (`CoilSensitivityCalculator`). With the shipped widths (calibration 48, kernel 12) the calibration matrix is 50653 x C·1728 whatever the image size, and cuSOLVER refuses the SVD once its workspace passes 2^31 elements; with the CUDA 12.8 libraries that happens at C = 7 (the exact count depends on the cuSOLVER version). Only out-of-memory errors were caught, so the preparation died. Now: the workspace is queried first; if cuSOLVER cannot do it, the SVD is taken from the eigendecomposition of the Gram matrix A^H A on the GPU when that fits in memory, otherwise ESPIRiT runs on the CPU with a message that says why. cuSOLVER and runtime errors fall back to the CPU too.
+**ESPIRiT workspace limits** (`CoilSensitivityCalculator`). GPU calibration queries the cuSOLVER SVD workspace before factorization. When that query fails, the implementation estimates whether a Gram-matrix eigendecomposition fits in GPU memory and selects double or single precision with a notice. Matrix size depends on the calibration width, kernel width, spatial dimension, and coil count; the cuSOLVER workspace limit also depends on the CUDA version. GPU out-of-memory, cuSOLVER, and runtime errors trigger an announced CPU retry. The CPU device is available to all three exception paths.
 
-**Readout oversampling was assumed to be 2x for every ISMRMRD file** (`ISMRMRDReader`). A file without oversampling lost the outer half of its field of view. GRICS-torch 2.0 (v2.0, commit b126227) reads the factor from `encodedSpace.x / reconSpace.x` (1 or 2, with a warning and the 2x assumption when the header is invalid); 3.0 keeps that and prints a notice when no oversampling is declared.
+**Header-declared k-space centres** (`ISMRMRDReader`). Phase-encoding indices are shifted by `grid_size // 2 - declared_center`, placing the declared centre at the centred FFT origin. Each phase-encoding grid size is the maximum of the encoded matrix size and the size derived from encoding limits and acceleration. This also applies to partition encoding in 3D slabs. Placement is unchanged when the calculated shift is zero.
 
-**The k-space centre declared in the header was ignored** (`ISMRMRDReader`). Lines were stored at their raw `kspace_encode_step_1` index, so a partial-Fourier range indexed from zero put k = 0 away from the FFT centre; the magnitude image is unchanged but the phase, and with it the motion model, is wrong. Lines are now placed at `index - center + N/2` on a grid of `encodedSpace.matrixSize`; files whose indices already span the full grid are read exactly as before. The same applies to `kspace_encode_step_2` for 3D slabs.
+**Repeated imaging lines** (`ISMRMRDReader`). Readouts mapped to the same repetition, phase-encoding index, and slice or partition are accumulated and averaged, with a notice when repeats occur. Each readout retains its physiological sample. The reader groups repetitions using the repetition counter.
 
-**A line acquired twice overwrote the previous one** (`ISMRMRDReader`). Repeated (ky, kz, repetition) lines are now averaged, with a message. Each readout still carries its own physiological sample into the binning; that part of the data model is unchanged.
+**Respiratory clipping** (`SAECReader`). Samples used to fit respiratory drift are clipped to the interval from `mean - 2 * sigma` to `mean + 2 * sigma` with `np.clip`, so both bounds apply to the same signal.
 
-**Respiratory clipping before the drift fit** (`SAECReader`). The second `np.where` started from the unclipped array, so only the lower bound was applied. Replaced by `np.clip`.
-
-**Voxel spacing without an ISMRMRD header** (`DataPreparer`). `voxel_aware` scaling read the spacing from the header and failed on preprocessed files without one (the Zenodo demo). `voxel_spacing_mm` in the reconstruction TOML is used when present.
+**Voxel spacing without an ISMRMRD header** (`DataPreparer`). With `regularization_scaling = "voxel_aware"`, explicit `voxel_spacing_mm` takes precedence over encoded spacing from the acquisition header. Preprocessed data without a header therefore require explicit spacing for this mode. See the [configuration guide](usage/configuration/configuration.md).
 
 ## Solver
 
-**Rigid Jacobian without the rotation factor** (`MotionPerturbationSimulator`). The warp is a pull-back, warped(r) = rho(T(r)) with T(r) = c + R (r - c) + t, so the derivative with respect to the motion parameters needs (grad rho)(T(r)) = R grad(warped)(r). The code used grad(warped) directly, i.e. R^T too much. Against finite differences of the forward model the error was 15 %, 35 % and 67 % at 0.1, 0.3 and 0.6 rad; with the factor it is 11 % at every angle (the interpolation). Key: `jacobian_rotation_factor`.
+**Rigid Jacobian rotation factor** (`MotionPerturbationSimulator`). The rigid Jacobian rotates the gradients of the warped image into the coordinates used for the motion derivatives. This correction is enabled by `jacobian_rotation_factor`. Interpolation contributes to the approximation error when comparing the analytical derivative with finite differences.
 
-**Motion step solved in complex arithmetic** (`JointReconstructor._solve_motion`). The motion parameters are real, so the Gauss-Newton step is Re(J^H J) d = Re(J^H r); the code solved J^H J d = J^H r and took Re(d). For non-rigid motion the two steps differ by 16 to 41 % and the real step leaves a smaller residual (0.20 to 0.52 of the initial one instead of 0.37 to 0.86 in the test of `verify4/solver`); for rigid motion the difference is about 1 %. Key: `motion_step_real`.
+**Real motion increments** (`JointReconstructor._solve_motion`). With `motion_step_real = true`, the data term solves `Re(J^H J) d = Re(J^H r)`, where `J` is the motion Jacobian, `r` is the k-space residual, and `d` is the real motion increment. This generally differs from solving `J^H J d_complex = J^H r` and then setting `d = Re(d_complex)`. Regularization is applied separately by the motion solver.
 
-**Warm start between levels** (`upsample_data`). The coarse-level image is brighter by sqrt(n_full / n_level) because the k-space crop is unitary, and the next level started from it unscaled (the first image CG began at a relative residual of 0.92 to 0.97 instead of 0.24 to 0.37). The upsampled image is now rescaled. Key: `warm_start_rescale`.
+**Image scaling between resolution levels** (`upsample_data`). With `warm_start_rescale = true`, an interpolated image is multiplied by `sqrt(n_previous / n_next)` to account for the intensity scaling introduced by cropping k-space with a unitary FFT.
 
-**Zero motion update returned silently** (`ConjugateGradientSolver`). The returned iterate was the best of x0, the true-residual refresh points and the last iterate; with `max_iter <= cg_true_residual_interval` that is x0 or the last iterate, and when the last one was worse than x0 the solver returned x0, i.e. no motion update, without a message. The iterate with the smallest recursive residual is now kept as a candidate and verified when x0 would otherwise be returned, and a message is printed if the start is still the best.
+**CG candidate selection and breakdown guards** (`ConjugateGradientSolver`). CG verifies candidate residuals directly and, when the initial guess would otherwise be selected, also checks the iterate with the smallest recorded recursive residual. It prints a notice if no candidate improves on the initial guess. For a nonzero right-hand side, the solve is normalized to `||b|| = 1` and rescaled on return; breakdown checks use relative scales.
 
-**Absolute breakdown thresholds** (`ConjugateGradientSolver`). The 1e-15 guards made the result depend on the k-space scale (5.8 % and 14.6 % image change between normalised and raw Siemens scale on the Zenodo slice). The solver now works on the system scaled to ||b|| = 1 and the guards are relative to the initial residual. On normalised data the iterates are unchanged to machine precision.
+**Incomplete readout lines** (`EncodingOperator`). The optimized normal operator requires complete readout lines. Sampling is checked at construction; when this condition is not met, `normal(image)` explicitly uses `adjoint(forward(image))` and prints a notice.
 
-**`normal()` assumed complete readout lines** (`EncodingOperator`). The phase-mask shortcut is only valid when each state holds all kx samples of its lines; that was never checked and a partial state gave a 36 % wrong result without any error. The operator now checks the sampling at construction and falls back to adjoint(forward) with a message.
+**External initial-motion scaling** (`initialization.py`). Initial translations and non-rigid displacements are supplied in full-resolution voxels and rescaled to the coarsest reconstruction grid. Rigid angles retain their angular units.
 
-**Units of an external initial motion** (`initialization.py`). `initial_motion` was used unscaled at the coarsest level while `upsample_data` rescales translations between levels, so a motion given in full-resolution pixels ended 4x too large with levels [0.25, 0.5, 1]. It is now rescaled to the level grid; the expected unit is full-resolution voxels.
+The three reconstruction settings `jacobian_rotation_factor`, `motion_step_real`, and `warm_start_rescale` are enabled in the shipped configurations. `GRICS_COMPAT=1` in the benchmark scripts disables these three settings only. Other solver, reader, and initialization changes remain active. The validation batches below assess reconstruction quality against synthetic ground truth.
 
-## Validation with the corrections on
+## Recorded validation results
 
-The four validation scripts of 2.0 (`tests/validate_shepp_logan_*.py`, 20 simulations each, frozen limits of GRICS-torch 2.0), run on GRICS-torch 3.0 with the default settings on an RTX PRO 6000, 2026-11-13:
+The latest batch for each of the four Shepp-Logan validation scripts was started on 2026-11-24. Each contains 20 completed simulations, records device `cuda:0`, and reports `PASSED` with all six quality checks satisfied and matching reference requirements.
 
-| batch | SSIM (limit) | NRMSE (limit) | verdict |
-|---|---|---|---|
-| 2D rigid | 0.914 (≥ 0.901) | 0.079 (≤ 0.086) | PASSED |
-| 2D non-rigid | 0.906 (≥ 0.883) | 0.062 (≤ 0.077) | PASSED |
-| 3D rigid | 0.954 (≥ 0.931) | 0.189 (≤ 0.232) | PASSED |
-| 3D non-rigid | 0.984 (≥ 0.964) | 0.108 (≤ 0.150) | PASSED |
+SSIM and NRMSE in the table are medians across the 20 simulations. The improvement columns are medians of the per-simulation paired percentage changes relative to the uncorrected reconstruction. Rigid cases use globally rigid-registered magnitude images; non-rigid cases use magnitude images without registration.
 
-With the three switches off (`GRICS_COMPAT=1` in `benchmarks/run_all.sh`) the code reproduces GRICS-torch 2.0 to machine precision: operator outputs within 3.6e-16 and the five reconstructions of the benchmark (four synthetic cases and the Zenodo breast slice) within 6.4e-15 in relative norm. With the corrections on, the images differ from GRICS-torch 2.0 by 0.3 to 3.1 % and the motion by 1 to 17 %, and the raw NRMSE against the simulated truth is lower in three of the four synthetic cases (2D non-rigid 0.0546 to 0.0526, 3D rigid 0.2692 to 0.2637, 3D non-rigid 0.1054 to 0.1040; 2D rigid 0.5393 to 0.5416 raw, where the registered metrics above improve). GRICS-torch 2.0's own 2D rigid batch on the same machine gives 0.909 and 0.0785; the other batches sit within their limits with similar margins. The rotations of these simulations are small (under 1°), so the Jacobian correction barely shows here; it matters for rotations of a few degrees. The unit tests in `tests/unit/` cover each fix in isolation (`python -m pytest tests/unit`).
+| Case | Median SSIM ≥ minimum | Median NRMSE ≤ maximum | Median SSIM improvement ≥ minimum | Median NRMSE reduction ≥ minimum | Recorded verdict |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 2D rigid | 0.92108 ≥ 0.91120 | 0.06752 ≤ 0.07772 | 9.50% ≥ 3.47% | 52.92% ≥ 43.02% | PASSED |
+| 2D non-rigid | 0.90120 ≥ 0.89384 | 0.06514 ≤ 0.06946 | 6.78% ≥ 5.56% | 48.87% ≥ 43.84% | PASSED |
+| 3D rigid | 0.95183 ≥ 0.94125 | 0.18703 ≤ 0.21001 | 16.54% ≥ 11.55% | 55.22% ≥ 39.27% | PASSED |
+| 3D non-rigid | 0.98373 ≥ 0.97484 | 0.10816 ≤ 0.13601 | 1.49% ≥ 1.11% | 34.78% ≥ 28.05% | PASSED |
 
-## Left as GRICS-torch 2.0
+Both paired, two-sided Wilcoxon p-values are `1.9073486328125e-06` in every batch, below the required `0.025`. All four median comparisons and both p-value checks pass for each case. Batch size, settings, and metric space also match the reference requirements. Values above are rounded for display; acceptance uses full precision.
 
-`max_tx = 0.2` next to `max_ty = 2.0` in `rigid_2d_common.toml` and the breast configurations requiring an ISMRMRD header feed the frozen validation limits, so they are documented rather than changed. The DICOM export flips the pixel array while the orientation tags are derived from the unflipped directions; whether that compensates a scanner convention could not be checked without scanner DICOMs. The physiological time axis is anchored on the last imaging readout while SAEC uses its stop trigger, so a gap between the two shifts the physiological signal by that gap and `physio_clock_drift_seconds` cannot be used to compensate it for SAEC data.
+These batches assess the combined reconstruction pipeline under the four synthetic validation settings. Focused unit tests check selected corrections, including the rigid Jacobian, real motion operator, resolution scaling, CG behavior, and sampling handling.
+
+## Remaining limitations
+
+**Acquisition averages.** Repeated lines are averaged within a repetition. This grouping combines complementary sampling averages and true repeated averages under the same repetition index.
+
+**Breast configurations without a header.** The shipped breast reconstruction configurations select voxel-aware scaling but leave `voxel_spacing_mm` commented out. Inputs without an ISMRMRD header need an explicit spacing override.
+
+**Rigid simulation amplitudes.** `rigid_2d_common.toml` retains `max_tx = 0.2` and `max_ty = 2.0`, in millimetres. These settings give the simulated translations different maximum amplitudes along x and y.
+
+**DICOM orientation.** Export flips the two in-plane pixel axes while constructing orientation and position from the recorded scanner directions. Comparison with scanner-generated DICOMs is needed to validate this orientation convention. See [postprocessing](usage/postprocessing.md) for the export path.
+
+**SAEC timing.** MRI readout timestamps are referenced to the last retained imaging readout; SAEC timestamps are referenced to the sequence stop trigger. A gap between those events can shift alignment. Nonzero `physio_clock_drift_seconds` is supported for Polaris, text, and array physiology, and is rejected for SAEC.

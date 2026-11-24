@@ -1,6 +1,6 @@
-# Benchmarks: GRICS-torch 3.0 against 2.0
+# Benchmarks: current implementation against GRICS-torch 2.0
 
-Everything in `docs/performance.md` comes from the scripts in this folder. They compare a checkout of the GRICS-torch 2.0 code (the *reference*) with GRICS-torch 3.0 on the same GPU, with the same seeds, and report the relative difference of the outputs together with the timings. One GPU and about 30 minutes are enough.
+Everything in `docs/performance.md` comes from the scripts in this folder. They compare a checkout of the GRICS-torch 2.0 code (the *reference*) with the current implementation on the same GPU, with the same seeds, and report the relative difference of the outputs together with the timings. One GPU and about 30 minutes are enough.
 
 ## 1. Environment
 
@@ -38,7 +38,7 @@ What `run_all.sh` does, in order:
 | roofline model | `roofline.py` | measured device ceilings (copy bandwidth, FP32/FP64 matmul, 3D FFT) and, per operator call, the bytes the batched formulation must move, hence the fraction of the bandwidth bound each code reaches |
 | paper-size 2D | `paper_size_bench.py` | the Zenodo slice with `nonrigid_2d.toml` (the paper's 2D setting), 3 repeats, peak memory |
 
-Each script can also be run on its own; the usage line is in its docstring. Two variants of GRICS-torch 3.0 are timed: the default settings (double precision, sparse warps) and `compute_precision = "single"` + `warp_backend = "gather"`, passed as the trailing `single gather` arguments. A third run with `GRICS_COMPAT=1` switches the solver corrections of `docs/fixes.md` off; that run must be identical to GRICS-torch 2.0 (relative difference at machine precision), the other two differ from GRICS-torch 2.0 by the corrections.
+Each script can also be run on its own; the usage line is in its docstring. Two configurations of the current implementation are timed: the default settings (double precision, sparse warps) and `compute_precision = "single"` + `warp_backend = "gather"`, passed as the trailing `single gather` arguments. A third run with `GRICS_COMPAT=1` disables `jacobian_rotation_factor`, `motion_step_real`, and `warm_start_rescale`; the three runs compare these settings with the GRICS-torch 2.0 reference. Other solver, reader, and initialization changes remain active in each configuration.
 
 Optional, not part of `run_all.sh`: `paper_size_bench.py <repo> <tag> paper3d|brain [single gather]` (synthetic 3D at the paper's size class and at 256×208×160) and `slice_concurrency.py` (several slices per GPU). `profile_recon.py` prints where the time of one reconstruction goes (operator calls, CG, operator builds).
 
@@ -55,4 +55,4 @@ python benchmarks/figures/fig_main.py benchmarks/out recon_reference recon_batch
 
 ## 5. Published results
 
-`results/a100_pcie_40gb_2026-11-13/` holds the raw outputs behind `docs/performance.md`: the SLURM log of job 10636891 (node with one dedicated A100 PCIe 40 GB, 2×AMD EPYC), `roofline.json` and the paper-size JSON files. In that run the tags were `reference`, `layer1` (commit 7e7f42b: batched operators only), `layer3dg` / `layer3_double_gather` (GRICS-torch 3.0, double precision, gather backend) and `layer3sg` / `layer3_single_gather` (GRICS-torch 3.0, single precision, gather backend).
+`results/a100_pcie_40gb_2026-11-13/` holds the raw outputs behind `docs/performance.md`: the SLURM log of job 10636891 (node with one dedicated A100 PCIe 40 GB, 2×AMD EPYC), `roofline.json` and the paper-size JSON files. In that run the tags were `reference`, `layer1` (commit 7e7f42b: batched operators only), `layer3dg` / `layer3_double_gather` (double precision, gather backend) and `layer3sg` / `layer3_single_gather` (single precision, gather backend).

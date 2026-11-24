@@ -1,4 +1,4 @@
-"""README figure: time per reconstruction, GRICS-torch 2.0 vs 3.0, on two GPUs.
+"""README figure: time per reconstruction, GRICS-torch 2.0 vs the current implementation, on two GPUs.
 Usage: python fig_readme.py <timings_rtx> <timings_a100> <out_stem>   (timings_* = benchmarks/results/<gpu>/recon_timings, written by recon_profile runs)"""
 import sys, json, glob
 from pathlib import Path
@@ -10,8 +10,8 @@ from matplotlib.patches import Patch
 OUT = sys.argv[3]
 INK, INK2, MUTED, SURF, GRID = "#0b0b0b", "#52514e", "#b5b4ad", "#ffffff", "#e8e7e2"
 VARIANTS = [("reference", "GRICS-torch 2.0", "#2a78d6"),
-            ("batched_double_sparse", "GRICS-torch 3.0, double precision", "#eb6834"),
-            ("batched_single_gather", "GRICS-torch 3.0, single precision", "#eda100")]
+            ("batched_double_sparse", "Current, double precision", "#eb6834"),
+            ("batched_single_gather", "Current, single precision", "#eda100")]
 CASES = [("2d_rigid", "2D rigid\n128²"), ("2d_nonrigid", "2D non-rigid\n128²"), ("3d_rigid", "3D rigid\n128×128×64"),
          ("3d_nonrigid", "3D non-rigid\n128×128×64"), ("real", "breast slice\n320×532, 24 coils")]
 GPUS = [(sys.argv[1], "RTX PRO 6000 Blackwell"), (sys.argv[2], "A100 PCIe 40 GB")]
