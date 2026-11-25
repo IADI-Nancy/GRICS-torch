@@ -2,7 +2,7 @@
 """Compare saved GRICS++ and GRICS-torch reconstructions in SVGs and subject PNGs.
 
 Run from the repository root:
-    python article/scripts/compare_grics_reconstructions.py --output-dir article/figures/comparison
+    python validation_studies/cpp_pytorch_comparison/compare_grics_reconstructions.py --output-dir validation_studies/cpp_pytorch_comparison/figures/generated
 
 Sharpness uses native, motion-corrected magnitude images, with one observation
 per acquisition (mean over all slices/partitions). Repetitions are complex-averaged.
@@ -51,7 +51,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
-from article.scripts.sharpness_index import sharpness_index
+from validation_studies.cpp_pytorch_comparison.sharpness_index import sharpness_index
 
 DATABASE = Path("/home/pyuser/wkdir/data/Breast-INNOV_GRICS_database")
 DATASET = Path("/home/pyuser/wkdir/data/GRICS-torch")
@@ -389,7 +389,7 @@ def main(argv=None):
     parser.add_argument("--subject", default="0079", help="Subject selected by the real-subject test scripts.")
     parser.add_argument("--sequence", choices=("s", "m"), default="s")
     parser.add_argument("--time-mode", choices=("corrected", "nomoco"), default="corrected")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "article/figures/comparison")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "validation_studies/cpp_pytorch_comparison/figures/generated")
     args = parser.parse_args(argv)
     torch.set_num_threads(1)
     plt.rcParams.update({"svg.fonttype": "none", "font.size": 11})

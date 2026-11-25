@@ -1,12 +1,12 @@
-# Performance comparison with v2.0
+# GPU optimization benchmarks against GRICS-torch 2.0
 
-The performance optimizations benchmarked here preserve the algorithm, regularisation, damping, iteration counts, early stopping, and CG stopping rules used in the GRICS-torch 2.0 reference; they change how the operators and the solver use the GPU. Everything below was measured on a dedicated NVIDIA A100 PCIe 40 GB; the raw outputs are in `benchmarks/results/a100_pcie_40gb_2026-11-13/` and the procedure in `benchmarks/README.md`.
+The performance optimizations benchmarked here preserve the algorithm, regularisation, damping, iteration counts, early stopping, and CG stopping rules used in the GRICS-torch 2.0 reference; they change how the operators and the solver use the GPU. Everything below was measured on a dedicated NVIDIA A100 PCIe 40 GB; the raw outputs are in `validation_studies/gpu_optimization_benchmarks/results/a100_pcie_40gb_2026-11-13/` and the procedure in `validation_studies/gpu_optimization_benchmarks/README.md`.
 
-![pipeline and optimisations](figures/performance/figure_schematic.png)
+![pipeline and optimisations](gpu_optimization_benchmarks/figures/figure_schematic.png)
 
 ## 1. What changed
 
-The numbers in this document were measured with the performance changes alone. The solver corrections described in [corrections](fixes.md) came later and are enabled by default. Setting `jacobian_rotation_factor = false`, `motion_step_real = false` and `warm_start_rescale = false` disables those three corrections; other solver, reader, and initialization changes remain active. The identity figures below describe the historical benchmark runs with these settings.
+The numbers in this document were measured with the performance changes alone. The solver corrections described in [corrections](../docs/fixes.md) came later and are enabled by default. Setting `jacobian_rotation_factor = false`, `motion_step_real = false` and `warm_start_rescale = false` disables those three corrections; other solver, reader, and initialization changes remain active. The identity figures below describe the historical benchmark runs with these settings.
 
 **Batched operators, same arithmetic.** Relative differences to GRICS-torch 2.0 4e-16, i.e. summation order only.
 
@@ -20,12 +20,12 @@ The numbers in this document were measured with the performance changes alone. T
 
 - `compute_precision = "single"` (default `"double"`): warps, coil maps and FFTs run in complex64 inside the operators; inputs are cast on entry and outputs returned in complex128, so the CG solver, the dot products and the motion parameters stay in double. Relative difference of operator outputs: 3e-7; of reconstructed images: 2e-7 to 1e-6.
 - `warp_backend = "gather"` (default `"sparse"`): each state stores its neighbour indices `[K, N]` and weights `[K, N]` (K = 4 in 2D, 8 in 3D) and applies the warp as a gather and its adjoint as an `index_add_`. Same arithmetic as the sparse product (4e-16), no transposed copies, stored operators 2.7x smaller than the complex128 COO matrices (2048 -> 768 MiB for 8 states at 128x128x64; 8064 -> 3024 MiB at 192x192x56 with 16 states). Code that asks for a matrix gets a lazily materialised sparse view.
-- In double precision the gather backend is slower than the pre-sorted sparse default in 3D (its adjoint is an `index_add_` on complex128 values: 4.85 versus 4.49 s on the 3D rigid validation case on the A100, 3.05 versus 2.69 s on an RTX PRO 6000), so it is meant to be combined with `compute_precision = "single"`, where it wins (timings of both GPUs in `benchmarks/results/*/recon_timings`).
+- In double precision the gather backend is slower than the pre-sorted sparse default in 3D (its adjoint is an `index_add_` on complex128 values: 4.85 versus 4.49 s on the 3D rigid validation case on the A100, 3.05 versus 2.69 s on an RTX PRO 6000), so it is meant to be combined with `compute_precision = "single"`, where it wins (timings of both GPUs in `validation_studies/gpu_optimization_benchmarks/results/*/recon_timings`).
 - With the gather backend, all motion states of a call go through one gather, one batched FFT over states x coils, one mask multiply and one `index_add_`, chunked under a memory budget (`GRICS_STATE_BATCH_BUDGET_GB`, default 2). It pays off on launch-bound problems and costs memory traffic on large ones, so it is on by default only when a state has at most 2^19 voxels (`GRICS_STATE_BATCH=auto|1|0`, `GRICS_STATE_BATCH_MAX_VOXELS`).
 
-**Asynchronous CG.** The performance change grouped the scalars of one iteration (denominators, residual norms, stagnation test) into a single device-to-host transfer instead of seven synchronisations, preserving the iteration, stopping rules, and candidate selection used in that benchmark. Those historical runs reported bit-identical reconstructions (relative difference 0.0 on the four synthetic validation cases). The current solver also includes the corrections described in [corrections](fixes.md).
+**Asynchronous CG.** The performance change grouped the scalars of one iteration (denominators, residual norms, stagnation test) into a single device-to-host transfer instead of seven synchronisations, preserving the iteration, stopping rules, and candidate selection used in that benchmark. Those historical runs reported bit-identical reconstructions (relative difference 0.0 on the four synthetic validation cases). The current solver also includes the corrections described in [corrections](../docs/fixes.md).
 
-![one picture per optimisation](figures/performance/figure_explainer.png)
+![one picture per optimisation](gpu_optimization_benchmarks/figures/figure_explainer.png)
 
 ## 2. Operator calls (A100, ms per call, mean of 5 after warm-up)
 
@@ -81,11 +81,11 @@ Shipped synthetic validation settings (Shepp-Logan 128x128 or 128x128x64, simula
 
 Zenodo breast slice with the paper's `nonrigid_2d.toml` (4 motion states), three repeats of `run()`: GRICS-torch 2.0 21.5 / 20.8 / 20.8 s (peak 0.7 GiB); batched double 4.1 / 3.4 / 3.3 s (1.1 GiB); single + gather 3.2 / 2.4 / 2.4 s (1.4 GiB), i.e. 6.1x and 8.7x on the steady-state repeats.
 
-![image fidelity and timings](figures/performance/figure_main_a100.png)
+![image fidelity and timings](gpu_optimization_benchmarks/figures/figure_main_a100.png)
 
 ## 4. Where the remaining time goes (roofline model)
 
-`benchmarks/roofline.py` measures the device ceilings (A100: copy bandwidth 1392 GB/s, matmul 18.2 TFLOPS FP32 and 15.1 TFLOPS FP64, 3D FFT of 4 x 128x128x64 complex64 in 0.21 ms) and counts the bytes each operator call must move in the batched formulation (one read and one write per elementwise pass, gather traffic for the warp, one read and one write per FFT). The ratio of that bandwidth-bound time to the measured time is the fraction of the roofline reached:
+`validation_studies/gpu_optimization_benchmarks/roofline.py` measures the device ceilings (A100: copy bandwidth 1392 GB/s, matmul 18.2 TFLOPS FP32 and 15.1 TFLOPS FP64, 3D FFT of 4 x 128x128x64 complex64 in 0.21 ms) and counts the bytes each operator call must move in the batched formulation (one read and one write per elementwise pass, gather traffic for the warp, one read and one write per FFT). The ratio of that bandwidth-bound time to the measured time is the fraction of the roofline reached:
 
 | problem | operator | GRICS-torch 2.0 | batched, double | batched, single + gather |
 |---|---|---|---|---|
@@ -97,11 +97,23 @@ Zenodo breast slice with the paper's `nonrigid_2d.toml` (4 motion states), three
 
 Small 2D problems are launch-bound: a 128x128 operator call moves less than 0.2 ms worth of data, so the time is kernel launches and host synchronisations, which is what the batching and the asynchronous CG remove. At the paper's 3D size class the batched code reaches about a quarter of the bandwidth bound; the Jacobian operators are the next target.
 
-A second run of `benchmarks/run_all.sh` on an idle NVIDIA RTX PRO 6000 Blackwell (fiber, 2026-11-13) is in `benchmarks/results/rtx_pro_6000_blackwell_2026-11-13/summary.md`: same identities (3.6e-16 double, 2.9e-7 single), default settings 2.0 to 4.1x faster than GRICS-torch 2.0, single + gather 3.1 to 4.7x, Zenodo slice with the paper's config 11.8 -> 2.4 -> 1.8 s.
+A second run of `validation_studies/gpu_optimization_benchmarks/run_all.sh` on an idle NVIDIA RTX PRO 6000 Blackwell (fiber, 2026-11-13) is in `validation_studies/gpu_optimization_benchmarks/results/rtx_pro_6000_blackwell_2026-11-13/summary.md`: same identities (3.6e-16 double, 2.9e-7 single), default settings 2.0 to 4.1x faster than GRICS-torch 2.0, single + gather 3.1 to 4.7x, Zenodo slice with the paper's config 11.8 -> 2.4 -> 1.8 s.
 
 ## 5. Caveats
 
 - All timings are on one dedicated A100 PCIe 40 GB; on a shared GPU the GRICS-torch 2.0 code, with its seven host synchronisations per CG iteration, slows down more than the batched one, so speed-ups measured there are larger and not comparable.
 - The simulation path keeps its own complex128 sparse operators; only the reconstruction operators changed.
 - The default settings cache a transposed sparse operator per motion state, so their stored operators take twice the memory of GRICS-torch 2.0's: at 256×208×160 with 8 states and 4 coils this exceeds 40 GB on an A100, where the gather backend (2.7x smaller than GRICS-torch 2.0, no transposed copy) runs.
-- `compute_precision = "single"` is an opt-in: the images differ from the double-precision ones by 2e-7 to 1e-6 in relative norm, far below the 1e-4 acceptance threshold used in `benchmarks/compare_recons.py`, but not zero.
+- `compute_precision = "single"` is an opt-in: the images differ from the double-precision ones by 2e-7 to 1e-6 in relative norm, far below the 1e-4 acceptance threshold used in `validation_studies/gpu_optimization_benchmarks/compare_recons.py`, but not zero.
+
+## 6. Regenerating the figures
+
+Run these commands from the repository root. The schematic and explainer require no benchmark data; the image-fidelity figure requires the saved reconstruction tensors in `validation_studies/gpu_optimization_benchmarks/out/` produced by the benchmark runners.
+
+```bash
+python validation_studies/gpu_optimization_benchmarks/fig_schematic.py validation_studies/gpu_optimization_benchmarks/figures/figure_schematic
+python validation_studies/gpu_optimization_benchmarks/fig_explainer.py validation_studies/gpu_optimization_benchmarks/figures/figure_explainer
+python validation_studies/gpu_optimization_benchmarks/fig_main.py validation_studies/gpu_optimization_benchmarks/out recon_reference recon_batched_single validation_studies/gpu_optimization_benchmarks/out/ops_reference.pt validation_studies/gpu_optimization_benchmarks/out/ops_batched_single_gather.pt validation_studies/gpu_optimization_benchmarks/figures/figure_main_a100 "one NVIDIA A100 PCIe 40 GB"
+```
+
+Each script writes PNG and PDF versions. Benchmark measurements and reconstruction runners remain in `validation_studies/gpu_optimization_benchmarks/`.

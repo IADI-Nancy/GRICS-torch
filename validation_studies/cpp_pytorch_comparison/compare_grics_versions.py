@@ -2,7 +2,7 @@
 """Compare saved GRICS++, GRICS-torch 2.0 and current sharpness and calculation times.
 
 Run from the repository root:
-    python article/scripts/compare_grics_versions.py --v3-2d /path/to/current/2d/measurements.json --v3-3d /path/to/current/3d/measurements.json
+    python validation_studies/cpp_pytorch_comparison/compare_grics_versions.py --v3-2d /path/to/current/2d/measurements.json --v3-3d /path/to/current/3d/measurements.json
 
 The --v2-2d and --v2-3d options select historical measurements; --v3-2d
 and --v3-3d select current measurements. Defaults retain the original article
@@ -29,10 +29,10 @@ import torch
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from article.scripts.compare_grics_reconstructions import (
+from validation_studies.cpp_pytorch_comparison.compare_grics_reconstructions import (
     DATABASE, DATASET, read_measurements, read_plusplus_image, reconstruction_seconds, slice_folders,
 )
-from article.scripts.sharpness_index import sharpness_index
+from validation_studies.cpp_pytorch_comparison.sharpness_index import sharpness_index
 
 IMPLEMENTATIONS = ("plusplus", "v2", "v3")
 LABELS = ("GRICS++", "GRICS-torch:2.0", "GIRCS-torch:current")
@@ -137,7 +137,7 @@ def main(argv=None):
         parser.add_argument(f"--plusplus-{dimension}", type=Path, default=DATABASE / f"GRICS-BELT{suffix}")
         parser.add_argument(f"--plusplus-nomoco-{dimension}", type=Path, default=DATABASE / f"GRICS-BELT{suffix}_nomoco")
     parser.add_argument("--time-mode", choices=("corrected", "nomoco"), default="corrected", help="Mode used for timing; sharpness always uses corrected images.")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs/article/comparison_three_versions")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs/validation_studies/comparison_three_versions")
     args = parser.parse_args(argv)
     torch.set_num_threads(1)
     plt.rcParams.update({"svg.fonttype": "none", "font.size": 11})

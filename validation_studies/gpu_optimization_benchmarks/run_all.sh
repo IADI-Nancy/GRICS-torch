@@ -1,11 +1,11 @@
 #!/bin/bash
 # Reference-versus-batched comparison on one GPU: operator outputs, full reconstructions, roofline model, paper-size 2D slice.
-# Usage: benchmarks/run_all.sh <reference_repo_root> [this_repo_root]
+# Usage: validation_studies/gpu_optimization_benchmarks/run_all.sh <reference_repo_root> [this_repo_root]
 #   reference_repo_root: a checkout of GRICS-torch 2.0, e.g. `git clone <GRICS-torch 2.0> ../GRICS-torch-2.0`
-# Environment: GRICS_BENCH_BASE (output dir, default benchmarks/out), GRICS_DEMO_H5 (Zenodo demo file, default benchmarks/data/demo_breast_data.h5),
+# Environment: GRICS_BENCH_BASE (output dir, default validation_studies/gpu_optimization_benchmarks/out), GRICS_DEMO_H5 (Zenodo demo file, default validation_studies/gpu_optimization_benchmarks/data/demo_breast_data.h5),
 #              GRICS_BENCH_PY (python, default: python on PATH), PYTHONPATH must contain the wrapperHDF5 package (h5Saec).
 set -u
-HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/.." && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../.." && pwd)
 REF=$(cd "$1" && pwd); FAST=$(cd "${2:-$REPO}" && pwd)
 export GRICS_BENCH_BASE=${GRICS_BENCH_BASE:-$HERE/out}; B=$GRICS_BENCH_BASE
 export GRICS_DEMO_H5=${GRICS_DEMO_H5:-$HERE/data/demo_breast_data.h5}

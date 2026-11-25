@@ -1,6 +1,6 @@
 # Corrections relative to GRICS-torch 2.0
 
-This document describes corrections and remaining limitations in the current implementation relative to GRICS-torch 2.0. Focused unit tests cover selected corrections. GPU performance changes are described separately in [performance](performance.md).
+This document describes corrections and remaining limitations in the current implementation relative to GRICS-torch 2.0. Focused unit tests cover selected corrections. GPU performance changes are described separately in [performance](../validation_studies/gpu_optimization_benchmarks.md).
 
 ## Data reading and preparation
 

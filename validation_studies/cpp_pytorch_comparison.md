@@ -8,15 +8,15 @@ Two free-breathing supine breast MRI datasets with respiratory belt signals [3] 
 
 ## Results and Discussion
 
-![Reconstruction quality and computation time for GRICS++, GRICS-torch 2.0, and GRICS-torch 3.0](figures/comparison_three_versions.svg)
+![Reconstruction quality and computation time for GRICS++, GRICS-torch 2.0, and GRICS-torch 3.0](cpp_pytorch_comparison/figures/comparison_three_versions.svg)
 
 **Figure 1.** Comparison of GRICS++, `GRICS-torch` 2.0, and the current version of `GRICS-torch` (commit `18a52a304bae76b1070e17abd36a92488d097bf7`) in terms of reconstruction sharpness and computation time for 20 2D and 12 3D acquisitions. The upper panels show the mean slice sharpness index; the lower panels show acquisition compute time for 2D and volume solver time for 3D. Gray lines connect measurements from the same acquisition.
 
-The quantitative results of these comparisons are presented in [Figure 1](#quantitative-comparison), and examples of motion-corrected reconstruction are provided in [Figure 2](#reconstruction-examples). The corrected images were almost identical for the 2D case (SSIM 0.98, NRMSE 0.05) and somewhat different for the 3D case (SSIM 0.92, NRMSE 0.15). However, the sharpness index in [Figure 1](#quantitative-comparison) and the visual evaluation in [Figure 2](#reconstruction-examples) supported the non-inferiority of `GRICS-torch` reconstructions. These discrepancies can be explained by minor implementation differences.
+The quantitative results of these comparisons are presented in [Figure 1](cpp_pytorch_comparison/figures/comparison_three_versions.svg), and examples of motion-corrected reconstruction are provided in [Figure 2](cpp_pytorch_comparison/figures/examples.png). The corrected images were almost identical for the 2D case (SSIM 0.98, NRMSE 0.05) and somewhat different for the 3D case (SSIM 0.92, NRMSE 0.15). However, the sharpness index in [Figure 1](cpp_pytorch_comparison/figures/comparison_three_versions.svg) and the visual evaluation in [Figure 2](cpp_pytorch_comparison/figures/examples.png) supported the non-inferiority of `GRICS-torch` reconstructions. These discrepancies can be explained by minor implementation differences.
 
-Finally, the newest PyTorch implementation outperformed the GRICS++ in terms of computational time for both 2D and 3D cases, and was substantially faster than GRICS-torch:2.0, as shown in [Figure 1](#quantitative-comparison).
+Finally, the newest PyTorch implementation outperformed the GRICS++ in terms of computational time for both 2D and 3D cases, and was substantially faster than GRICS-torch:2.0, as shown in [Figure 1](cpp_pytorch_comparison/figures/comparison_three_versions.svg).
 
-![Uncorrected images and reconstructions using GRICS++ and GRICS-torch](figures/examples.png)
+![Uncorrected images and reconstructions using GRICS++ and GRICS-torch](cpp_pytorch_comparison/figures/examples.png)
 
 **Figure 2.** Examples of reconstruction using the GRICS++ and `GRICS-torch` algorithms compared with the uncorrected images. The contrast is deliberately exaggerated to highlight the artifacts. The dominant artifact type in the 2D images is blurring, while in the 3D images it is ghosting. Visible ghosting artifacts are indicated by the red arrows. While both versions correct motion artifacts, `GRICS-torch` performed better in this example.
 

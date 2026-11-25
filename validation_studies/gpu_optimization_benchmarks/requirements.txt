@@ -1,4 +1,4 @@
-# Pinned to the environment used for the numbers in docs/performance.md (Python 3.11.13, CUDA 12.8 driver 580).
+# Pinned to the environment used for the numbers in validation_studies/gpu_optimization_benchmarks.md (Python 3.11.13, CUDA 12.8 driver 580).
 torch==2.8.0
 numpy==2.2.6
 scipy==1.17.1
