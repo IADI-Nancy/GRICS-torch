@@ -82,7 +82,7 @@ _SHEPP_KEYS = {'data_dimension', 'N_SheppLogan', 'Ncoils_SheppLogan', 'Nz_SheppL
                'SheppLoganFillFraction'}
 _IMAGE_KEYS = {'data_dimension', 'Ncoils_input', 'image_resize_factor'}
 _RIGID_GEOMETRY_KEYS = {'FoVxy_mm', 'FoVz_mm'}
-_MOTION_KEYS = {'motion_simulation_config_dimension', 'simulated_motion_type'} | _RIGID_GEOMETRY_KEYS | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
+_MOTION_KEYS = {'motion_simulation_config_dimension', 'simulated_motion_type', 'simulation_interpolation'} | _RIGID_GEOMETRY_KEYS | _RIGID_MOTION_KEYS | _NONRIGID_MOTION_KEYS
 _FILE_SCHEMAS = {
     'general': {'paths': _PATH_KEYS, 'runtime': _RUNTIME_KEYS,
                 'kspace_normalization': _NORMALIZATION_KEYS},
@@ -359,7 +359,7 @@ def _validate_motion(cfg):
     if mode == 'as-it-is':
         if cfg['data_type'] not in REAL_DATA_TYPES or cfg['kspace_sampling_type'] != 'from-data':
             raise ValueError('as-it-is motion requires real data with from-data sampling; reordered data requires simulated motion.')
-        if supplied or 'motion_simulation_config_dimension' in cfg:
+        if supplied or cfg.keys() & {'motion_simulation_config_dimension', 'simulation_interpolation'}:
             raise ValueError('as-it-is motion cannot have synthetic motion parameters.')
         return
     _require(cfg, {'motion_simulation_config_dimension'}, 'motion')
@@ -367,6 +367,10 @@ def _validate_motion(cfg):
     if cfg['motion_simulation_config_dimension'] != cfg['data_dimension']:
         raise ValueError('motion_simulation_config_dimension must match data_dimension.')
     rigid = mode.startswith('rigid-')
+    _require(cfg, {'simulation_interpolation'}, 'motion')
+    _choice(cfg['simulation_interpolation'], 'simulation_interpolation', {'linear', 'fourier'})
+    if not rigid and cfg['simulation_interpolation'] == 'fourier':
+        raise ValueError('simulation_interpolation = "fourier" is available for rigid motion only.')
     if rigid:
         required = {'rigid_motion_amplitude_scale'}
         if cfg['data_dimension'] == '2D':

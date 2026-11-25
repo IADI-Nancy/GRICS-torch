@@ -47,7 +47,7 @@ $$
 R(\phi)=\begin{bmatrix}\cos\phi & -\sin\phi\\ \sin\phi & \cos\phi\end{bmatrix}.
 $$
 
-In 3D, the implementation composes axis rotations in the order $R=R_z(r_z)R_y(r_y)R_x(r_x)$. The solver estimates direct updates to the state parameters. Translations (voxels) and rotations (radians) have different units, so by default (`rigid_motion_damping = "diagonal"`) the increment is penalized with $\mu\lVert D^{1/2}\delta\alpha\rVert_2^2$, $D=\mathrm{diag}(\mathrm{Re}(J^HJ))$, which damps every parameter by the same fraction of its Gauss–Newton step; `"identity"` uses $D=I$, $\mu\lVert\delta\alpha\rVert_2^2$. See [rigid damping](implementation/joint_reconstructor.md#rigid-damping).
+In 3D, the implementation composes axis rotations in the order $R=R_z(r_z)R_y(r_y)R_x(r_x)$. The solver estimates direct updates to the state parameters. Translations (voxels) and rotations (radians) have different units, so by default (`rigid_motion_damping = "diagonal"`) the increment is penalized with $\mu\lVert D^{1/2}\delta\alpha\rVert_2^2$, $D=\mathrm{diag}(\mathrm{Re}(J^HJ))$, which normalizes damping relative to each parameter's diagonal curvature. An uncoupled parameter moves $1/(1+\mu)$ of its undamped Gauss–Newton step; coupled parameters need not move by the same fraction. `"identity"` uses $D=I$, $\mu\lVert\delta\alpha\rVert_2^2$. See [rigid damping](implementation/joint_reconstructor.md#rigid-damping).
 
 ### Non-rigid motion
 

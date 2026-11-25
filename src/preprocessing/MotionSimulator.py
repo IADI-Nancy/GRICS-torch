@@ -66,7 +66,7 @@ class MotionSimulator:
         if motion_type is None:
             motion_type = self.params.simulated_motion_type.split("-", 1)[0]
 
-        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz)
+        self.MotionOperator = MotionOperator(self.Nx, self.Ny, alpha, motion_type, centers=centers, motion_signal=motion_signal, Nz=self.Nz, interpolation=self.params.simulation_interpolation)
         encoding = EncodingOperator(
             self.smaps, self.TotalKspaceSamples, self.sampling_idx,
             self.params.Nex, self.MotionOperator,

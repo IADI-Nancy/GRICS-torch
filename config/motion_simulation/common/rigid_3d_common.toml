@@ -1,4 +1,6 @@
 [motion]
+# Simulation warp: "linear" (trilinear interpolation) or "fourier" (FFT phase ramps and shears); independent of reconstruction rigid_interpolation.
+simulation_interpolation = "linear"
 # In-plane field of view for translation and center conversion; use any finite value > 0 mm.
 FoVxy_mm = 220.0
 # Through-plane field of view for z translation and center conversion; use any finite value > 0 mm.

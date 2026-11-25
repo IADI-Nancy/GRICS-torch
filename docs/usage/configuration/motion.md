@@ -2,10 +2,14 @@
 
 ## Motion simulation
 
-Configured with one variable:
+Configured with these variables:
+
 - `simulated_motion_type`: `"rigid-per-readout"`, `"rigid-per-shot"`, `"non-rigid-per-readout"`, `"non-rigid-per-shot"`, or `"as-it-is"`.
+- `simulation_interpolation`: required for synthetic motion; `"linear"` uses bilinear/trilinear interpolation and `"fourier"` uses FFT phase ramps and shears for rigid motion only. Omit it for `"as-it-is"`. The shared rigid simulation configurations select `"fourier"`; non-rigid configurations select `"linear"`.
 
 `simulated_motion_type` is configured in `config/motion_simulation/*.toml`. Reconstruction independently uses `reconstruction_motion_type` (`"rigid"` or `"non-rigid"`) from `config/reconstruction/*.toml`. Implemented in `src/preprocessing/MotionSimulator.py`.
+
+`simulation_interpolation` is configured in the shared files under `config/motion_simulation/common/` or supplied through `load_config(overrides=...)`; including simulation files cannot redefine shared settings. It is independent of reconstruction `rigid_interpolation` and `warp_backend`: changing those reconstruction settings does not change the simulated acquisition. Choose `simulation_interpolation` explicitly when comparing reconstruction against data generated with a particular warp model; simulation and reconstruction may use different interpolation methods. See [rigid reconstruction settings](rigid_reconstruction.md) for the reconstruction choices and [Fourier rigid warps](../../implementation/motion_operator.md#fourier-rigid-warps) for interpolation and boundary behavior. Changing the simulation operator changes the generated acquisition, so similarity scores from different simulation operators do not compare reconstructions of the same data.
 
 Motion simulation starts on the configured runtime device, which is the GPU by default. If CUDA memory is insufficient, preparation prints an explicit message, clears unused CUDA memory, and restarts the complete simulation on the CPU. Other runtime errors are not treated as memory fallbacks.
 

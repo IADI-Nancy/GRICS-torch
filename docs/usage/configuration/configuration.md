@@ -7,7 +7,7 @@ Internal ownership and merge order are documented in the [configuration architec
 ## Required
 
 - `data_type`: selects the input source and data format; see [input data types](input_formats.md)
-- `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; pass as [`reconstruction_config`](../../implementation/joint_reconstructor.md)
+- `config/reconstruction/*.toml`: reconstruction model, multiresolution GN iterations, regularization, and CG solver settings; pass as [`reconstruction_config`](../../implementation/joint_reconstructor.md). See [rigid reconstruction](rigid_reconstruction.md) for interpolation and motion damping settings.
 
 ## Required only under certain conditions
 
