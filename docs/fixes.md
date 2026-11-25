@@ -20,6 +20,8 @@ This document describes corrections and remaining limitations in the current imp
 
 **Real motion increments** (`JointReconstructor._solve_motion`). With `motion_step_real = true`, the data term solves `Re(J^H J) d = Re(J^H r)`, where `J` is the motion Jacobian, `r` is the k-space residual, and `d` is the real motion increment. This generally differs from solving `J^H J d_complex = J^H r` and then setting `d = Re(d_complex)`. Regularization is applied separately by the motion solver.
 
+**Rigid motion damping** (`JointReconstructor._solve_motion`). With `rigid_motion_damping = "diagonal"`, the rigid motion step solves `(Re(J^H J) + lambda_m D) d = Re(J^H r)` with `D = diag(Re(J^H J))`, so translations and rotations receive the same relative damping regardless of their units and of the resolution level. With `"identity"`, as in GRICS-torch 2.0, `D = I` and the damping weight is `lambda_m` times the regularization scale; one weight then applies to translations in voxels and to rotations in radians. See [rigid damping](implementation/joint_reconstructor.md#rigid-damping).
+
 **Image scaling between resolution levels** (`upsample_data`). With `warm_start_rescale = true`, an interpolated image is multiplied by `sqrt(n_previous / n_next)` to account for the intensity scaling introduced by cropping k-space with a unitary FFT.
 
 **CG candidate selection and breakdown guards** (`ConjugateGradientSolver`). CG verifies candidate residuals directly and, when the initial guess would otherwise be selected, also checks the iterate with the smallest recorded recursive residual. It prints a notice if no candidate improves on the initial guess. For a nonzero right-hand side, the solve is normalized to `||b|| = 1` and rescaled on return; breakdown checks use relative scales.
@@ -28,7 +30,7 @@ This document describes corrections and remaining limitations in the current imp
 
 **External initial-motion scaling** (`initialization.py`). Initial translations and non-rigid displacements are supplied in full-resolution voxels and rescaled to the coarsest reconstruction grid. Rigid angles retain their angular units.
 
-The three reconstruction settings `jacobian_rotation_factor`, `motion_step_real`, and `warm_start_rescale` are enabled in the shipped configurations. `GRICS_COMPAT=1` in the benchmark scripts disables these three settings only. Other solver, reader, and initialization changes remain active. The validation batches below assess reconstruction quality against synthetic ground truth.
+The three reconstruction settings `jacobian_rotation_factor`, `motion_step_real`, and `warm_start_rescale` are enabled in the shipped configurations, and the rigid configurations set `rigid_motion_damping = "diagonal"`. `GRICS_COMPAT=1` in the benchmark scripts disables these three settings and, for rigid cases, sets `rigid_motion_damping = "identity"`. Other solver, reader, and initialization changes remain active. The validation batches below assess reconstruction quality against synthetic ground truth.
 
 ## Recorded validation results
 
@@ -38,14 +40,14 @@ SSIM and NRMSE in the table are medians across the 20 simulations. The improveme
 
 | Case | Median SSIM ≥ minimum | Median NRMSE ≤ maximum | Median SSIM improvement ≥ minimum | Median NRMSE reduction ≥ minimum | Recorded verdict |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 2D rigid | 0.92108 ≥ 0.91120 | 0.06752 ≤ 0.07772 | 9.50% ≥ 3.47% | 52.92% ≥ 43.02% | PASSED |
+| 2D rigid | 0.94077 ≥ 0.91120 | 0.05763 ≤ 0.07772 | 13.13% ≥ 3.47% | 61.33% ≥ 43.02% | PASSED |
 | 2D non-rigid | 0.90120 ≥ 0.89384 | 0.06514 ≤ 0.06946 | 6.78% ≥ 5.56% | 48.87% ≥ 43.84% | PASSED |
-| 3D rigid | 0.95183 ≥ 0.94125 | 0.18703 ≤ 0.21001 | 16.54% ≥ 11.55% | 55.22% ≥ 39.27% | PASSED |
+| 3D rigid | 0.95626 ≥ 0.94125 | 0.18685 ≤ 0.21001 | 16.90% ≥ 11.55% | 53.99% ≥ 39.27% | PASSED |
 | 3D non-rigid | 0.98373 ≥ 0.97484 | 0.10816 ≤ 0.13601 | 1.49% ≥ 1.11% | 34.78% ≥ 28.05% | PASSED |
 
 Both paired, two-sided Wilcoxon p-values are `1.9073486328125e-06` in every batch, below the required `0.025`. All four median comparisons and both p-value checks pass for each case. Batch size, settings, and metric space also match the reference requirements. Values above are rounded for display; acceptance uses full precision.
 
-These batches assess the combined reconstruction pipeline under the four synthetic validation settings. Focused unit tests check selected corrections, including the rigid Jacobian, real motion operator, resolution scaling, CG behavior, and sampling handling.
+These batches assess the combined reconstruction pipeline under the four synthetic validation settings. Focused unit tests check selected corrections, including the rigid Jacobian, rigid damping, real motion operator, resolution scaling, CG behavior, and sampling handling.
 
 ## Remaining limitations
 

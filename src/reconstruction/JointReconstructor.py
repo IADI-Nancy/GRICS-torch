@@ -16,7 +16,8 @@ from src.reconstruction.joint_reconstructor_utils.initialization import (
     apply_external_initializer, initialize_zero_image_and_motion,
 )
 from src.reconstruction.joint_reconstructor_utils.operators import (
-    RealNormalOperator, build_motion_operator, build_encoding_operator, build_motion_perturbation_simulator,
+    RealNormalOperator, DiagonallyScaledOperator, rigid_normal_diagonal, build_motion_operator, build_encoding_operator,
+    build_motion_perturbation_simulator,
 )
 from src.reconstruction.joint_reconstructor_utils.state import (
     remove_temporary_operators, extract_image_and_motion_for_next_level,
@@ -243,6 +244,18 @@ class JointReconstructor:
             return Data_res["MotionModel"].numel()
         return self.Nalpha * self.Nphysio * Data_res["Nx"] * Data_res["Ny"] * int(Data_res.get("Nz", 1))
 
+    def _rigid_parameter_scale(self, J, Data_res, dtype):
+        """S = diag(Re(J^H J))^(-1/2) over the flattened [Nalpha, Nm] rigid parameters."""
+        diagonal = rigid_normal_diagonal(J, self.Nalpha, Data_res["MotionModel"].shape[1], dtype)
+        # A parameter whose curvature is below 1e-12 of the largest of its kind (a state without k-space
+        # data, a constant image) is not determined by the data; its scale is 0, so it is not updated.
+        determined = diagonal > 1e-12 * diagonal.amax(dim=1, keepdim=True)
+        if not bool(determined.all()):
+            print(f"[motion] {int((~determined).sum())} rigid parameter(s) without curvature in J^H J (state without "
+                  "k-space data or constant image) are not updated in this step.", flush=True)
+        scale = torch.where(determined, diagonal.clamp_min(torch.finfo(torch.float64).tiny).rsqrt(), torch.zeros_like(diagonal))
+        return scale.flatten()
+
     def _build_pseudo_gauss_seidel_motion_preconditioner(self, jacobian, solver, data):
         from src.reconstruction.joint_reconstructor_utils.motion_preconditioners import PseudoGaussSeidelMotionPreconditioner
 
@@ -313,16 +326,26 @@ class JointReconstructor:
                 b.flatten(), x0=x0.flatten(), max_iter=max_iterations, tol=self.params.tol_motion)
         else:
             # Rigid motion uses a magnitude penalty on the increment itself:
-            # (J^H J + mu I) dm = J^H residual.
+            # (J^H J + mu D) dm = J^H residual, with D = I ("identity") or D = diag(J^H J) ("diagonal").
+            diagonal_damping = getattr(self.params, "rigid_motion_damping", "diagonal") == "diagonal"
+            use_probes = self.params.cg_use_reg_scale_proxy and not diagonal_damping
+            if diagonal_damping:
+                # Translations (voxels) and rotations (radians) get the same relative damping at every
+                # level: solve (S J^H J S + mu I) dm' = S J^H residual with S = D^(-1/2) and mu = lambda_m,
+                # then dm = S dm'. The scaled system has a unit diagonal, so no regularization scale applies.
+                scale = self._rigid_parameter_scale(J, Data_res, b_data.dtype)
+                J = DiagonallyScaledOperator(J, scale)
+                b_data = scale * b_data
             solver = ConjugateGradientSolver(
                 J, reg_lambda=self.params.lambda_m, regularizer="Tikhonov", regularization_shape=None,
                 regularization_spatial_dims=None, verbose=self.params.verbose, stop_on_stagnation=self.params.cg_stop_on_stagnation,
                 true_residual_interval=self.params.cg_true_residual_interval, stagnation_consecutive_steps=self.params.cg_stagnation_consecutive_steps,
-                stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps, use_reg_scale_proxy=self.params.cg_use_reg_scale_proxy,
-                reg_scale_num_probes=(self.params.cg_reg_scale_num_probes
-                                  if self.params.cg_use_reg_scale_proxy else None),
+                stagnation_countdown_steps=self.params.cg_stagnation_countdown_steps, use_reg_scale_proxy=use_probes,
+                reg_scale_num_probes=self.params.cg_reg_scale_num_probes if use_probes else None,
             )
-            if self.regularization_scaling == "voxel_aware":
+            if diagonal_damping:
+                solver.reg_scale = 1.0
+            elif self.regularization_scaling == "voxel_aware":
                 spacing, sqrt_voxel_count_ratio = self._level_voxel_spacing_and_sqrt_voxel_count_ratio(Data_res)
                 solver.reg_scale = (sqrt_voxel_count_ratio * min(spacing) ** 4
                                     * torch.linalg.vector_norm(b_data.flatten()).item())
@@ -331,6 +354,8 @@ class JointReconstructor:
             mot_pert_vec = solver.cg(
                 b_data.flatten(), x0=x0.flatten(), max_iter=max_iterations,
                 tol=self.params.tol_motion)
+            if diagonal_damping:
+                mot_pert_vec = scale * mot_pert_vec
         self._last_motion_cg_info = solver.last_info
 
         # Restore either per-state rigid parameters or spatial motion fields.

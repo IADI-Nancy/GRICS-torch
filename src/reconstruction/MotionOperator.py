@@ -1,4 +1,7 @@
+import math
+
 import torch
+import torch.nn.functional as F
 
 """
 Translational and rotational motion derivatives:
@@ -15,7 +18,7 @@ Translational and rotational motion derivatives:
 
 class MotionOperator:
     def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None, Nz=1, compute_dtype=torch.complex128,
-                 warp_backend="sparse"):
+                 warp_backend="sparse", interpolation="linear"):
         # Arithmetic precision of the warps (complex64 or complex128); the geometry stays float64.
         self.compute_dtype = compute_dtype
         # "sparse": one sparse COO matrix per state (reference layout). "gather": neighbour indices and
@@ -24,6 +27,14 @@ class MotionOperator:
         if warp_backend not in ("sparse", "gather"):
             raise ValueError('warp_backend must be "sparse" or "gather".')
         self.warp_backend = warp_backend
+        # "linear": bilinear (2D) or trilinear (3D) interpolation, stored as selected by warp_backend. "fourier" (rigid
+        # only): k-space phase ramps and one-dimensional Fourier shears, exact for band-limited images; applied with
+        # FFTs, so nothing is stored per voxel and warp_backend = "gather" does not apply.
+        if interpolation not in ("linear", "fourier"):
+            raise ValueError('interpolation must be "linear" or "fourier".')
+        if interpolation == "fourier" and (motion_type != "rigid" or warp_backend != "sparse"):
+            raise ValueError('interpolation = "fourier" is available for rigid motion without warp_backend = "gather".')
+        self.interpolation = interpolation
         self._real_dtype = torch.float32 if compute_dtype == torch.complex64 else torch.float64
         self.Nx = Nx
         self.Ny = Ny
@@ -41,6 +52,8 @@ class MotionOperator:
             raise ValueError(f"Unknown motion type: {motion_type}")    
 
     def _get_sparse_operator(self, motion_state):
+        if self.interpolation == "fourier":
+            raise ValueError("Fourier warps have no sparse matrix.")
         if self.warp_backend == "gather":
             # Legacy consumers (preconditioner, simulator) get a lazily materialised sparse view.
             cache = self.__dict__.setdefault("_sparse_view_cache", {})
@@ -90,14 +103,18 @@ class MotionOperator:
         return out
 
     def warp(self, x_flat, motion_state):
-        """Apply the interpolating warp of one state to a flattened image."""
+        """Apply the warp of one state to a flattened image."""
+        if self.interpolation == "fourier":
+            return self._fourier_warp(x_flat, motion_state, adjoint=False)
         if self.warp_backend == "gather":
             idx, w = self.gatherMotionOperator[motion_state]
             return (w * x_flat[idx]).sum(dim=0)
         return self.sparseMotionOperator[motion_state] @ x_flat
 
     def warp_T(self, y_flat, motion_state):
-        """Apply the transposed (= adjoint, real weights) warp of one state."""
+        """Apply the adjoint warp of one state (the transpose for the real interpolation weights)."""
+        if self.interpolation == "fourier":
+            return self._fourier_warp(y_flat, motion_state, adjoint=True)
         if self.warp_backend == "gather":
             idx, w = self.gatherMotionOperator[motion_state]
             out = torch.zeros_like(y_flat)
@@ -154,6 +171,7 @@ class MotionOperator:
 
         self.sparseMotionOperator = []
         self.gatherMotionOperator = []
+        self.fourierMotionOperator = []
 
         for motion_state in range(alpha.shape[1]):
             tx = alpha[0, motion_state]
@@ -161,6 +179,10 @@ class MotionOperator:
             phi = alpha[2, motion_state]
             cx = centers[0, motion_state]
             cy = centers[1, motion_state]
+
+            if self.interpolation == "fourier":
+                self.fourierMotionOperator.append(self._fourier_rigid_passes_2d(tx, ty, phi, (cx, cy)))
+                continue
 
             cos_phi = torch.cos(phi)
             sin_phi = torch.sin(phi)
@@ -227,6 +249,7 @@ class MotionOperator:
         X, Y, Z = self.X, self.Y, self.Z
         self.sparseMotionOperator = []
         self.gatherMotionOperator = []
+        self.fourierMotionOperator = []
 
         n_params = int(alpha.shape[0])
         if n_params != 6:
@@ -244,6 +267,10 @@ class MotionOperator:
             cy = centers[1, motion_state]
             cz = centers[2, motion_state]
 
+            if self.interpolation == "fourier":
+                self.fourierMotionOperator.append(self._fourier_rigid_passes_3d((tx, ty, tz), (rx, ry, rz), (cx, cy, cz)))
+                continue
+
             r = MotionOperator._rotation_matrix_3d(rx, ry, rz).to(dtype=X.dtype, device=self.device)
             xc = X - cx
             yc = Y - cy
@@ -258,6 +285,99 @@ class MotionOperator:
             uz = zp - Z
 
             self._store(MotionOperator._interp_indices_weights_3d(ux, uy, uz))
+
+    # ------------------------ Fourier rigid warps (interpolation = "fourier") ----------------------------
+    # The rotation in each coordinate plane is a product of three shears, R(theta) = Sa Sb Sa with Sa shifting
+    # along axis a by -tan(theta / 2) (r_b - c_b) and Sb along axis b by sin(theta) (r_a - c_a) (Unser et al.,
+    # IEEE Trans. Image Process. 1995). A shift along one axis is a phase ramp on the FFT along that axis, so each
+    # pass is exact for band-limited images and its adjoint is the conjugate ramp. A pass (axis, other, coefficient,
+    # shift) samples the image at r + (shift + coefficient (r_other - c_other)) e_axis; applying passes 1, ..., n in
+    # this order samples it at S_1(S_2(...S_n(r))), hence the translation first and R_z before R_y before R_x.
+
+    def _fourier_rigid_passes_2d(self, tx, ty, phi, centers):
+        tx, ty, phi = (MotionOperator._real_value(v) for v in (tx, ty, phi))
+        a, b = -math.tan(phi / 2), math.sin(phi)
+        # T(r) = c + R (r - c) + t with R = Sx Sy Sx; the x translation is merged into the first x shear.
+        passes = [(1, None, 0.0, ty), (0, 1, a, tx), (1, 0, b, 0.0), (0, 1, a, 0.0)]
+        return self._fourier_rigid_operator(passes, centers)
+
+    def _fourier_rigid_passes_3d(self, translation, angles, centers):
+        tx, ty, tz = (MotionOperator._real_value(t) for t in translation)
+        (ax, bx), (ay, by), (az, bz) = ((-math.tan(r / 2), math.sin(r)) for r in (MotionOperator._real_value(r) for r in angles))
+        # T(r) = c + R_z R_y R_x (r - c) + t; the x translation is merged into the first x shear of R_z.
+        passes = [(1, None, 0.0, ty), (2, None, 0.0, tz),
+                  (0, 1, az, tx), (1, 0, bz, 0.0), (0, 1, az, 0.0),     # R_z, (x, y) plane
+                  (2, 0, ay, 0.0), (0, 2, by, 0.0), (2, 0, ay, 0.0),    # R_y, (z, x) plane
+                  (1, 2, ax, 0.0), (2, 1, bx, 0.0), (1, 2, ax, 0.0)]    # R_x, (y, z) plane
+        return self._fourier_rigid_operator(passes, centers)
+
+    def _fourier_rigid_operator(self, passes, centers):
+        """Zero padding [(left, right) per axis] and phase ramps [(axis, ramp)] of one state's passes."""
+        shape = (self.Nx, self.Ny, self.Nz) if self.Nz > 1 else (self.Nx, self.Ny)
+        c = [MotionOperator._real_value(v) for v in centers]
+        # Track the bounding box of the image content (a pass moves it by -amount along its axis) and pad every
+        # axis so that the content never wraps around; 2 more voxels on each side, FFT sizes with factors 2, 3, 5, 7.
+        lo, hi = [0.0] * len(shape), [n - 1.0 for n in shape]
+        low, high = list(lo), list(hi)
+        for axis, other, coefficient, shift in passes:
+            amounts = (shift, shift) if other is None else (shift + coefficient * (lo[other] - c[other]),
+                                                            shift + coefficient * (hi[other] - c[other]))
+            lo[axis], hi[axis] = lo[axis] - max(amounts), hi[axis] - min(amounts)
+            low[axis], high[axis] = min(low[axis], lo[axis]), max(high[axis], hi[axis])
+        pads = []
+        for n, l, h in zip(shape, low, high):
+            left, right = max(0, math.ceil(-l)) + 2, max(0, math.ceil(h - (n - 1))) + 2
+            extra = MotionOperator._fft_size(n + left + right) - (n + left + right)
+            pads.append((left + extra // 2, right + extra - extra // 2))
+        ramps = []
+        for axis, other, coefficient, shift in passes:
+            n_axis = shape[axis] + sum(pads[axis])
+            k = torch.fft.fftfreq(n_axis, device=self.device, dtype=torch.float64)
+            if other is None:
+                amount = torch.full((1,), shift, dtype=torch.float64, device=self.device)
+            else:
+                position = torch.arange(shape[other] + sum(pads[other]), device=self.device, dtype=torch.float64) - pads[other][0]
+                amount = shift + coefficient * (position - c[other])
+            ramp = torch.exp(2j * math.pi * k[:, None] * amount[None, :])     # [n_axis, n_other or 1]
+            if n_axis % 2 == 0:
+                # Nyquist bin: mean of the +-1/2 cycle ramps, so that a real image stays real.
+                ramp[n_axis // 2] = torch.cos(math.pi * amount).to(ramp.dtype)
+            view = [1] * len(shape)
+            view[axis] = n_axis
+            if other is not None:
+                view[other] = amount.numel()
+                if other < axis:
+                    ramp = ramp.t()
+            ramps.append((axis, ramp.reshape(view).to(self.compute_dtype)))
+        return pads, ramps
+
+    def _fourier_warp(self, x_flat, motion_state, adjoint):
+        """Fourier rigid warp of one state, or its adjoint (conjugate ramps in reverse order)."""
+        pads, ramps = self.fourierMotionOperator[motion_state]
+        shape = (self.Nx, self.Ny, self.Nz) if self.Nz > 1 else (self.Nx, self.Ny)
+        volume = F.pad(x_flat.reshape(shape), [p for pair in reversed(pads) for p in pair])
+        for axis, ramp in (reversed(ramps) if adjoint else ramps):
+            volume = torch.fft.ifft(torch.fft.fft(volume, dim=axis) * (ramp.conj() if adjoint else ramp), dim=axis)
+        return volume[tuple(slice(left, left + n) for (left, _), n in zip(pads, shape))].reshape(-1)
+
+    @staticmethod
+    def _real_value(value):
+        """Python float of a scalar tensor or number (its real part if complex)."""
+        if torch.is_tensor(value) and value.is_complex():
+            value = value.real
+        return float(value)
+
+    @staticmethod
+    def _fft_size(n):
+        """Smallest integer >= n whose prime factors are 2, 3, 5 and 7."""
+        while True:
+            m = n
+            for p in (2, 3, 5, 7):
+                while m % p == 0:
+                    m //= p
+            if m == 1:
+                return n
+            n += 1
 
     # ------------------------ Geometric derivatives ----------------------------
 

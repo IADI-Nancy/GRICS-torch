@@ -14,6 +14,8 @@ reconstruction_motion_type = "rigid"
 # Motion preconditioning is available only for non-rigid reconstruction.
 # Motion-Jacobian boundary rule; choose "zero" for zero boundary gradients or "one_sided" for one-sided differences.
 motion_gradient_boundary = "zero"
+# Rigid warp: "linear" (bilinear in 2D, trilinear in 3D) or "fourier" (k-space phase ramps and Fourier shears, exact for band-limited images; not with warp_backend = "gather").
+rigid_interpolation = "linear"
 
 # --- Motion-state binning ---
 # Motion-state count: positive integer or one positive count per resolution level (coarse to fine).
@@ -71,6 +73,8 @@ tol_recon = 1.0e-3
 # --- Motion update ---
 # Motion regularization weight; use any finite value >= 0.
 lambda_m = 2.0e-1
+# Rigid step damping D in (Re(J^H J) + mu D) d = Re(J^H r): "diagonal" (D = diag(Re(J^H J)), mu = lambda_m: the same relative damping for translations and rotations at every level) or "identity" (D = I, mu = lambda_m times the regularization scale, as in GRICS-torch 2.0).
+rigid_motion_damping = "diagonal"
 # Maximum CG iterations per motion update; use any positive integer.
 max_iter_motion = 128
 # Relative convergence tolerance for motion updates; use any finite value > 0.

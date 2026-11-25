@@ -22,11 +22,29 @@ $$
 (J^H J+\mu_{\mathrm{eff}}G^H G)\delta\alpha=J^H\delta k-\mu_{\mathrm{eff}}G^H G\alpha.
 $$
 
-Here $G$ is the spatial regularization gradient. Rigid motion instead uses $G^H G=I$ on the increment and omits the current-field term.
+Here $G$ is the spatial regularization gradient. Rigid motion instead penalizes the increment and omits the current-field term:
+
+$$
+(\mathrm{Re}(J^H J)+\mu_{\mathrm{eff}}D)\delta\alpha=\mathrm{Re}(J^H\delta k),
+$$
+
+with $D$ selected by `rigid_motion_damping` (see [rigid damping](#rigid-damping)).
+
+## Rigid damping
+
+The rigid parameters of a state are translations in voxels and rotations in radians, and the curvatures of $J^HJ$ for the two differ by orders of magnitude: on the Shepp–Logan validations, the diagonal of the rotation block is 240 to 270 times that of the translations at $128^2$ and about 440 times at $128\times128\times64$, and the ratio grows with the matrix size. With $D=I$ (`rigid_motion_damping="identity"`), the probe scale follows the rotation block, so $\lambda_m=0.2$ is about 0.1 times the rotation curvature but 30 (2D) to 60 (3D) times the translation curvature: a Gauss–Newton iteration then recovers about 90 % of the remaining rotation error and 3.5 % (2D) or 1.6 % (3D) of the remaining translation error.
+
+With `rigid_motion_damping="diagonal"` (default), $D=\mathrm{diag}(\mathrm{Re}(J^HJ))$, the damping of Marquardt [1], and $\mu_{\mathrm{eff}}=\lambda_m$. A parameter that is not coupled to the others then moves $1/(1+\lambda_m)$ of its Gauss–Newton step, whatever its unit and the resolution level. The parameters of a state change only that state's k-space lines, so $J^HJ$ is block diagonal over the states, and the probe equal to one on parameter $j$ of every state returns column $j$ of every block: $D$ costs $N_\alpha$ products of the motion normal operator per Gauss–Newton iteration (3 in 2D, 6 in 3D). CG solves the scaled system
+
+$$
+(S\,\mathrm{Re}(J^HJ)\,S+\lambda_m I)\delta\alpha'=S\,\mathrm{Re}(J^H\delta k),\qquad \delta\alpha=S\delta\alpha',\qquad S=D^{-1/2},
+$$
+
+which has a unit diagonal; neither probe estimation nor voxel-aware scaling applies to it. A parameter whose curvature is below $10^{-12}$ of the largest of its kind (a state without k-space data, a constant image) is not updated, with a message.
 
 ## Regularization normalization
 
-The effective weights are $\lambda_{\mathrm{eff}}=\lambda_r s_{\mathrm{image}}$ and $\mu_{\mathrm{eff}}=\lambda_m s_{\mathrm{motion}}$. `regularization_scaling` selects `direct` or `voxel_aware`; `cg_use_reg_scale_proxy` controls probe estimation. Weights are not interchangeable between modes, image parameterizations, or data scales.
+The effective weights are $\lambda_{\mathrm{eff}}=\lambda_r s_{\mathrm{image}}$ and $\mu_{\mathrm{eff}}=\lambda_m s_{\mathrm{motion}}$, except for the rigid motion step with `rigid_motion_damping="diagonal"` ([rigid damping](#rigid-damping)). `regularization_scaling` selects `direct` or `voxel_aware`; `cg_use_reg_scale_proxy` controls probe estimation. Weights are not interchangeable between modes, image parameterizations, or data scales.
 
 ### Direct weights
 
@@ -71,3 +89,7 @@ Probe scaling therefore measures $(EC)^H(EC)$ against the identity, while voxel-
 ## Outer stopping
 
 `gn_early_stopping=true` enables Gauss–Newton early stopping by comparing $\|\delta k\|_2/(\|k\|_2+10^{-12})$ within a resolution level. This residual uses the updated image and motion from before that iteration's motion update. On an increase, the saved image/motion pair that produced the best accepted residual is restored. `update_motion_on_final_iteration=false` omits the final motion update so the output image matches its motion model. These checks are separate from [CG stopping](conjugate_gradient_solver.md#stopping-and-returned-solution). Restoring an accepted pair prevents a worsening iteration from becoming the level output.
+
+## References
+
+[1] Marquardt, D. W. (1963). An algorithm for least-squares estimation of nonlinear parameters. *Journal of the Society for Industrial and Applied Mathematics*, **11**(2), 431–441. [doi:10.1137/0111030](https://doi.org/10.1137/0111030).
