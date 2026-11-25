@@ -73,7 +73,7 @@ _RECONSTRUCTION_KEYS = {
     'cg_stop_on_stagnation', 'cg_true_residual_interval', 'cg_stagnation_consecutive_steps', 'cg_stagnation_countdown_steps',
     'cg_use_reg_scale_proxy', 'cg_reg_scale_num_probes', 'lambda_r', 'lambda_m',
     'use_calibration_weighted_image', 'regularization_scaling', 'motion_preconditioner',
-    'motion_gradient_boundary', 'compute_precision', 'warp_backend',
+    'motion_gradient_boundary', 'compute_precision', 'warp_backend', 'rigid_motion_damping',
     'jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale', 'voxel_spacing_mm',
     'max_iter_recon', 'max_iter_motion', 'tol_recon', 'tol_motion',
 }
@@ -406,6 +406,7 @@ def _validate_motion(cfg):
 
 def _validate_reconstruction(cfg):
     required = _RECONSTRUCTION_KEYS - {'motion_quantization_bins', 'cg_reg_scale_num_probes', 'compute_precision', 'warp_backend',
+                                       'rigid_motion_damping',
                                        'jacobian_rotation_factor', 'motion_step_real', 'warm_start_rescale', 'voxel_spacing_mm'}
     cfg.setdefault('compute_precision', 'double')
     _choice(cfg['compute_precision'], 'compute_precision', {'double', 'single'})
@@ -437,8 +438,13 @@ def _validate_reconstruction(cfg):
     if cfg['reconstruction_motion_type'] == 'rigid':
         if 'motion_preconditioner' in cfg:
             raise ValueError('motion_preconditioner is only valid for non-rigid reconstruction.')
-    elif type(cfg['motion_preconditioner']) is not bool:
-        raise ValueError('motion_preconditioner must be a boolean.')
+        cfg.setdefault('rigid_motion_damping', 'diagonal')
+        _choice(cfg['rigid_motion_damping'], 'rigid_motion_damping', {'diagonal', 'identity'})
+    else:
+        if type(cfg['motion_preconditioner']) is not bool:
+            raise ValueError('motion_preconditioner must be a boolean.')
+        if 'rigid_motion_damping' in cfg:
+            raise ValueError('rigid_motion_damping is only valid for rigid reconstruction.')
     _choice(cfg['motion_gradient_boundary'], 'motion_gradient_boundary', {'zero', 'one_sided'})
     if type(cfg['use_calibration_weighted_image']) is not bool:
         raise ValueError('use_calibration_weighted_image must be a boolean.')

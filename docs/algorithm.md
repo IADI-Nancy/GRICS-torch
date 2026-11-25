@@ -21,7 +21,7 @@ GRICS jointly estimates an image and a motion model from acquired k-space and mo
 | $\delta\alpha$ | Motion increment, applied as $\alpha \leftarrow \alpha + \delta\alpha$. |
 | $\nabla$ | Spatial gradient used to penalize variation in the updated motion field. |
 
-The figure shows non-rigid motion regularization, which encourages a smooth updated field through $\|\nabla(\alpha + \delta\alpha)\|_2^2$. For rigid motion, the solver instead penalizes the increment magnitude $\|\delta\alpha\|_2^2$. Image and motion estimates initialize the next, finer resolution. See [reconstruction architecture](architecture/reconstruction.md) for component responsibilities and state ownership.
+The figure shows non-rigid motion regularization, which encourages a smooth updated field through $\|\nabla(\alpha + \delta\alpha)\|_2^2$. For rigid motion, the solver instead penalizes the increment, $\|D^{1/2}\delta\alpha\|_2^2$, with $D$ the diagonal of $\mathrm{Re}(J^HJ)$ by default or the identity. Image and motion estimates initialize the next, finer resolution. See [reconstruction architecture](architecture/reconstruction.md) for component responsibilities and state ownership.
 
 ## Motion model
 
@@ -47,7 +47,7 @@ $$
 R(\phi)=\begin{bmatrix}\cos\phi & -\sin\phi\\ \sin\phi & \cos\phi\end{bmatrix}.
 $$
 
-In 3D, the implementation composes axis rotations in the order $R=R_z(r_z)R_y(r_y)R_x(r_x)$. The solver estimates direct updates to the state parameters and regularizes their magnitude with $\mu\lVert\delta\alpha\rVert_2^2$.
+In 3D, the implementation composes axis rotations in the order $R=R_z(r_z)R_y(r_y)R_x(r_x)$. The solver estimates direct updates to the state parameters. Translations (voxels) and rotations (radians) have different units, so by default (`rigid_motion_damping = "diagonal"`) the increment is penalized with $\mu\lVert D^{1/2}\delta\alpha\rVert_2^2$, $D=\mathrm{diag}(\mathrm{Re}(J^HJ))$, which damps every parameter by the same fraction of its Gauss–Newton step; `"identity"` uses $D=I$, $\mu\lVert\delta\alpha\rVert_2^2$. See [rigid damping](implementation/joint_reconstructor.md#rigid-damping).
 
 ### Non-rigid motion
 

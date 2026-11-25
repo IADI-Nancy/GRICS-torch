@@ -71,6 +71,8 @@ tol_recon = 1.0e-3
 # --- Motion update ---
 # Motion regularization weight; use any finite value >= 0.
 lambda_m = 2.0e-1
+# Rigid step damping D in (Re(J^H J) + mu D) d = Re(J^H r): "diagonal" (D = diag(Re(J^H J)), mu = lambda_m: the same relative damping for translations and rotations at every level) or "identity" (D = I, mu = lambda_m times the regularization scale, as in GRICS-torch 2.0).
+rigid_motion_damping = "diagonal"
 # Maximum CG iterations per motion update; use any positive integer.
 max_iter_motion = 128
 # Relative convergence tolerance for motion updates; use any finite value > 0.
