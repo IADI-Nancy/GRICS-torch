@@ -14,6 +14,8 @@ reconstruction_motion_type = "rigid"
 # Motion preconditioning is available only for non-rigid reconstruction.
 # Motion-Jacobian boundary rule; choose "zero" for zero boundary gradients or "one_sided" for one-sided differences.
 motion_gradient_boundary = "zero"
+# Rigid warp: "linear" (bilinear in 2D, trilinear in 3D) or "fourier" (k-space phase ramps and Fourier shears, exact for band-limited images; not with warp_backend = "gather").
+rigid_interpolation = "linear"
 
 # --- Motion-state binning ---
 # Motion-state count: positive integer or one positive count per resolution level (coarse to fine).

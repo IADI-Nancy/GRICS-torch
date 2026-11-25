@@ -31,7 +31,7 @@ $$
 (M_m\rho)(r)=\rho\bigl(r'_m(r)\bigr),\qquad r'_m(r)=\mathrm{clamp}\bigl(r+u_m(r)\bigr),
 $$
 
-where $u_m(r)$ is the state displacement in grid units. $\mathrm{clamp}$ restricts every coordinate to the valid image bounds; a point moved outside the image samples the nearest boundary voxel. The implementation represents $M_m$ as a sparse bilinear (2D) or trilinear (3D) interpolation matrix. Clamping gives edge-value extension when a sampling coordinate leaves the reconstructed grid. The encoding operator applies $M_m$ before coil sensitivity weighting, Fourier transformation, and selection of the lines acquired in state $m$.
+where $u_m(r)$ is the state displacement in grid units. $\mathrm{clamp}$ restricts every coordinate to the valid image bounds; a point moved outside the image samples the nearest boundary voxel. The implementation represents $M_m$ as a sparse bilinear (2D) or trilinear (3D) interpolation matrix. Clamping gives edge-value extension when a sampling coordinate leaves the reconstructed grid. For rigid motion, `rigid_interpolation = "fourier"` applies $M_m$ instead with k-space phase ramps and one-dimensional Fourier shears, which are exact for band-limited images and use zero padding instead of clamping; see [Fourier rigid warps](implementation/motion_operator.md#fourier-rigid-warps). The encoding operator applies $M_m$ before coil sensitivity weighting, Fourier transformation, and selection of the lines acquired in state $m$.
 
 ### Rigid motion
 
@@ -67,7 +67,7 @@ Both models estimate motion in tensor-grid coordinates. Their anatomical directi
 - The 2D model only accounts for in-plane motion.
 - Non-rigid motion is modeled as a linear combination of spatial coefficient fields and the provided physiological signals. Motion that is not captured by these signals or requires a different spatial basis cannot be represented accurately.
 - The motion-update step assumes that the residual after image reconstruction reflects errors in the motion model. As a result, noise, aliasing, and other unmodeled effects may affect the motion estimate.
-- Motion sensitivity is calculated using finite-difference image gradients and a first-order Taylor (optical-flow) approximation. This works well for small Gauss–Newton updates but is not the exact derivative of the clamped interpolation operator, especially near image boundaries. Since the optimization is non-convex, the results may depend on initialization, regularization, and state assignment.
+- Motion sensitivity is calculated using finite-difference image gradients and a first-order Taylor (optical-flow) approximation. This works well for small Gauss–Newton updates but is not the exact derivative of the warp (clamped interpolation or Fourier shears), especially near image boundaries. Since the optimization is non-convex, the results may depend on initialization, regularization, and state assignment.
 - The optimized encoding normal operator assumes that complete readout lines are assigned to separate motion states within each repetition. It does not support arbitrary point-wise sampling patterns.
 
 ## Implementation details

@@ -18,7 +18,8 @@ def build_motion_operator(Data_res, params):
     warp_backend = getattr(params, 'warp_backend', 'sparse')
     if params.reconstruction_motion_type == "rigid":
         motionOperator = MotionOperator(
-            Nx, Ny, alpha, params.reconstruction_motion_type, Nz=Data_res.get("Nz", 1), compute_dtype=compute_dtype, warp_backend=warp_backend
+            Nx, Ny, alpha, params.reconstruction_motion_type, Nz=Data_res.get("Nz", 1), compute_dtype=compute_dtype, warp_backend=warp_backend,
+            interpolation=getattr(params, 'rigid_interpolation', 'linear')
         )
     else:
         motion_signal = Data_res["MotionSignal"]
