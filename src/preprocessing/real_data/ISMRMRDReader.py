@@ -3,6 +3,7 @@ import ismrmrd
 import torch
 import math
 import warnings
+import numpy as np
 from src.utils.fftnc import fftnc, ifftnc
 
 
@@ -38,9 +39,117 @@ class ISMRMRDReader:
     It does not synchronize physiological signals or select reconstruction slices.
     """
 
-    def __init__(self, ismrmrd_file, device="cpu"):
+    def __init__(self, ismrmrd_file, device="cpu", *, read_navigators=False, navigator_type=None, navigator_set=1):
+        if type(read_navigators) is not bool:
+            raise ValueError("read_navigators must be a boolean.")
         self.ismrmrd_file = ismrmrd_file
         self.device = device
+        self.read_navigators = read_navigators
+        if navigator_type not in (None, 'mosar'):
+            raise ValueError('navigator_type must be None or mosar.')
+        if navigator_type is not None and not read_navigators:
+            raise ValueError('Explicit navigator extraction requires read_navigators=True.')
+        if type(navigator_set) is not int or navigator_set < 0:
+            raise ValueError('navigator_set must be a nonnegative integer.')
+        self.navigator_type = navigator_type
+        self.navigator_set = navigator_set
+
+    def _mosar_navigator_indices(self, dset, limits):
+        """Identify central triplets in one set, explicitly excluding feedback.
+
+        Every set/repetition block must begin with its triplet; further central
+        imaging lines must be isolated. Ambiguous sequences are rejected.
+        Ordinals describe acquisition order, not anatomical directions.
+        """
+        heads = dset.read_acquisition_headers()
+        names = ('ACQ_IS_NOISE_MEASUREMENT', 'ACQ_IS_NAVIGATION_DATA', 'ACQ_IS_DUMMYSCAN_DATA',
+                 'ACQ_IS_PHASECORR_DATA', 'ACQ_IS_HPFEEDBACK_DATA', 'ACQ_IS_RTFEEDBACK_DATA')
+        excluded = sum(1 << (getattr(ismrmrd, name) - 1) for name in names)
+        eligible = np.flatnonzero((heads['flags'] & excluded) == 0)
+        selected = eligible[heads['idx']['set'][eligible] == self.navigator_set]
+        if not len(selected):
+            raise ValueError(f'MOSAR extraction found no imaging acquisitions in set counter {self.navigator_set}.')
+        if len(np.unique(heads['idx']['slice'][selected])) != 1:
+            raise ValueError('MOSAR central-triplet extraction currently requires a single encoded slice/slab.')
+        cy, cz = limits.kspace_encoding_step_1.center, limits.kspace_encoding_step_2.center
+        if cy is None or cz is None:
+            raise ValueError('MOSAR navigator extraction requires declared ky/kz centres.')
+        keys = np.column_stack([heads['idx'][name][eligible] for name in ('set', 'repetition', 'slice')])
+        boundaries = np.r_[0, np.flatnonzero(np.any(keys[1:] != keys[:-1], axis=1)) + 1, len(eligible)]
+        groups = []
+        for start, stop in zip(boundaries[:-1], boundaries[1:]):
+            block = eligible[start:stop]
+            if int(heads['idx']['set'][block[0]]) != self.navigator_set:
+                continue
+            if len(block) < 4:
+                raise ValueError('A MOSAR set block must contain a navigator triplet followed by imaging readouts.')
+            central = (heads['idx']['kspace_encode_step_1'][block] == cy) & (heads['idx']['kspace_encode_step_2'][block] == cz)
+            if not np.all(central[:3]):
+                raise ValueError(f'MOSAR set block starts at acquisition {block[0]} without a central triplet.')
+            remaining = np.flatnonzero(central[3:])
+            if np.any(np.diff(remaining) == 1):
+                raise ValueError('Ambiguous repeated central lines inside a MOSAR imaging block; navigator layout is not supported.')
+            groups.append(block[:3])
+        if len(groups) < 2:
+            raise ValueError('MOSAR extraction requires at least two set blocks with central navigator triplets.')
+        reference_shape = (int(heads['active_channels'][groups[0][0]]), int(heads['number_of_samples'][groups[0][0]]))
+        result = {}
+        for group, indices in enumerate(groups):
+            for direction, index in enumerate(indices):
+                shape = (int(heads['active_channels'][index]), int(heads['number_of_samples'][index]))
+                if shape != reference_shape:
+                    raise ValueError('MOSAR navigator triplets have inconsistent channel/sample dimensions.')
+                result[int(index)] = (group, direction)
+        print(f'[ismrmrd] Explicit MOSAR extraction: {len(groups)} central triplets in set counter {self.navigator_set}; feedback flags are excluded and triplets are removed from imaging.', flush=True)
+        return result
+
+    def _navigator_record(self, acq, i):
+        return {
+            "data": torch.from_numpy(acq.data.copy()).to(self.device),
+            "acquisition_index": i,
+            "acquisition_time_stamp": int(acq.acquisition_time_stamp),
+            "scan_counter": int(acq.scan_counter),
+            "flags": int(acq.flags),
+            "counters": {name: int(getattr(acq.idx, name)) for name in (
+                "kspace_encode_step_1", "kspace_encode_step_2", "average", "slice",
+                "contrast", "phase", "repetition", "set", "segment")},
+            "user_counters": list(acq.idx.user),
+            "position": list(acq.position), "read_dir": list(acq.read_dir),
+            "phase_dir": list(acq.phase_dir), "slice_dir": list(acq.slice_dir),
+            "sample_time_us": float(acq.sample_time_us),
+            "center_sample": int(acq.center_sample),
+            "discard_pre": int(acq.discard_pre), "discard_post": int(acq.discard_post),
+            "trajectory": torch.from_numpy(acq.traj.copy()).to(self.device),
+        }
+
+    def read_navigator_data(self):
+        """Read flagged navigators without gridding imaging or calibration data.
+
+        This explicit navigator-only entry point also supports acquisitions whose
+        imaging layout is not supported by read_data(). Timestamps retain the
+        same origin: the last retained non-noise, non-navigation imaging readout.
+        """
+        dset = ReadOnlyDataset(self.ismrmrd_file)
+        navigators = []
+        last_imaging_timestamp = None
+        try:
+            for i in range(dset.number_of_acquisitions()):
+                acq = dset.read_acquisition(i)
+                if _is_noise(acq):
+                    continue
+                if _has_ismrmrd_flag(acq, "ACQ_IS_NAVIGATION_DATA"):
+                    navigators.append(self._navigator_record(acq, i))
+                elif not _is_non_imaging(acq):
+                    last_imaging_timestamp = int(acq.acquisition_time_stamp)
+        finally:
+            dset.close()
+        if last_imaging_timestamp is None:
+            raise ValueError("Cannot reference navigator times: no retained imaging readout found.")
+        for navigator in navigators:
+            navigator["time_seconds"] = (navigator["acquisition_time_stamp"] - last_imaging_timestamp) * 2.5e-3
+        if not navigators:
+            print("[ismrmrd] Navigator reading requested, but no acquisitions carry ACQ_IS_NAVIGATION_DATA.", flush=True)
+        return navigators
 
     @staticmethod
     def _encoding_limit_size(limit_obj):
@@ -120,6 +229,12 @@ class ISMRMRDReader:
             header = ismrmrd.xsd.CreateFromDocument(self.ismrmrd_header)
             enc = header.encoding[0]
             limits = enc.encodingLimits
+            if self.navigator_type == 'mosar':
+                navigator_indices = self._mosar_navigator_indices(dset, limits)
+            elif self.navigator_type is None:
+                navigator_indices = {}
+            else:
+                raise ValueError(f'Unsupported navigator type: {self.navigator_type!r}.')
             self._oversampling_factor = self._readout_oversampling_factor(enc)
             if self._oversampling_factor == 1:
                 print("[ismrmrd] no readout oversampling declared (encodedSpace.x == reconSpace.x): the readout is kept whole.", flush=True)
@@ -175,10 +290,23 @@ class ISMRMRDReader:
             idx_kz = []
             idx_nex = []
             slice_geometry = {}
+            navigators = [] if self.read_navigators else None
 
             num_acq = dset.number_of_acquisitions()
             for i in range(num_acq):
                 acq = dset.read_acquisition(i)
+                if self.navigator_type is not None:
+                    if int(acq.idx.set) != self.navigator_set:
+                        continue
+                    if i in navigator_indices:
+                        navigator = self._navigator_record(acq, i)
+                        navigator['group_index'], navigator['direction_index'] = navigator_indices[i]
+                        navigators.append(navigator)
+                        continue
+                if not _is_noise(acq) and _has_ismrmrd_flag(acq, "ACQ_IS_NAVIGATION_DATA"):
+                    if self.read_navigators and self.navigator_type is None:
+                        navigators.append(self._navigator_record(acq, i))
+                    continue
                 if _is_noise(acq) or _is_non_imaging(acq):
                     continue
 
@@ -261,7 +389,13 @@ class ISMRMRDReader:
                       "their readouts are averaged. Each readout keeps its own physiological sample.", flush=True)
                 kspace = kspace / line_count.clamp(min=1).to(kspace.dtype).reshape(1, Nex, 1, Ny, z_size)
 
-            timestamps = torch.tensor(timestamps, device=self.device)
+            if navigators is not None:
+                for navigator in navigators:
+                    navigator["time_seconds"] = (navigator["acquisition_time_stamp"] - timestamps[-1]) * 2.5e-3
+                if not navigators:
+                    print("[ismrmrd] Navigator reading requested, but no acquisitions carry ACQ_IS_NAVIGATION_DATA.", flush=True)
+            self.navigators = navigators
+            timestamps = torch.tensor(timestamps, device=self.device, dtype=torch.float64)
             timestamps = (timestamps - timestamps[-1]) * 2.5e-3
 
             if reference_line_seen is None or not torch.any(reference_line_seen):
@@ -291,6 +425,9 @@ class ISMRMRDReader:
         Readout oversampling is removed from imaging and reference k-space using
         the header matrix ratio (1x or 2x), with a warning and 2x fallback when invalid.
         Physiological processing and slice selection are handled downstream.
+        Navigators are returned as acquisition-ordered records when requested,
+        or None otherwise. Their samples and trajectories remain as acquired;
+        time_seconds shares the imaging time origin (last retained imaging readout).
         """
         (kspace, times, slices, ky, kz, nex, nex_source, nex_values,
          geometry) = self._extract_mri_data()
@@ -305,4 +442,8 @@ class ISMRMRDReader:
             "nex_source": nex_source, "nex_values": nex_values,
             "slice_geometry": geometry, "reference_kspace": reference_kspace,
             "uses_kz_as_volume_axis": self._raw_uses_kz_as_volume_axis,
+            "navigators": self.navigators,
+            "readout_oversampling_factor": self._oversampling_factor,
+            "navigator_type": self.navigator_type,
+            "navigator_set": self.navigator_set if self.navigator_type is not None else None,
         }

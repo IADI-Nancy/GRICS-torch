@@ -29,13 +29,16 @@ class RawDataPreparer:
         self.allow_constant = allow_constant
         self.physio_clock_drift_seconds = float(physio_clock_drift_seconds)
         self.physiological_reader = physiological_reader
-        self.reader = ISMRMRDReader(ismrmrd_file, device=device)
+        self.uses_mri_physiology = getattr(physiological_reader, 'uses_mri_data', False)
+        reader_options = physiological_reader.mri_reader_options if self.uses_mri_physiology else {}
+        self.reader = ISMRMRDReader(ismrmrd_file, device=device, **reader_options)
         self.physiological_file = physiological_file
         self.device = device
         self.synchronization = None
 
-    def _physiological_channels(self):
-        return self.physiological_reader.read_channels(self.physiological_file)
+    def _physiological_channels(self, raw):
+        source = raw if self.uses_mri_physiology else self.physiological_file
+        return self.physiological_reader.read_channels(source)
 
     @property
     def selected_polaris_channels(self):
@@ -165,7 +168,7 @@ class RawDataPreparer:
 
     def _prepare_data(self):
         raw = self.reader.read_data()
-        times, values, end, bounds = self._physiological_channels()
+        times, values, end, bounds = self._physiological_channels(raw)
         acquisition_times = raw["time_seconds"].detach().cpu().numpy()
         if self.physiological_reader.already_synchronized:
             if self.physio_clock_drift_seconds != 0:
@@ -210,6 +213,8 @@ class RawDataPreparer:
         }
         if raw["reference_kspace"] is not None:
             data["reference_kspace"] = raw["reference_kspace"].detach().cpu().numpy()
+        if self.uses_mri_physiology:
+            data['navigators'] = raw['navigators']
         return data
 
     def _reshape_data_slicewise(self, respiratory_data_interpolated, z_indices,

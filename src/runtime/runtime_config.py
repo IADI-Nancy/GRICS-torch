@@ -6,7 +6,7 @@ import math
 ISMRMRD_READER_DATA_TYPES = {
     f'{source}-{physiology}'
     for source in ('ismrmrd', 'siemens')
-    for physiology in ('saec', 'polaris', 'physio_text', 'physio_array')
+    for physiology in ('saec', 'polaris', 'physio_text', 'physio_array', 'navigators')
 }
 REAL_DATA_TYPES = {'preprocessed-real'} | ISMRMRD_READER_DATA_TYPES
 SYNTHETIC_DATA_TYPES = {'shepp-logan', 'from_image'}
@@ -60,6 +60,8 @@ _PHYSIOLOGICAL_DATA_KEYS = {
 }
 _PHYSIO_CLOCK_KEYS = {'physio_clock_drift_seconds'}
 _POLARIS_KEYS = {'polaris_channel_mode', 'polaris_lowpass_cutoff_hz'}
+_NAVIGATOR_KEYS = {'navigator_type', 'navigator_eigenmodes', 'navigator_directions', 'navigator_startup_profiles',
+                   'navigator_regularization', 'navigator_resolution_levels', 'navigator_registration_loops', 'navigator_extrapolation'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
 _CSM_KEYS = _CSM_ESPIRIT_KEYS | _CSM_ODILLE_SPLINE_KEYS
@@ -89,6 +91,7 @@ _FILE_SCHEMAS = {
     'physiological_data': {'physiological_data': _PHYSIOLOGICAL_DATA_KEYS},
     'polaris': {'polaris': _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS},
     'physio': {'physio': _PHYSIO_CLOCK_KEYS},
+    'navigators': {'navigators': _NAVIGATOR_KEYS},
     'reconstruction': {'reconstruction': _RECONSTRUCTION_KEYS},
     'sampling': {'sampling': _SAMPLING_KEYS},
     'shepp-logan': {'shepp_logan': _SHEPP_KEYS},
@@ -100,7 +103,7 @@ _FILE_SCHEMAS = {
 }
 _OVERRIDE_KEYS = (_CALIBRATION_IMAGE_KEYS | _PATH_KEYS | _RUNTIME_KEYS | _NORMALIZATION_KEYS | (_CSM_KEYS - {'coil_sensitivity_method'}) |
                   (_RECONSTRUCTION_KEYS - {'coil_sensitivity_config'}) | _SAMPLING_KEYS | _SHEPP_KEYS | _IMAGE_KEYS |
-                  _MOTION_KEYS | _PHYSIOLOGICAL_DATA_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS)
+                  _MOTION_KEYS | _PHYSIOLOGICAL_DATA_KEYS | _POLARIS_KEYS | _PHYSIO_CLOCK_KEYS | _NAVIGATOR_KEYS)
 _BOOL_KEYS = {
     'save_debug_plots', 'use_deterministic_algorithms',
     'verbose', 'print_to_console', 'remove_temporary_data_after_run', 'cache_preprocessed_data',
@@ -219,6 +222,31 @@ def _validate_physiological_data(cfg):
         f'{source}-{kind}' for source in ('ismrmrd', 'siemens')
         for kind in ('physio_text', 'physio_array')
     }
+    if data_type.endswith('-navigators'):
+        _require(cfg, _NAVIGATOR_KEYS, 'navigator')
+        _choice(cfg['navigator_type'], 'navigator_type', {'mosar'})
+        _integer(cfg['navigator_eigenmodes'], 'navigator_eigenmodes')
+        _integer(cfg['navigator_startup_profiles'], 'navigator_startup_profiles', 0)
+        _integer(cfg['navigator_registration_loops'], 'navigator_registration_loops')
+        _number(cfg['navigator_regularization'], 'navigator_regularization', positive=True)
+        _choice(cfg['navigator_extrapolation'], 'navigator_extrapolation', {'edge', 'raise', 'autoregression'})
+        directions = cfg['navigator_directions']
+        if not isinstance(directions, list) or not directions or any(type(value) is not int or value not in (0, 1, 2) for value in directions) or len(set(directions)) != len(directions):
+            raise ValueError('navigator_directions must be a nonempty list of distinct integers from 0, 1, 2.')
+        levels = cfg['navigator_resolution_levels']
+        if not isinstance(levels, list) or not levels:
+            raise ValueError('navigator_resolution_levels must be a nonempty list.')
+        for level in levels:
+            _number(level, 'navigator_resolution_levels entry', positive=True, maximum=1)
+        if levels[-1] != 1 or any(a >= b for a, b in zip(levels, levels[1:])):
+            raise ValueError('navigator_resolution_levels must increase strictly and end at 1.0.')
+        shift = cfg.get('physio_clock_drift_seconds', 0)
+        _number(shift, 'physio_clock_drift_seconds')
+        if shift != 0:
+            raise ValueError('Navigator and imaging timestamps share a scanner clock; physio_clock_drift_seconds must be zero.')
+        cfg['physio_clock_drift_seconds'] = 0.0
+    elif cfg.keys() & _NAVIGATOR_KEYS:
+        raise ValueError(f'Navigator settings incompatible with {data_type}.')
     if saec_data:
         _require(cfg, _PHYSIOLOGICAL_DATA_KEYS, 'physiological-data')
         if not isinstance(cfg['rawdata_sensor_type'], str) or not cfg['rawdata_sensor_type']:
@@ -244,7 +272,7 @@ def _validate_physiological_data(cfg):
         if shift != 0:
             raise ValueError('physio_clock_drift_seconds is supported only for Polaris, text and array physiology.')
         cfg['physio_clock_drift_seconds'] = 0.0
-    elif cfg.keys() & _PHYSIO_CLOCK_KEYS:
+    elif cfg.keys() & _PHYSIO_CLOCK_KEYS and not data_type.endswith('-navigators'):
         raise ValueError(f'Physiological clock settings incompatible with {data_type}.')
 
 
@@ -561,7 +589,7 @@ def _load_physiological_data_config(root, data_type):
     if data_type not in ISMRMRD_READER_DATA_TYPES:
         return {}
     physio_type = data_type.split('-', 1)[1]
-    physio_kinds = {'saec': 'physiological_data', 'polaris': 'polaris', 'physio_text': 'physio', 'physio_array': 'physio'}
+    physio_kinds = {'saec': 'physiological_data', 'polaris': 'polaris', 'physio_text': 'physio', 'physio_array': 'physio', 'navigators': 'navigators'}
     return _load_toml_flat(root / 'physiological_data' / f'{physio_type}.toml', physio_kinds[physio_type])
 
 

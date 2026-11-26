@@ -15,6 +15,10 @@ class ReadOnlyDataset(ismrmrd.Dataset):
         self._file = h5py.File(filename, 'r')
         self._dataset_name = dataset_name
 
+    def read_acquisition_headers(self):
+        """Read acquisition headers without constructing acquisition objects."""
+        return self._file[self._dataset_name]['data'].fields('head')[:]
+
 
 def read_header(path: str | Path):
     with h5py.File(path, 'r') as handle:

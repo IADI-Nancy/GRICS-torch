@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import struct
 
 import h5py
 import numpy as np
@@ -79,12 +80,19 @@ def convert_siemens_to_ismrmrd(path_to_siemens, cache):
     converter = shutil.which("siemens_to_ismrmrd")
     if converter is None:
         raise RuntimeError("siemens_to_ismrmrd executable was not found. Install it or supply an existing MRD file.")
+    with open(path_to_siemens, 'rb') as handle:
+        prefix = handle.read(8)
+    if len(prefix) != 8:
+        raise ValueError('Siemens input is too short to identify its measurement layout.')
+    first, second = struct.unpack('<II', prefix)
+    measurement = second if first < 10000 and 1 <= second <= 64 else 1
+    print(f'[InputDataLoader] Siemens measurement selection: {measurement} (last measurement for VD/VE, single measurement for VB).', flush=True)
     key = cache.key([path_to_siemens], {
-        "measurement": 2, "schema": 1, "converter": cache.source_identity(converter),
+        "measurement": measurement, "schema": 1, "converter": cache.source_identity(converter),
     })
 
     def build(output_path):
-        cmd = [converter, "-f", path_to_siemens, "-z", "2", "-o", str(output_path)]
+        cmd = [converter, "-f", path_to_siemens, "-z", str(measurement), "-o", str(output_path)]
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as exc:

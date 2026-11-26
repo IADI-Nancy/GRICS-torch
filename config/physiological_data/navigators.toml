@@ -1,0 +1,17 @@
+[navigators]
+# Navigator acquisition type; currently only "mosar" is supported. Its reader extracts block-start central triplets from the second set (set counter 1); other types require a reader implementation.
+navigator_type = "mosar"
+# Number of temporal SVD modes retained as physiological channels; integer >= 1, no greater than the measured displacement matrix's numerical rank.
+navigator_eigenmodes = 2
+# Triplet readout ordinals included in the combined SVD; a nonempty list of distinct integers from 0, 1, 2. These are not verified physical x/y/z directions.
+navigator_directions = [0, 1, 2]
+# Initial profiles replaced by the next profile to suppress startup effects; integer >= 0 and smaller than the number of triplets.
+navigator_startup_profiles = 4
+# Non-rigid spatial displacement regularization coefficient; finite number > 0. No temporal penalty is applied.
+navigator_regularization = 0.05
+# Increasing spatial/temporal pyramid scale factors; values in (0, 1], ending at 1.0, with dimensions >= 2 at every level.
+navigator_resolution_levels = [0.25, 0.5, 1.0]
+# Maximum Gauss-Newton registration iterations at each resolution; integer >= 1.
+navigator_registration_loops = 6
+# Coverage policy for shared physiological synchronization: "edge" holds endpoint values, "raise" rejects uncovered readouts, "autoregression" extrapolates at most one second. Edge holding covers the final imaging block after its navigator.
+navigator_extrapolation = "edge"

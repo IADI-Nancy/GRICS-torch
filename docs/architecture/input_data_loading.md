@@ -11,6 +11,8 @@ flowchart TD
     ISMRMRD[ISMRMRD file] --> MRD
     Physiology[Physiological file or arrays] --> PhysReader[Physiological reader]
     MRD --> Raw[RawDataPreparer]
+    MRD --> NavCalc[NavigatorEigenmodeCalculator]
+    NavCalc --> Raw
     PhysReader --> Raw
     Raw --> Loader[InputDataLoader]
     Preprocessed[Preprocessed HDF5] --> Loader
@@ -21,7 +23,7 @@ flowchart TD
 
     classDef pythonClass fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef inputFile fill:#fef3c7,stroke:#d97706,color:#451a03
-    class MRD,PhysReader,Raw,Loader,Generator,Preparer pythonClass
+    class MRD,PhysReader,NavCalc,Raw,Loader,Generator,Preparer pythonClass
     class Siemens,ISMRMRD,Physiology,Preprocessed,ImageFile inputFile
 ```
 
@@ -30,6 +32,8 @@ Blue nodes are Python classes. Amber nodes are input files. Uncolored nodes are 
 ## Ownership boundaries
 
 MRI and physiological readers decode their own formats. Physiological readers also own filtering, channel selection, and synchronization policy; `RawDataPreparer` performs the actual alignment to MRI readout timestamps, normalizes the aligned motion signal, and optionally caches the complete acquisition.
+
+For navigator sources, `ISMRMRDReader` dispatches extraction by `navigator_type` and owns navigator identification, contrast selection, and exclusion of navigator readouts from imaging tensors. `NavigatorEigenmodeCalculator` owns profile processing, non-rigid registration, and temporal SVD. Its physiological-reader interface consumes decoded MRI records instead of an external file. `RawDataPreparer` supplies those records and retains ownership of synchronization, normalization, and caching. Navigator times preserve the MRI clock and are not independently shifted to the last navigator measurement. Source-specific settings and supported acquisition layouts are described in the [input data guide](../usage/configuration/input_formats.md#ismrmrd-navigators-and-siemens-navigators).
 
 Synchronization precedes slice selection. `RawDataPreparer` always returns the complete acquisition; `InputDataLoader` owns activation of a 2D slice or the complete 3D volume. A workflow using generated sampling loads MRI data without physiology and replaces the recorded sampling order.
 

@@ -36,6 +36,7 @@ class InputDataLoader:
         self.slice_idx = None
         self.motion_data = None
         self.reference_kspace = None
+        self.navigators = None
         self.ky_idx = None
         self.kz_idx = None
         self.nex_idx = None
@@ -104,6 +105,13 @@ class InputDataLoader:
             ))
         elif self.params.data_type == 'preprocessed-real':
             self._load_realworld_data(self.filename)
+        elif self.params.data_type.endswith('-navigators'):
+            if self.params.data_type == 'siemens-navigators':
+                path_to_ismrm = self._convert_siemens_to_ismrmrd(self.siemens_filenames[0])
+            else:
+                path_to_ismrm = self.rawdata_filenames[0]
+            self.source_ismrmrd_file = path_to_ismrm
+            self._load_realworld_data_from_ismrm_and_physiology(path_to_ismrm, None)
         elif self.params.data_type in ISMRMRD_READER_DATA_TYPES and self.params.data_type.startswith("ismrmrd-"):
             path_to_ismrm, path_to_physiology = self.rawdata_filenames
             self.source_ismrmrd_file = path_to_ismrm
@@ -149,6 +157,13 @@ class InputDataLoader:
 
     def _resolve_mri_physiology_filenames(self, mri_key):
         suffix = self.params.data_type.split('-', 1)[1]
+        if suffix == 'navigators':
+            path = self.filename
+            if isinstance(path, dict) and set(path) == {mri_key}:
+                path = path[mri_key]
+            if not isinstance(path, (str, os.PathLike)) or not os.fspath(path):
+                raise ValueError(f"For data_type={self.params.data_type!r}, filename must be an MRI path or a dict containing only {mri_key!r}.")
+            return path, None
         physiology_keys = {
             'saec': ('saec_file',), 'polaris': ('polaris_file',),
             'physio_text': ('physio_file',),
@@ -200,6 +215,11 @@ class InputDataLoader:
             self._input_idx_nex = torch.from_numpy(data['idx_nex']).to(self.t_device, dtype=torch.int64)
         self._input_slice_geometry = data.get('slice_geometry')
         self.ismrmrd_header = data.get('ismrmrd_header')
+        self.navigators = data.get('navigators')
+        if self.navigators is not None:
+            for navigator in self.navigators:
+                for name in ('data', 'trajectory'):
+                    navigator[name] = torch.as_tensor(navigator[name])
 
         self.kspace = self._input_kspace
         self.reference_kspace = self._input_reference_kspace
@@ -302,11 +322,14 @@ class InputDataLoader:
         if self.params.kspace_sampling_type != "from-data":
             from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
 
-            reader = ISMRMRDReader(path_to_ismrm, device="cpu")
+            reader_options = self._create_physiological_reader().mri_reader_options if self.params.data_type.endswith('-navigators') else {}
+            reader = ISMRMRDReader(path_to_ismrm, device="cpu", **reader_options)
             raw_data = reader.read_data()
             data = {"kspace": raw_data["kspace"].cpu().numpy(),
                     "slice_geometry": raw_data["slice_geometry"],
                     "ismrmrd_header": raw_data.get("ismrmrd_header")}
+            if self.params.data_type.endswith('-navigators'):
+                data['navigators'] = raw_data['navigators']
             if raw_data["reference_kspace"] is not None:
                 data["reference_kspace"] = raw_data["reference_kspace"].cpu().numpy()
             self._initialize_realworld_data(data)
@@ -330,6 +353,15 @@ class InputDataLoader:
     def _create_physiological_reader(self):
         """Construct the physiological reader selected by the runtime configuration."""
         physiological_format = self.params.data_type.split("-", 1)[1]
+        if physiological_format == 'navigators':
+            from src.preprocessing.real_data.physiological_data.NavigatorEigenmodeCalculator import NavigatorEigenmodeCalculator
+
+            return NavigatorEigenmodeCalculator(
+                navigator_type=self.params.navigator_type,
+                n_eigenmodes=self.params.navigator_eigenmodes, directions=self.params.navigator_directions,
+                startup_profiles=self.params.navigator_startup_profiles, regularization=self.params.navigator_regularization,
+                resolution_levels=self.params.navigator_resolution_levels, registration_loops=self.params.navigator_registration_loops,
+                extrapolation=self.params.navigator_extrapolation)
         if physiological_format == "polaris":
             from src.preprocessing.real_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
 

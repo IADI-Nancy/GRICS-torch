@@ -83,6 +83,7 @@ class DataPreparer:
         self.ky_per_motion_state = loader.ky_per_motion_state
         self.kz_per_motion_state = loader.kz_per_motion_state
         self.motion_data = loader.motion_data
+        self.navigators = loader.navigators
         self.slice_idx = loader.slice_idx
         self.raw_data_preparer = loader.raw_data_preparer
         self.realworld_h5_path = loader.realworld_h5_path
