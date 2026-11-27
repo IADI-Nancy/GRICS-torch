@@ -24,6 +24,10 @@ Here $e_i$ is the unit offset along axis $i$; edge values follow `motion_gradien
 
 ## Matched adjoint
 
-The adjoint back-projects residual k-space with inverse FFT and conjugated coil maps, multiplies by conjugated image gradients, and accumulates through the rigid geometric derivatives or conjugated sensor weights. It matches the implemented linear approximation, enabling CG on its normal operator. `normal()` explicitly composes adjoint and forward; it does not use the readout-FFT cancellation implemented by [EncodingOperator](encoding_operator.md).
+The adjoint back-projects residual k-space with inverse FFT and conjugated coil maps, multiplies by conjugated image gradients, and accumulates through the rigid geometric derivatives or conjugated sensor weights. It matches the implemented linear approximation, enabling CG on its normal operator. `normal()` explicitly composes adjoint and forward, choosing CPU output storage when the full k-space buffer exceeds its GPU budget; it does not use the readout-FFT cancellation implemented by [EncodingOperator](encoding_operator.md).
 
 These image-gradient boundary settings are independent of the zero-gradient boundaries in [motion regularization](conjugate_gradient_solver.md#linear-system-and-regularization).
+
+## Coil workspace
+
+Forward and adjoint motion operations use the same [automatic coil batching](encoding_operator.md#automatic-coil-batching) policy as image encoding, including simultaneous-state FFT paths. Coil groups are accumulated before the adjoint geometric Jacobian, preserving the linear operator. Coil-map precision conversion is limited to each FFT coil group, sharing source map storage with image encoding. CPU-stored k-space is consumed through coil/sample transfers, with adjoint parameter outputs on the operator device. Gradient caches are owned by this class and remain independent of the FFT workspace budget.

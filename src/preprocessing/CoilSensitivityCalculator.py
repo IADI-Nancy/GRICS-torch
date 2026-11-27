@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from src.utils.fftnc import ifftnc
+from src.reconstruction.coil_batching import CoilBatchPlanner
 from src.preprocessing.utils.spline import spline_fft_solver
 
 
@@ -201,51 +202,50 @@ class CoilSensitivityCalculator:
 
     def calculate_odille_spline(self, kspace, reference_kspace=None):
         del reference_kspace
-        kspace_calib = self._average_repetitions(kspace).to(torch.complex64)
-        coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
-
-        surface_abs = torch.abs(coil_images)
-        if not torch.isfinite(surface_abs).all() or surface_abs.max() <= 0:
+        # Reserve the final maps before choosing temporary FFT workspace.
+        smaps = torch.empty_like(kspace[:, 0], dtype=torch.complex128)
+        planner = CoilBatchPlanner(smaps, torch.complex128, 'Odille spline')
+        reference_abs = torch.zeros_like(smaps[0].real, dtype=torch.float32)
+        surface_max = torch.zeros((), device=kspace.device, dtype=torch.float32)
+        # First pass establishes global RSS and the common phase threshold.
+        for start, end in planner.batches():
+            kspace_calib = self._average_repetitions(kspace[start:end]).to(torch.complex64)
+            coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
+            surface_abs = torch.abs(coil_images)
+            if not torch.isfinite(surface_abs).all():
+                raise ValueError("Odille-spline coil images must be finite with positive magnitude; check imaging k-space.")
+            reference_abs.add_(torch.sum(surface_abs ** 2, dim=0))
+            surface_max = torch.maximum(surface_max, surface_abs.max())
+            del kspace_calib, coil_images, surface_abs
+        if surface_max <= 0:
             raise ValueError("Odille-spline coil images must be finite with positive magnitude; check imaging k-space.")
-        reference_abs = torch.sqrt(torch.sum(surface_abs ** 2, dim=0).clamp_min(0.0))
-
-        # Stabilize phase estimation in low-signal regions by flooring coil
-        # magnitudes at 5% of the global surface-coil maximum.
-        threshold = 0.05 * torch.max(surface_abs)
-        nonzero_surface_abs = torch.clamp(surface_abs, min=threshold.item())
-        surface_phase = coil_images / nonzero_surface_abs
-
+        reference_abs.sqrt_()
+        threshold = float((0.05 * surface_max).item())
         lambda_magnitude = float(self.params.spline_magnitude_smoothing)
         lambda_phase = float(self.params.spline_phase_smoothing)
-
         if lambda_magnitude > 0:
-            surface_abs = spline_fft_solver(
-                surface_abs.permute(0, 3, 1, 2).to(torch.complex128),
-                lambda_magnitude,
-            ).abs().permute(0, 2, 3, 1)
-            reference_abs = spline_fft_solver(
-                reference_abs.permute(2, 0, 1).to(torch.complex128),
-                lambda_magnitude,
-            ).abs().permute(1, 2, 0)
-
-        if lambda_phase > 0:
-            surface_phase = spline_fft_solver(
-                surface_phase.permute(0, 3, 1, 2),
-                lambda_phase,
-            ).permute(0, 2, 3, 1)
-
-        phase_factor = torch.exp(1j * torch.angle(surface_phase))
+            reference_abs = spline_fft_solver(reference_abs.permute(2, 0, 1).to(torch.complex128), lambda_magnitude).abs().permute(1, 2, 0)
         eps = float(self.params.coil_sensitivity_eps)
-        # Preserve the smoothed reference magnitude wherever it is positive;
-        # replace only exact zeros to avoid introducing an intensity-dependent
-        # floor into the sensitivity maps.
-        reference_denominator = torch.where(
-            reference_abs > 0,
-            reference_abs,
-            torch.full_like(reference_abs, eps),
-        )
-        smaps = surface_abs * phase_factor / reference_denominator.unsqueeze(0)
-        smaps_max = torch.max(torch.abs(smaps))
-        if float(smaps_max.real.item()) <= 0.0:
+        reference_denominator = torch.where(reference_abs > 0, reference_abs, torch.full_like(reference_abs, eps))
+        del reference_abs
+        smaps_max = torch.zeros((), device=kspace.device, dtype=torch.float64)
+        # Recompute profiles rather than retaining all coils' images and phases.
+        for start, end in planner.batches():
+            kspace_calib = self._average_repetitions(kspace[start:end]).to(torch.complex64)
+            coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
+            surface_abs = torch.abs(coil_images)
+            surface_phase = coil_images / surface_abs.clamp_min(threshold)
+            del kspace_calib, coil_images
+            if lambda_magnitude > 0:
+                surface_abs = spline_fft_solver(surface_abs.permute(0, 3, 1, 2).to(torch.complex128), lambda_magnitude).abs().permute(0, 2, 3, 1)
+            if lambda_phase > 0:
+                surface_phase = spline_fft_solver(surface_phase.permute(0, 3, 1, 2), lambda_phase).permute(0, 2, 3, 1)
+            phase_factor = torch.exp(1j * torch.angle(surface_phase))
+            maps = surface_abs * phase_factor / reference_denominator.unsqueeze(0)
+            smaps[start:end] = maps
+            smaps_max = torch.maximum(smaps_max, maps.abs().max())
+            del surface_abs, surface_phase, phase_factor, maps
+        if float(smaps_max.item()) <= 0.0:
             raise ValueError("GRICS sensitivity maps have non-positive maximum; cannot normalize.")
-        return (smaps / smaps_max).to(torch.complex128)
+        smaps.div_(smaps_max)
+        return smaps

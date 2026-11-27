@@ -10,7 +10,7 @@ For each output location $r$, the warped image samples the input at $r+u(r)$. Ri
 
 ## Interpolation and boundaries
 
-Each state stores a sparse COO matrix with bilinear interpolation in 2D (four neighbor contributions) or trilinear interpolation in 3D (eight). For fractional coordinate offsets $f_i$, weights are products of $f_i$ or $1-f_i$ along each axis. The same real weights interpolate both real and imaginary image parts; matrices are stored as complex128 for complex MRI data. Precomputing them reuses the geometry throughout an image CG solve, at a memory cost proportional to voxel count times state count.
+Linear warps use bilinear interpolation in 2D (four neighbor contributions) or trilinear interpolation in 3D (eight). `warp_backend` selects sparse COO matrices or gather index/weight tables. For fractional coordinate offsets $f_i$, weights are products of $f_i$ or $1-f_i$ along each axis. The same real weights interpolate both real and imaginary image parts. Sparse values follow `compute_precision`; gather indices are int64 and weights use the corresponding real precision. Precomputing geometry reuses it throughout a CG solve, at a memory cost proportional to voxel count times state count.
 
 Sampling coordinates are clamped to the valid image domain, giving edge-value extension rather than zero padding or wraparound. The lower neighbor is clamped separately so an exact sample on the final voxel layer remains exact. Linear interpolation has a small local stencil, though repeated resampling can smooth fine image detail. For rigid motion, `rigid_interpolation` selects this interpolation (`"linear"`, default) or the [Fourier rigid warps](#fourier-rigid-warps) (`"fourier"`); clamping and sparse storage precision are fixed choices.
 
@@ -27,6 +27,16 @@ u_m(r)=\sum_j\alpha_j(r)s_{m,j},\qquad \xi(r)=\mathrm{clamp}\bigl(r+u_m(r)\bigr)
 $$
 
 Here $\alpha_j$ is a vector coefficient field and $s_{m,j}$ is channel $j$ of `motion_signal`.
+
+## Gather-table residency
+
+For CUDA gather warps, construction estimates the full table bank plus 512 bytes per voxel of construction workspace against half of currently available GPU memory, including unused PyTorch-reserved blocks after reserving up to 1 GiB (5% on smaller devices). When the estimate exceeds that budget, tables are stored on CPU and a message reports the decision and estimated sizes. Non-rigid geometry is also built on CPU in this mode; rigid geometry is built state by state on GPU before storage on CPU. Host memory must accommodate the complete table bank.
+
+Warp application transfers and caches only one state on GPU when tables reside on CPU. State batching uses one state per chunk in this mode. Resident tables retain GPU execution, and their stacked cache contains only the requested chunk rather than duplicating the entire state bank. Grid size, state count, interpolation, and configured precision are preserved, with possible floating-point differences between CPU and GPU geometry arithmetic. CPU storage trades transfer time for reduced GPU residency; no configuration change is required. A single state's table and warp temporaries still need to fit on the GPU. This policy is separate from [FFT coil batching](encoding_operator.md#automatic-coil-batching).
+
+## Gather warp workspace
+
+Forward and adjoint gather application split the output-voxel axis into chunks targeting 32 MiB of temporary workspace, independently of coil and motion-state batching. The estimate includes gathered complex values, weighted products, flattened index copies, and chunk reductions; full outputs and interpolation tables are outside this budget. Small warps use a single chunk. Large warps log their chunk size once per operator. Both single-state and simultaneous-state paths use this bound, including tables transferred from CPU. Each forward chunk still gathers from the complete source image; adjoint chunks scatter into the complete output, preserving the global interpolation and its adjoint apart from floating-point accumulation order.
 
 ## Fourier rigid warps
 

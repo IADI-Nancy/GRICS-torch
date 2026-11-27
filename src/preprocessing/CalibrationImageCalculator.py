@@ -2,6 +2,7 @@ import torch
 
 from src.preprocessing.utils.spline import spline_fft_solver
 from src.utils.fftnc import ifftnc
+from src.reconstruction.coil_batching import CoilBatchPlanner
 
 
 class CalibrationImageCalculator:
@@ -16,9 +17,14 @@ class CalibrationImageCalculator:
 
     def calculate(self, kspace):
         """Convert [coil, repetition, x, y, z] k-space to a real [x, y, z] image."""
-        kspace_calib = torch.mean(kspace, dim=1).to(torch.complex64)
-        coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
-        reference_abs = torch.sqrt(torch.sum(torch.abs(coil_images) ** 2, dim=0).clamp_min(0.0))
+        reference_abs = torch.zeros_like(kspace[0, 0].real, dtype=torch.float32)
+        planner = CoilBatchPlanner(kspace[:, 0], torch.complex64, 'calibration image')
+        for start, end in planner.batches():
+            kspace_calib = torch.mean(kspace[start:end], dim=1).to(torch.complex64)
+            coil_images = ifftnc(kspace_calib, dims=(-3, -2, -1))
+            reference_abs.add_(torch.sum(torch.abs(coil_images) ** 2, dim=0))
+            del kspace_calib, coil_images
+        reference_abs.sqrt_()
         reference_abs = spline_fft_solver(
             reference_abs.permute(2, 0, 1).to(torch.complex128), self.params.calibration_image_smoothing,
         ).abs().permute(1, 2, 0)

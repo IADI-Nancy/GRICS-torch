@@ -2,8 +2,8 @@
 
 The factor layout orders components as phase, [partition,] readout, equivalent
 to Torch axes (y, [z,] x). Its flat offsets cross row and component boundaries
-by design. Triangular solves run in compiled CPU code, including for CUDA
-reconstructions.
+by design. Local normal blocks and factors are assembled on the CPU; triangular solves
+run in compiled CPU code, including for CUDA reconstructions.
 """
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ class PseudoGaussSeidelMotionPreconditioner:
     @classmethod
     def from_warped_gradients(cls, gradients, motion_signal: torch.Tensor,
                               *, lambda_scaled: float, voxel_spacing: tuple[float, ...]):
-        """Build the local RᴴR approximation from every motion state."""
+        """Build the local RᴴR approximation on CPU from streamed state gradients."""
         gradients = iter(gradients)
         first = next(gradients, None)
         if first is None:
@@ -105,19 +105,20 @@ class PseudoGaussSeidelMotionPreconditioner:
         spatial_shape = tuple(first.shape[1:])
         if dimensions not in (2, 3) or len(spatial_shape) != dimensions:
             raise ValueError('Gradients must have shape [D, Nx, Ny[, Nz]] with D=2 or 3.')
-        signal = torch.as_tensor(motion_signal, device=first.device)
+        first = first.detach().to(device='cpu', dtype=torch.complex64)
+        signal = torch.as_tensor(motion_signal).detach().cpu()
         if signal.ndim != 2:
             raise ValueError('motion_signal must have shape [Nstate, Nsensor].')
         sensors = int(signal.shape[1])
         count = dimensions * sensors
         local = torch.zeros((count, count, *spatial_shape), dtype=torch.complex64,
-                            device=first.device)
+                            device='cpu')
         for state, gradient in enumerate(chain((first,), gradients)):
             if state >= signal.shape[0]:
                 raise ValueError('More gradients than motion states.')
             if tuple(gradient.shape) != (dimensions, *spatial_shape):
                 raise ValueError('All warped gradients must share the same shape.')
-            grad = gradient.to(torch.complex64)
+            grad = gradient.detach().to(device='cpu', dtype=torch.complex64)
             weights = signal[state].to(torch.complex64)
             for row_dim in range(dimensions):
                 for row_sensor in range(sensors):
@@ -143,14 +144,17 @@ class PseudoGaussSeidelMotionPreconditioner:
             raise ValueError('Pseudo Gauss-Seidel factors require 2D or 3D non-rigid motion.')
         spatial_shape = (nx, ny, nz) if dimensions == 3 else (nx, ny)
 
+        print('[motion preconditioner] Assembling local normal blocks and factors on CPU; warps use the configured backend.', flush=True)
+
         def warped_gradients():
-            image = jacobian.image.flatten() * image_scale
+            image = (jacobian.image.flatten() * image_scale).to(jacobian.compute_dtype)
             for state in range(len(jacobian.SamplingIndices[0])):
-                warp = jacobian.motionOperator._get_sparse_operator(state)
-                warped = (warp @ image.to(warp.dtype)).reshape(spatial_shape)
+                warped = jacobian.motionOperator.warp(image, state).reshape(spatial_shape)
                 gradient = (jacobian._gradient_3d(warped) if dimensions == 3
                             else jacobian._gradient_2d(warped))
-                yield torch.stack(gradient)
+                gradient_cpu = torch.stack(gradient).detach().to(device='cpu', dtype=torch.complex64)
+                del warped, gradient
+                yield gradient_cpu
 
         return cls.from_warped_gradients(
             warped_gradients(), jacobian.motionOperator.motion_signal,

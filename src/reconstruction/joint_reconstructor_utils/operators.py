@@ -54,7 +54,7 @@ class RealNormalOperator:
         return self.J.adjoint(y).real
 
     def normal(self, v):
-        return self.J.adjoint(self.J.forward(v)).real
+        return self.J.normal(v).real
 
 
 class DiagonallyScaledOperator:

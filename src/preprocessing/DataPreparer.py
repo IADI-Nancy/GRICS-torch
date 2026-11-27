@@ -8,6 +8,7 @@ from typing import Dict, Optional, Sequence, Union
 from src.preprocessing.InputDataLoader import InputDataLoader
 from src.preprocessing.MotionSimulator import MotionSimulator
 from src.utils.fftnc import ifftnc
+from src.reconstruction.coil_batching import CoilBatchPlanner
 from src.preprocessing.MotionSamplingPreparer import MotionSamplingPreparer
 from src.preprocessing.CoilSensitivityCalculator import CoilSensitivityCalculator
 from src.preprocessing.CalibrationImageCalculator import CalibrationImageCalculator
@@ -172,13 +173,16 @@ class DataPreparer:
 
     def _compute_ifft_image_from_input_kspace(self):
         """Inverse FFT and coil-combine the loaded input k-space."""
-        averaged_kspace = torch.mean(self.kspace, dim=1)
-        coil_ifft_images = ifftnc(averaged_kspace, dims=(-3, -2, -1))
-        input_ifft_image = torch.sum(coil_ifft_images * self.smaps.conj(), dim=0)
+        input_ifft_image = torch.zeros_like(self.smaps[0])
+        planner = CoilBatchPlanner(self.smaps, self.kspace.dtype, 'input image')
+        for start, end in planner.batches():
+            averaged_kspace = torch.mean(self.kspace[start:end], dim=1)
+            coil_ifft_images = ifftnc(averaged_kspace, dims=(-3, -2, -1))
+            input_ifft_image.add_(torch.sum(coil_ifft_images * self.smaps[start:end].conj(), dim=0))
+            del averaged_kspace, coil_ifft_images
         if self.params.data_dimension == "2D":
             input_ifft_image = input_ifft_image.squeeze(-1)
         self.input_ifft_image = input_ifft_image.to(self.runtime.t_device)
-        del coil_ifft_images
 
     def _prepare_motion_simulator_inputs(self, motion_sim_device):
         input_ifft_image = self.input_ifft_image.to(motion_sim_device)

@@ -20,6 +20,8 @@ Stagnation means consecutive updates smaller than machine precision times $\|x\|
 
 `motion_preconditioner` enables the optional non-rigid preconditioner. Preconditioning changes the search, but convergence and candidate selection use the unpreconditioned residual. Autograd is disabled by default; `differentiable=True` retains it through the executed iterations. Preconditioning can reduce iteration counts; disabling autograd saves inference memory. `differentiable` is a `cg()` argument, not a TOML setting; `verbose` controls inner-solver diagnostic printing.
 
+The non-rigid pseudo Gauss–Seidel preconditioner applies `MotionOperator.warp()` using the configured backend, including `gather`, and streams one state's gradients to the CPU. Local normal blocks and banded factors are assembled on the CPU, where the triangular solves also run. This avoids materializing sparse views of gather warps or allocating the component-by-sensor normal tensor on the GPU; the execution location is logged during construction. The approximation and factor formulas are unchanged.
+
 ## References
 
 [1] Dixon, J. D. (1983). Estimating extremal eigenvalues and condition numbers of matrices. *SIAM Journal on Numerical Analysis*, **20**(4), 812–814. [doi:10.1137/0720053](https://doi.org/10.1137/0720053).

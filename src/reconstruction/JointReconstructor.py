@@ -35,7 +35,6 @@ from src.reconstruction.joint_reconstructor_utils.timing import Timer
 class _GaussNewtonIterationResult:
     image: torch.Tensor
     motion: torch.Tensor
-    predicted_kspace: torch.Tensor
     residual: torch.Tensor
     motion_for_residual: torch.Tensor
     motion_update: torch.Tensor | None
@@ -284,7 +283,7 @@ class JointReconstructor:
         # Project the k-space mismatch into motion-parameter space. Start from
         # zero because CG estimates an increment, not the full motion model.
         b_data = J.adjoint(residual)
-        x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=residual.device)
+        x0 = torch.zeros(Nparams, dtype=b_data.dtype, device=b_data.device)
 
         if self.params.reconstruction_motion_type == "non-rigid":
             # Penalize spatial variation of the updated motion field; do not
@@ -414,8 +413,7 @@ class JointReconstructor:
         # second full-resolution operator graph until the motion step ends and
         # can nearly double the peak memory of an unrolled level.
         with torch.no_grad():
-            predicted = data["E"].forward(image.detach().flatten())
-            residual = data["KspaceData"].flatten() - predicted
+            residual = data["E"].residual(image.detach().flatten(), data["KspaceData"])
         motion_for_residual = data["MotionModel"]
         motion_update = None
         motion_elapsed = None
@@ -443,7 +441,7 @@ class JointReconstructor:
         data["ReconstructedImage"] = image
         data["MotionModel"] = motion
         return _GaussNewtonIterationResult(
-            image, motion, predicted, residual, motion_for_residual, motion_update, image_timer.elapsed, motion_elapsed)
+            image, motion, residual, motion_for_residual, motion_update, image_timer.elapsed, motion_elapsed)
 
     def _prepare_resolution_level(self, idx_res, r):
         # Prepare low-resolution dataset
@@ -572,6 +570,9 @@ class JointReconstructor:
             previous = extract_image_and_motion_for_next_level(data)
             final_best_image = best_image
             final_best_motion = best_motion
+            # Only initialization estimates cross the level boundary. Drop cropped
+            # k-space, resized maps, and level-only buffers before preparing the next.
+            del data
 
         if previous is None:
             raise RuntimeError("Reconstruction did not produce a valid image/motion solution.")

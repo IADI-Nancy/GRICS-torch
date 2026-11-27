@@ -58,3 +58,9 @@ A non-positive map maximum raises an error. This convention fixes global scale; 
 ## Device and precision choices
 
 ESPIRiT calibrates in complex64 and returns complex128 maps. The CUDA path uses CuPy and DLPack to avoid a host copy. `runtime_device` selects the preferred runtime device; an explicit `sp_device` argument selects the SigPy device. Runtime setup selects the CUDA path only when CuPy sees a device and can load cuSOLVER (`src/runtime/sigpy_backend.py`); otherwise it prints the reason and keeps SigPy on the CPU. On the CUDA path, CUDA memory exhaustion prints a message and retries calibration on CPU. Other exceptions propagate. Spline filtering uses mixed precision internally and also returns complex128 maps.
+
+## Coil workspace
+
+Odille estimation uses the [automatic coil batching policy](encoding_operator.md#automatic-coil-batching) for both spatial FFTs and spline filtering. The final complex128 maps are allocated before choosing the temporary workspace. A first pass accumulates the RSS reference and global magnitude maximum; a second pass recomputes coil images, applies the common phase threshold, and writes smoothed maps by coil group. Global map normalization is applied in place. Recomputing images trades an extra inverse FFT per coil for avoiding persistent full-coil image, magnitude, and phase buffers. The formula and smoothing precision remain unchanged apart from floating-point accumulation order.
+
+`CalibrationImageCalculator` also accumulates its RSS reference by coil group, and `DataPreparer` groups the inverse FFT and coil combination used for the initial image. All three stages log their selected GPU coil group size. Loaded k-space, final maps, and single-volume reference/spline workspace still need to fit on the device.

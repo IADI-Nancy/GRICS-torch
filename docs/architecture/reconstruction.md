@@ -30,11 +30,13 @@ Blue nodes are Python classes; the darker node coordinates reconstruction. Uncol
 
 ## Solver state
 
-The full-resolution acquisition stays in `Data_full`. Each resolution has its own cropped k-space, resized coil maps, remapped sampling indices, and image and motion estimates. Resolution helpers remove states without acquired samples in the current crop; non-rigid reconstruction can additionally merge states. Rigid state IDs connect the compact per-level motion model to retained transforms in the original state order. The next level receives image and motion estimates with this mapping; temporary operators are released. Initialization and output semantics are in the [motion guide](../usage/configuration/motion.md#motion-binning-and-reconstruction-states).
+The full-resolution acquisition stays in `Data_full`. Each resolution has its own cropped k-space, resized coil maps, remapped sampling indices, and image and motion estimates. Resolution helpers remove states without acquired samples in the current crop; non-rigid reconstruction can additionally merge states. Rigid state IDs connect the compact per-level motion model to retained transforms in the original state order. The next level receives image and motion estimates with this mapping; temporary operators and the previous level data dictionary are released before preparing the next level. At the native grid, level data shares the read-only full-resolution coil maps instead of interpolating a duplicate. Initialization and output semantics are in the [motion guide](../usage/configuration/motion.md#motion-binning-and-reconstruction-states).
+
+Iteration residuals reuse one prediction buffer, which may reside on CPU according to the operator workspace policy; source acquisition tensors and parameter updates retain their device ownership. K-space buffer storage is described in the [encoding implementation](../implementation/encoding_operator.md#k-space-buffer-storage).
 
 Within a Gauss–Newton iteration, fixed motion defines the encoding operator for the image solve. The updated image produces a k-space residual, which the motion Jacobian uses to solve for an increment. Rigid motion penalizes increment magnitude; non-rigid motion penalizes spatial variation of the updated field and can use a motion preconditioner.
 
-`JointReconstructor` owns iteration counts, final-motion-update policy, and early stopping. The logger records progress but does not choose updates.
+`JointReconstructor` owns iteration counts, final-motion-update policy, and early stopping. The logger records progress but does not choose updates. Encoding and motion-Jacobian operators each own a `CoilBatchPlanner` that selects FFT coil groups from live GPU workspace availability; this changes execution grouping without changing the prepared data or solver state. Memory policy and limits are described in [automatic coil batching](../implementation/encoding_operator.md#automatic-coil-batching).
 
 ## Optional path and output boundary
 

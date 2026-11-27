@@ -1,6 +1,7 @@
 import os
 import torch
-from  src.utils.fftnc import fftnc, ifftnc
+from src.utils.fftnc import fftnc, ifftnc
+from src.reconstruction.coil_batching import CoilBatchPlanner
 
 """
 Jacobian of the encoding operator with respect to motion model perturbation.
@@ -18,7 +19,7 @@ where ∂x_i/∂ᾱ_j = J_(i,j) is the Jacobian matrix of (X,Y) grid derivatives
 Implementation notes (performance; results identical to the reference implementation up to
 floating-point summation order): the image and the motion operator are fixed for the lifetime of
 this object (one Gauss-Newton motion solve), so the warped image and its spatial gradients are
-computed once per motion state and cached; the coil axis is processed as one batched tensor;
+computed once per motion state and cached; coils use automatic GPU-memory-sized FFT batches;
 contributions of all repetitions are accumulated before the (linear) adjoint Jacobian.
 """
 
@@ -66,8 +67,8 @@ class MotionPerturbationSimulator:
         self.compute_dtype = getattr(motionOperator, 'compute_dtype', torch.complex128)
         self._real_dtype = torch.float32 if self.compute_dtype == torch.complex64 else torch.float64
         self._image_c = image.to(self.compute_dtype)
-        self._smaps_b = (smaps if self._is_3d else smaps.squeeze(-1)).to(self.compute_dtype)
-        self._smaps_b_conj = self._smaps_b.conj()
+        self._smaps_b = smaps if self._is_3d else smaps.squeeze(-1)
+        self._coil_batches = CoilBatchPlanner(self._smaps_b, self.compute_dtype, 'motion Jacobian')
         self._fft_dims = (1, 2, 3) if self._is_3d else (1, 2)
         self._state_cache = {}
         # State batching pays off for launch-bound (small) problems and costs memory traffic on large ones:
@@ -147,7 +148,9 @@ class MotionPerturbationSimulator:
 
     def _chunks(self):
         Ncoils = self.SensitivityMaps.shape[0]
-        return self.motionOperator.state_chunks(Ncoils * self._smaps_b[0].numel() * self._smaps_b.element_size())
+        budget = int(float(os.environ.get('GRICS_STATE_BATCH_BUDGET_GB', '2')) * 2**30)
+        return self.motionOperator.state_chunks(Ncoils * self._smaps_b[0].numel() * self._coil_batches.element_size,
+                                               budget_bytes=self._coil_batches.state_budget(budget))
 
     def _displacements_all(self, MotionModelPerturbation, N_motion_states):
         """Displacement perturbations of all states [Nm, dim, N] in the operator precision."""
@@ -162,7 +165,7 @@ class MotionPerturbationSimulator:
         a = MotionModelPerturbation[:dim].reshape(dim, -1, self.Nphysio)          # [dim, N, S]
         return torch.einsum('dns,ms->mdn', a, signal).to(self.compute_dtype)   # [Nm, dim, N]
 
-    def _forward_batched(self, MotionModelPerturbation):
+    def _forward_batched(self, MotionModelPerturbation, output_device):
         Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
         N_motion_states = len(self.SamplingIndices[0])
         if self.motionOperator.motion_type == "rigid":
@@ -171,42 +174,40 @@ class MotionPerturbationSimulator:
             MotionModelPerturbation = MotionModelPerturbation.reshape(self.Nalpha, -1, self.Nphysio)
         du = self._displacements_all(MotionModelPerturbation, N_motion_states)
         G = self._grads_all()
-        ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=self.compute_dtype, device=self.device)
+        ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex128, device=output_device)
         fft_dims = tuple(d + 1 for d in self._fft_dims)
         for s0, s1 in self._chunks():
             WE = (G[s0:s1] * du[s0:s1]).sum(dim=1).reshape(s1 - s0, 1, *self._shape)
-            ImFT = fftnc(WE * self._smaps_b.unsqueeze(0), dims=fft_dims).reshape(s1 - s0, Ncoils, -1)
-            for motion_state in range(s0, s1):
-                for nex in range(self.Nex):
-                    SamplingIndices = self.SamplingIndices[nex][motion_state]
-                    if SamplingIndices.numel() == 0:
-                        continue
-                    ResidualKspace[:, nex, SamplingIndices] = ImFT[motion_state - s0][:, SamplingIndices]
-        return ResidualKspace.flatten().to(torch.complex128)
+            for c0, c1 in self._coil_batches.batches(s1 - s0):
+                ImFT = fftnc(WE * self._coil_batches.coil_maps(c0, c1).unsqueeze(0), dims=fft_dims).reshape(s1 - s0, c1 - c0, -1)
+                for motion_state in range(s0, s1):
+                    for nex in range(self.Nex):
+                        indices = self.SamplingIndices[nex][motion_state]
+                        if indices.numel():
+                            ResidualKspace[c0:c1, nex, indices.to(output_device)] = ImFT[motion_state - s0][:, indices].to(device=output_device, dtype=ResidualKspace.dtype)
+                del ImFT
+        return ResidualKspace.flatten()
 
     def _adjoint_batched(self, ResidualKspace):
         Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
         N_motion_states = len(self.SamplingIndices[0])
         n_voxels = Nx * Ny * Nz
         dim = 3 if self._is_3d else 2
-        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples).to(self.compute_dtype)
+        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
         G = self._grads_all()
         fft_dims = tuple(d + 1 for d in self._fft_dims)
         RI = torch.zeros((N_motion_states, n_voxels), dtype=self.compute_dtype, device=self.device)
         for s0, s1 in self._chunks():
-            for nex in range(self.Nex):
-                Kfull = torch.zeros((s1 - s0, Ncoils, n_voxels), dtype=self.compute_dtype, device=self.device)
-                any_lines = False
-                for motion_state in range(s0, s1):
-                    SamplingIndices = self.SamplingIndices[nex][motion_state]
-                    if SamplingIndices.numel() == 0:
-                        continue
-                    Kfull[motion_state - s0][:, SamplingIndices] = ResidualKspace[:, nex, SamplingIndices]
-                    any_lines = True
-                if not any_lines:
-                    continue
-                img = ifftnc(Kfull.reshape(s1 - s0, Ncoils, *self._shape), dims=fft_dims)
-                RI[s0:s1] += (img * self._smaps_b_conj.unsqueeze(0)).sum(dim=1).reshape(s1 - s0, -1)
+            for c0, c1 in self._coil_batches.batches(s1 - s0):
+                for nex in range(self.Nex):
+                    Kfull = torch.zeros((s1 - s0, c1 - c0, n_voxels), dtype=self.compute_dtype, device=self.device)
+                    for motion_state in range(s0, s1):
+                        indices = self.SamplingIndices[nex][motion_state]
+                        if indices.numel():
+                            Kfull[motion_state - s0][:, indices] = self._coil_batches.kspace_samples(ResidualKspace, c0, c1, nex, indices)
+                    img = ifftnc(Kfull.reshape(s1 - s0, c1 - c0, *self._shape), dims=fft_dims)
+                    RI[s0:s1] += (img * self._coil_batches.coil_maps(c0, c1, conjugate=True).unsqueeze(0)).sum(dim=1).reshape(s1 - s0, -1)
+                    del Kfull, img
         du = RI.unsqueeze(1) * G.conj()                                             # [Nm, dim, N]
         if self.motionOperator.motion_type == "rigid":
             out = torch.zeros((self.Nalpha, N_motion_states), dtype=torch.complex128, device=self.device)
@@ -232,9 +233,10 @@ class MotionPerturbationSimulator:
             )
         return motion_signal
 
-    def forward(self, MotionModelPerturbation):
+    def forward(self, MotionModelPerturbation, *, output_device=None):
+        output_device = self.device if output_device is None else torch.device(output_device)
         if self._batched:
-            return self._forward_batched(MotionModelPerturbation)
+            return self._forward_batched(MotionModelPerturbation, output_device)
         Ncoils, Nx, Ny, Nz = self.SensitivityMaps.shape
         is_3d = self._is_3d
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
@@ -249,8 +251,8 @@ class MotionPerturbationSimulator:
             motion_signal = self._motion_signal(MotionModelPerturbation.dtype)
         # output k-space residual
         ResidualKspace = torch.zeros((Ncoils, self.Nex, self.Nsamples),
-                                     dtype=self.compute_dtype,
-                                     device=self.device)
+                                     dtype=torch.complex128,
+                                     device=output_device)
 
         # ---- Loop over motion states ----
         for motion_state in range(N_motion_states):
@@ -285,17 +287,15 @@ class MotionPerturbationSimulator:
                 Gx, Gy = grads
                 WarpedImageError = Gx * dux.to(self.compute_dtype) + Gy * duy.to(self.compute_dtype)
 
-            # 5) Coil sensitivities and FFT of all coils at once
-            ImFT = fftnc(WarpedImageError.unsqueeze(0) * self._smaps_b, dims=self._fft_dims).reshape(Ncoils, -1)
-
-            for nex in range(self.Nex):
-                SamplingIndices = self.SamplingIndices[nex][motion_state]
-                if SamplingIndices.numel() == 0:
-                    continue
-                # Sampling operator: extract measured samples and store in the global vector
-                ResidualKspace[:, nex, SamplingIndices] = ImFT[:, SamplingIndices]
-
-        return ResidualKspace.flatten().to(torch.complex128)
+            # 5) Coil sensitivities and FFT, with the same grouping as encoding.
+            for c0, c1 in self._coil_batches.batches():
+                ImFT = fftnc(WarpedImageError.unsqueeze(0) * self._coil_batches.coil_maps(c0, c1), dims=self._fft_dims).reshape(c1 - c0, -1)
+                for nex in range(self.Nex):
+                    indices = self.SamplingIndices[nex][motion_state]
+                    if indices.numel():
+                        ResidualKspace[c0:c1, nex, indices.to(output_device)] = ImFT[:, indices].to(device=output_device, dtype=ResidualKspace.dtype)
+                del ImFT
+        return ResidualKspace.flatten()
 
     def adjoint(self, ResidualKspace):
         """
@@ -313,7 +313,7 @@ class MotionPerturbationSimulator:
         N_motion_states = len(self.SamplingIndices[0])  # assuming SamplingIndices is a list of lists with shape [Nex][N_motion_states]
         n_voxels = Nx * Ny * Nz
 
-        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples).to(self.compute_dtype)
+        ResidualKspace = ResidualKspace.reshape(Ncoils, self.Nex, self.Nsamples)
 
         if self.motionOperator.motion_type == "rigid":
             MotionModelPerturbation = torch.zeros((self.Nalpha, N_motion_states),
@@ -329,19 +329,17 @@ class MotionPerturbationSimulator:
         for motion_state in range(N_motion_states):
             # 3-6) Back-project the residual of every repetition into the image domain,
             # summed over coils and repetitions (the adjoint Jacobian below is linear).
-            ResidualImage = None
-            for nex in range(self.Nex):
-                SamplingIndices = self.SamplingIndices[nex][motion_state]
-                if SamplingIndices.numel() == 0:
-                    continue
-                KspaceDataNex = torch.zeros((Ncoils, n_voxels), dtype=self.compute_dtype, device=self.device)
-                KspaceDataNex[:, SamplingIndices] = ResidualKspace[:, nex, SamplingIndices]
-                ImageSeenByCoils = ifftnc(KspaceDataNex.reshape(Ncoils, *self._shape), dims=self._fft_dims)
-                contribution = (ImageSeenByCoils * self._smaps_b_conj).sum(dim=0)
-                ResidualImage = contribution if ResidualImage is None else ResidualImage + contribution
-            if ResidualImage is None:
-                continue
-
+            ResidualImage = torch.zeros(self._shape, dtype=self.compute_dtype, device=self.device)
+            for c0, c1 in self._coil_batches.batches():
+                for nex in range(self.Nex):
+                    indices = self.SamplingIndices[nex][motion_state]
+                    if not indices.numel():
+                        continue
+                    KspaceDataNex = torch.zeros((c1 - c0, n_voxels), dtype=self.compute_dtype, device=self.device)
+                    KspaceDataNex[:, indices] = self._coil_batches.kspace_samples(ResidualKspace, c0, c1, nex, indices)
+                    ImageSeenByCoils = ifftnc(KspaceDataNex.reshape(c1 - c0, *self._shape), dims=self._fft_dims)
+                    ResidualImage += (ImageSeenByCoils * self._coil_batches.coil_maps(c0, c1, conjugate=True)).sum(dim=0)
+                    del KspaceDataNex, ImageSeenByCoils
             # 1-2) Warped image gradients (cached)
             grads = self._warped_gradients(motion_state)
 
@@ -375,4 +373,5 @@ class MotionPerturbationSimulator:
         return MotionModelPerturbation.flatten()
 
     def normal(self, image):
-            return self.adjoint(self.forward(image))
+        device = self._coil_batches.kspace_output_device(self.Nex, self.Nsamples)
+        return self.adjoint(self.forward(image, output_device=device))

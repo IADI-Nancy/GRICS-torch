@@ -172,7 +172,11 @@ def downsample_data(Data_full, res_factor, target_states, motion_signal, params,
     Data_res["Nz"] = Nz
 
     resize_shape = (Nx, Ny, Nz) if Nz > 1 else (Nx, Ny)
-    Data_res["SensitivityMaps"] = resize_img_xy(Data_full["SensitivityMaps"], resize_shape)
+    full_shape = (Data_full["Nx"], Data_full["Ny"], Nz_full) if Nz_full > 1 else (Data_full["Nx"], Data_full["Ny"])
+    # Coil maps are read-only during reconstruction. At the native grid, share
+    # them rather than allocating real/imaginary interpolation buffers and a copy.
+    Data_res["SensitivityMaps"] = (Data_full["SensitivityMaps"] if resize_shape == full_shape
+                                   else resize_img_xy(Data_full["SensitivityMaps"], resize_shape))
     sampling_indices = downsample_sampling_indices(
         Data_full, Data_full["SamplingIndices"], Nx, Ny, Nz_res=Nz
     )

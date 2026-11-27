@@ -17,6 +17,8 @@ Translational and rotational motion derivatives:
 
 
 class MotionOperator:
+    gather_workspace_bytes = 32 * 2**20
+
     def __init__(self, Nx, Ny, alpha, motion_type, centers=None, motion_signal=None, Nz=1, compute_dtype=torch.complex128,
                  warp_backend="sparse", interpolation="linear"):
         # Arithmetic precision of the warps (complex64 or complex128); the geometry stays float64.
@@ -44,6 +46,19 @@ class MotionOperator:
         self.motion_type = motion_type
         self.centers = centers
         self.motion_signal = motion_signal
+        self._table_device = self.device
+        if warp_backend == 'gather' and self.device.type == 'cuda':
+            n_states = len(motion_signal) if motion_type == 'non-rigid' else int(alpha.shape[1])
+            nvoxels = Nx * Ny * self.Nz
+            neighbours = 8 if self.Nz > 1 else 4
+            table_bytes = n_states * neighbours * nvoxels * (8 + torch.empty((), dtype=self._real_dtype).element_size())
+            free, total = torch.cuda.mem_get_info(self.device)
+            reusable = max(0, torch.cuda.memory_reserved(self.device) - torch.cuda.memory_allocated(self.device))
+            budget = max(0, free + reusable - min(2**30, total // 20)) // 2
+            # Reserve construction workspace as well as the persistent tables.
+            if table_bytes + nvoxels * 512 > budget:
+                self._table_device = torch.device('cpu')
+                print(f'[motion] Gather tables require {table_bytes / 2**30:.2f} GiB plus construction workspace; {budget / 2**30:.2f} GiB GPU budget. Storing tables on CPU and transferring one state at a time.', flush=True)
         if motion_type == 'rigid':
             self._initialize_rigid_motion_operator()
         elif motion_type == 'non-rigid':
@@ -51,31 +66,36 @@ class MotionOperator:
         else:
             raise ValueError(f"Unknown motion type: {motion_type}")    
 
-    def _get_sparse_operator(self, motion_state):
-        if self.interpolation == "fourier":
-            raise ValueError("Fourier warps have no sparse matrix.")
-        if self.warp_backend == "gather":
-            # Legacy consumers (preconditioner, simulator) get a lazily materialised sparse view.
-            cache = self.__dict__.setdefault("_sparse_view_cache", {})
-            op = cache.get(motion_state)
-            if op is None:
-                idx, w = self.gatherMotionOperator[motion_state]
-                n = idx.shape[1]
-                rows = torch.arange(n, device=idx.device).repeat_interleave(idx.shape[0])
-                op = torch.sparse_coo_tensor(torch.stack([rows, idx.t().reshape(-1)]), w.t().reshape(-1).to(self.compute_dtype),
-                                             (n, n), is_coalesced=True)
-                cache[motion_state] = op
-            return op
-        return self.sparseMotionOperator[motion_state]
-
     # ---- batched (all states at once) application for the gather backend ----
-    def _gather_tables(self):
-        """Stacked neighbour indices [Nm, K, N] and weights [Nm, K, N] of all states (gather backend)."""
-        tabs = self.__dict__.get("_gather_tables_cache")
-        if tabs is None:
-            tabs = (torch.stack([t[0] for t in self.gatherMotionOperator]), torch.stack([t[1] for t in self.gatherMotionOperator]))
-            self.__dict__["_gather_tables_cache"] = tabs
-        return tabs
+    def _gather_operator(self, motion_state):
+        """Use resident tables or a single-state device transfer cache."""
+        idx, w = self.gatherMotionOperator[motion_state]
+        if idx.device == self.device:
+            return idx, w
+        cached = self.__dict__.get('_gather_state_cache')
+        if cached is None or cached[0] != motion_state:
+            self.__dict__.pop('_gather_state_cache', None)
+            del cached
+            cached = (motion_state, idx.to(self.device), w.to(self.device))
+            self._gather_state_cache = cached
+        return cached[1], cached[2]
+
+    def _gather_tables(self, states=None):
+        """Stack only the requested resident state chunk, caching one chunk."""
+        states = (0, len(self.gatherMotionOperator)) if states is None else states
+        cached = self.__dict__.get('_gather_tables_cache')
+        if cached is None or cached[0] != states:
+            self.__dict__.pop('_gather_tables_cache', None)
+            del cached
+            tables = self.gatherMotionOperator[states[0]:states[1]]
+            if len(tables) == 1:
+                idx, w = self._gather_operator(states[0])
+                tabs = (idx.unsqueeze(0), w.unsqueeze(0))
+            else:
+                tabs = (torch.stack([t[0] for t in tables]), torch.stack([t[1] for t in tables]))
+            cached = (states, tabs)
+            self._gather_tables_cache = cached
+        return cached[1]
 
     def state_chunks(self, bytes_per_state, budget_bytes=None):
         """Split the states into chunks so that one intermediate of `bytes_per_state` per state stays within a budget."""
@@ -84,22 +104,48 @@ class MotionOperator:
         if budget_bytes is None:
             budget_bytes = int(float(os.environ.get("GRICS_STATE_BATCH_BUDGET_GB", "2")) * 2**30)
         chunk = max(1, min(n_states, int(budget_bytes // max(1, bytes_per_state))))
+        if self._table_device != self.device:
+            chunk = 1
         return [(s, min(s + chunk, n_states)) for s in range(0, n_states, chunk)]
+
+    def _warp_voxel_chunks(self, nvoxels, dtype, neighbours, n_states=1):
+        """Bound gather/product/index-copy temporaries; outputs and tables are separate."""
+        element_size = torch.empty((), dtype=dtype).element_size()
+        bytes_per_voxel = n_states * (neighbours * (2 * element_size + 8 + torch.empty((), dtype=self._real_dtype).element_size()) + element_size)
+        chunk = max(1, min(nvoxels, self.gather_workspace_bytes // bytes_per_voxel))
+        if chunk < nvoxels and not self.__dict__.get('_reported_voxel_chunk', False):
+            print(f'[motion] Gather warp voxel chunk: {chunk}/{nvoxels}; {self.gather_workspace_bytes / 2**20:.0f} MiB temporary-workspace target (tables and output excluded).', flush=True)
+            self._reported_voxel_chunk = True
+        return range(0, nvoxels, chunk), chunk
 
     def warp_all(self, x_flat, states=None):
         """Warped images of several states at once: [n_states, N] (gather backend)."""
-        idx, w = self._gather_tables()
-        if states is not None:
-            idx, w = idx[states[0]:states[1]], w[states[0]:states[1]]
-        return (w * x_flat[idx]).sum(dim=1)
+        if self._table_device != self.device:
+            start, stop = (0, len(self.gatherMotionOperator)) if states is None else states
+            return torch.stack([self.warp(x_flat, state) for state in range(start, stop)])
+        idx, w = self._gather_tables(states)
+        dtype = torch.promote_types(x_flat.dtype, w.dtype)
+        out = torch.empty((idx.shape[0], idx.shape[-1]), dtype=dtype, device=x_flat.device)
+        starts, chunk = self._warp_voxel_chunks(idx.shape[-1], dtype, idx.shape[1], idx.shape[0])
+        for start in starts:
+            stop = start + chunk
+            out[:, start:stop] = (w[..., start:stop] * x_flat[idx[..., start:stop]]).sum(dim=1)
+        return out
 
     def warp_T_all(self, y_states, states=None):
         """Sum over states of the transposed warps applied to y_states [n_states, N] (gather backend)."""
-        idx, w = self._gather_tables()
-        if states is not None:
-            idx, w = idx[states[0]:states[1]], w[states[0]:states[1]]
         out = torch.zeros(y_states.shape[-1], dtype=y_states.dtype, device=y_states.device)
-        out.index_add_(0, idx.reshape(-1), (w * y_states.unsqueeze(1)).reshape(-1))
+        if self._table_device != self.device:
+            start, stop = (0, len(self.gatherMotionOperator)) if states is None else states
+            for offset, state in enumerate(range(start, stop)):
+                out.add_(self.warp_T(y_states[offset], state))
+            return out
+        idx, w = self._gather_tables(states)
+        dtype = torch.promote_types(y_states.dtype, w.dtype)
+        starts, chunk = self._warp_voxel_chunks(idx.shape[-1], dtype, idx.shape[1], idx.shape[0])
+        for start in starts:
+            stop = start + chunk
+            out.index_add_(0, idx[..., start:stop].reshape(-1), (w[..., start:stop] * y_states[:, None, start:stop]).reshape(-1))
         return out
 
     def warp(self, x_flat, motion_state):
@@ -107,8 +153,14 @@ class MotionOperator:
         if self.interpolation == "fourier":
             return self._fourier_warp(x_flat, motion_state, adjoint=False)
         if self.warp_backend == "gather":
-            idx, w = self.gatherMotionOperator[motion_state]
-            return (w * x_flat[idx]).sum(dim=0)
+            idx, w = self._gather_operator(motion_state)
+            dtype = torch.promote_types(x_flat.dtype, w.dtype)
+            out = torch.empty_like(x_flat, dtype=dtype)
+            starts, chunk = self._warp_voxel_chunks(x_flat.numel(), dtype, idx.shape[0])
+            for start in starts:
+                stop = start + chunk
+                out[start:stop] = (w[:, start:stop] * x_flat[idx[:, start:stop]]).sum(dim=0)
+            return out
         return self.sparseMotionOperator[motion_state] @ x_flat
 
     def warp_T(self, y_flat, motion_state):
@@ -116,9 +168,13 @@ class MotionOperator:
         if self.interpolation == "fourier":
             return self._fourier_warp(y_flat, motion_state, adjoint=True)
         if self.warp_backend == "gather":
-            idx, w = self.gatherMotionOperator[motion_state]
+            idx, w = self._gather_operator(motion_state)
             out = torch.zeros_like(y_flat)
-            out.index_add_(0, idx.reshape(-1), (w * y_flat.unsqueeze(0)).reshape(-1))
+            dtype = torch.promote_types(y_flat.dtype, w.dtype)
+            starts, chunk = self._warp_voxel_chunks(y_flat.numel(), dtype, idx.shape[0])
+            for start in starts:
+                stop = start + chunk
+                out.index_add_(0, idx[:, start:stop].reshape(-1), (w[:, start:stop] * y_flat[None, start:stop]).reshape(-1))
             return out
         return self._get_sparse_operator_T(motion_state) @ y_flat
 
@@ -126,7 +182,7 @@ class MotionOperator:
         """Store the operator of one state in the layout of the selected backend."""
         if self.warp_backend == "gather":
             idx, w = motion_state_op
-            self.gatherMotionOperator.append((idx, w.to(self._real_dtype)))
+            self.gatherMotionOperator.append((idx.to(self._table_device), w.to(device=self._table_device, dtype=self._real_dtype)))
         else:
             idx, w = motion_state_op
             self.sparseMotionOperator.append(MotionOperator._sparse_from_indices_weights(idx, w, self.compute_dtype))
@@ -619,8 +675,10 @@ class MotionOperator:
     # -------------------- Non-rigid motion -------------------
     # ---------------------------------------------------------
     def _initialize_non_rigid_motion_operator(self):
-        alpha = self.alpha
-        signal = torch.as_tensor(self.motion_signal, device=self.device, dtype=alpha.dtype)
+        # Build offloaded tables on the CPU as well, avoiding full-volume CUDA
+        # geometry and interpolation temporaries during construction.
+        alpha = self.alpha.to(self._table_device)
+        signal = torch.as_tensor(self.motion_signal, device=self._table_device, dtype=alpha.dtype)
         if signal.ndim != 2:
             raise ValueError(
                 "non-rigid motion_signal must have shape [Nstate, Nsensor]. "
@@ -726,20 +784,6 @@ class MotionOperator:
         Yi_i = Yi.floor().clamp(1, y_hi)
 
         # -----------------------------
-        # Flatten sizes
-        # -----------------------------
-        N3  = Nx * Ny
-        N3i = N3
-
-        # -----------------------------
-        # Prepare row indices (same as repmat(1:N3i, 4, 1))
-        # -----------------------------
-        # Entries are emitted row by row, columns in increasing order
-        # (col1 < col3 < col2 < col4 for Ny >= 2), so the COO tensor is
-        # already coalesced and no sort is needed.
-        rowIndices = torch.arange(N3i, device=device, dtype=torch.long).repeat_interleave(4)
-
-        # -----------------------------
         # Prepare column indices
         # -----------------------------
         Xi_i_flat = Xi_i.reshape(-1).long()     # (N3,)
@@ -830,11 +874,9 @@ class MotionOperator:
         Yi_i = Yi.floor().clamp(1, y_hi)
         Zi_i = Zi.floor().clamp(1, z_hi)
 
-        n = Nx * Ny * Nz
         # Entries emitted row by row with columns in increasing order
         # (c000 < c001 < c010 < c011 < c100 < c101 < c110 < c111 for Ny, Nz >= 2):
         # the COO tensor is already coalesced, no sort needed.
-        row_idx = torch.arange(n, device=device, dtype=torch.long).repeat_interleave(8)
 
         xi = Xi_i.reshape(-1).long()
         yi = Yi_i.reshape(-1).long()

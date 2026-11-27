@@ -1,6 +1,7 @@
 import os
 import torch
 from src.utils.fftnc import fftnc, ifftnc
+from src.reconstruction.coil_batching import CoilBatchPlanner
 
 class EncodingOperator:
     """
@@ -19,8 +20,7 @@ class EncodingOperator:
 
     Implementation notes (performance; results identical to the reference
     implementation up to floating-point summation order):
-    - the coil axis is processed as one batched tensor (one FFT call per state
-      instead of one per coil);
+    - the coil axis is processed in automatic GPU-memory-sized FFT batches;
     - the warped image of a state is computed once and reused for every
       repetition (it does not depend on the repetition);
     - the adjoint warp uses the transposed sparse operator cached inside
@@ -43,8 +43,8 @@ class EncodingOperator:
         # entry and outputs are returned in complex128 so that the solver is unaffected.
         self.compute_dtype = getattr(motionOperator, 'compute_dtype', torch.complex128)
         # Coil maps with the coil axis first and spatial axes matching the image.
-        self._smaps_b = (smaps if self._is_3d else smaps.squeeze(-1)).to(self.compute_dtype)
-        self._smaps_b_conj = self._smaps_b.conj()
+        self._smaps_b = smaps if self._is_3d else smaps.squeeze(-1)
+        self._coil_batches = CoilBatchPlanner(self._smaps_b, self.compute_dtype, 'encoding')
         self._fft_dims = (1, 2, 3) if self._is_3d else (1, 2)
         self._phase_fft_dims = (2, 3) if self._is_3d else (2,)
         # Sampling is fixed throughout a CG solve; build the phase masks once for optimized normal operator.
@@ -81,88 +81,93 @@ class EncodingOperator:
 
     def _chunks(self):
         Ncoils = self.smaps.shape[0]
-        return self.motionOperator.state_chunks(Ncoils * self._smaps_b[0].numel() * self._smaps_b.element_size())
+        budget = int(float(os.environ.get('GRICS_STATE_BATCH_BUDGET_GB', '2')) * 2**30)
+        return self.motionOperator.state_chunks(Ncoils * self._smaps_b[0].numel() * self._coil_batches.element_size,
+                                               budget_bytes=self._coil_batches.state_budget(budget))
 
-    def forward(self, image):
+    def forward(self, image, *, output_device=None):
+        output_device = self.device if output_device is None else torch.device(output_device)
         if self._batched:
-            return self._forward_batched(image)
+            return self._forward_batched(image, output_device)
         Ncoils = self.smaps.shape[0]
-        N_motion_states = len(self.SamplingIndices[0])  # [Nex][N_motion_states]
-        KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=self.compute_dtype, device=self.device)
+        N_motion_states = len(self.SamplingIndices[0])
+        KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex128, device=output_device)
         image_flat = image.reshape(-1).to(self.compute_dtype)
-
         for motion_state in range(N_motion_states):
             WarpedImage = self._warp(image_flat, motion_state)
-            # Coil sensitivity, Fourier encoding of all coils at once.
-            WarpedImageFT = fftnc(WarpedImage.unsqueeze(0) * self._smaps_b, dims=self._fft_dims).reshape(Ncoils, -1)
-            for nex in range(self.Nex):
-                SamplingIndices = self.SamplingIndices[nex][motion_state]
-                if SamplingIndices.numel() == 0:
-                    continue
-                # Sampling operator
-                KspaceData[:, nex, SamplingIndices] = WarpedImageFT[:, SamplingIndices]
+            for c0, c1 in self._coil_batches.batches():
+                WarpedImageFT = fftnc(WarpedImage.unsqueeze(0) * self._coil_batches.coil_maps(c0, c1), dims=self._fft_dims).reshape(c1 - c0, -1)
+                for nex in range(self.Nex):
+                    indices = self.SamplingIndices[nex][motion_state]
+                    if indices.numel():
+                        KspaceData[c0:c1, nex, indices.to(output_device)] = WarpedImageFT[:, indices].to(device=output_device, dtype=KspaceData.dtype)
+                del WarpedImageFT
+        return KspaceData.flatten()
 
-        return KspaceData.flatten().to(torch.complex128)
-
-    def _forward_batched(self, image):
+    def _forward_batched(self, image, output_device):
         Ncoils = self.smaps.shape[0]
-        KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=self.compute_dtype, device=self.device)
+        KspaceData = torch.zeros((Ncoils, self.Nex, self.Nsamples), dtype=torch.complex128, device=output_device)
         image_flat = image.reshape(-1).to(self.compute_dtype)
         for s0, s1 in self._chunks():
             W = self.motionOperator.warp_all(image_flat, (s0, s1)).reshape(s1 - s0, 1, *self._shape)
-            WFT = fftnc(W * self._smaps_b.unsqueeze(0), dims=tuple(d + 1 for d in self._fft_dims)).reshape(s1 - s0, Ncoils, -1)
-            for motion_state in range(s0, s1):
-                for nex in range(self.Nex):
-                    SamplingIndices = self.SamplingIndices[nex][motion_state]
-                    if SamplingIndices.numel() == 0:
-                        continue
-                    KspaceData[:, nex, SamplingIndices] = WFT[motion_state - s0][:, SamplingIndices]
-        return KspaceData.flatten().to(torch.complex128)
+            for c0, c1 in self._coil_batches.batches(s1 - s0):
+                WFT = fftnc(W * self._coil_batches.coil_maps(c0, c1).unsqueeze(0), dims=tuple(d + 1 for d in self._fft_dims)).reshape(s1 - s0, c1 - c0, -1)
+                for motion_state in range(s0, s1):
+                    for nex in range(self.Nex):
+                        indices = self.SamplingIndices[nex][motion_state]
+                        if indices.numel():
+                            KspaceData[c0:c1, nex, indices.to(output_device)] = WFT[motion_state - s0][:, indices].to(device=output_device, dtype=KspaceData.dtype)
+                del WFT
+        return KspaceData.flatten()
+
+    def residual(self, image, measured):
+        """Compute measured-minus-predicted with one full buffer, CPU-stored if needed."""
+        device = self._coil_batches.kspace_output_device(self.Nex, self.Nsamples)
+        residual = self.forward(image, output_device=device).reshape(self.smaps.shape[0], self.Nex, self.Nsamples)
+        measured = measured.reshape_as(residual)
+        # Subtract coil by coil to avoid a second full prediction or host copy.
+        for coil in range(self.smaps.shape[0]):
+            torch.sub(measured[coil].to(device), residual[coil], out=residual[coil])
+        return residual.flatten()
 
     def _adjoint_batched(self, KspaceData):
         Ncoils = self.smaps.shape[0]
-        KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples).to(self.compute_dtype)
+        KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples)
         n_voxels = self._smaps_b[0].numel()
         Image = torch.zeros(n_voxels, dtype=self.compute_dtype, device=self.device)
         for s0, s1 in self._chunks():
-            Y = None
-            for nex in range(self.Nex):
-                Kfull = torch.zeros((s1 - s0, Ncoils, n_voxels), dtype=self.compute_dtype, device=self.device)
-                any_lines = False
-                for motion_state in range(s0, s1):
-                    SamplingIndices = self.SamplingIndices[nex][motion_state]
-                    if SamplingIndices.numel() == 0:
-                        continue
-                    Kfull[motion_state - s0][:, SamplingIndices] = KspaceData[:, nex, SamplingIndices]
-                    any_lines = True
-                if not any_lines:
-                    continue
-                img = ifftnc(Kfull.reshape(s1 - s0, Ncoils, *self._shape), dims=tuple(d + 1 for d in self._fft_dims))
-                contribution = (img * self._smaps_b_conj.unsqueeze(0)).sum(dim=1).reshape(s1 - s0, -1)
-                Y = contribution if Y is None else Y + contribution
-            if Y is not None:
-                Image += self.motionOperator.warp_T_all(Y, (s0, s1))
+            Y = torch.zeros((s1 - s0, n_voxels), dtype=self.compute_dtype, device=self.device)
+            for c0, c1 in self._coil_batches.batches(s1 - s0):
+                for nex in range(self.Nex):
+                    Kfull = torch.zeros((s1 - s0, c1 - c0, n_voxels), dtype=self.compute_dtype, device=self.device)
+                    for motion_state in range(s0, s1):
+                        indices = self.SamplingIndices[nex][motion_state]
+                        if indices.numel():
+                            Kfull[motion_state - s0][:, indices] = self._coil_batches.kspace_samples(KspaceData, c0, c1, nex, indices)
+                    img = ifftnc(Kfull.reshape(s1 - s0, c1 - c0, *self._shape), dims=tuple(d + 1 for d in self._fft_dims))
+                    Y += (img * self._coil_batches.coil_maps(c0, c1, conjugate=True).unsqueeze(0)).sum(dim=1).reshape(s1 - s0, -1)
+                    del Kfull, img
+            Image += self.motionOperator.warp_T_all(Y, (s0, s1))
         return Image.to(torch.complex128)
 
     def _normal_batched(self, image):
-        Ncoils = self.smaps.shape[0]
         image_flat = image.reshape(-1).to(self.compute_dtype)
-        n_voxels = image_flat.numel()
-        Image = torch.zeros(n_voxels, dtype=self.compute_dtype, device=self.device)
+        Image = torch.zeros(image_flat.numel(), dtype=self.compute_dtype, device=self.device)
         phase_dims = tuple(d + 1 for d in self._phase_fft_dims)
         for s0, s1 in self._chunks():
             W = self.motionOperator.warp_all(image_flat, (s0, s1)).reshape(s1 - s0, 1, *self._shape)
-            WFT = fftnc(W * self._smaps_b.unsqueeze(0), dims=phase_dims)
-            Y = None
-            for nex in range(self.Nex):
-                masks = self._stacked_masks[nex]
-                if masks is None:
-                    continue
-                img = ifftnc(WFT * masks[s0:s1], dims=phase_dims)
-                contribution = (img * self._smaps_b_conj.unsqueeze(0)).sum(dim=1).reshape(s1 - s0, -1)
-                Y = contribution if Y is None else Y + contribution
-            if Y is not None:
-                Image += self.motionOperator.warp_T_all(Y, (s0, s1))
+            Y = torch.zeros((s1 - s0, image_flat.numel()), dtype=self.compute_dtype, device=self.device)
+            for c0, c1 in self._coil_batches.batches(s1 - s0):
+                WFT = fftnc(W * self._coil_batches.coil_maps(c0, c1).unsqueeze(0), dims=phase_dims)
+                for nex in range(self.Nex):
+                    masks = self._stacked_masks[nex]
+                    if masks is None:
+                        continue
+                    img = ifftnc(WFT * masks[s0:s1], dims=phase_dims)
+                    Y += (img * self._coil_batches.coil_maps(c0, c1, conjugate=True).unsqueeze(0)).sum(dim=1).reshape(s1 - s0, -1)
+                    del img
+                del WFT
+            Image += self.motionOperator.warp_T_all(Y, (s0, s1))
         return Image.to(torch.complex128)
 
     def adjoint(self, KspaceData):
@@ -170,28 +175,22 @@ class EncodingOperator:
             return self._adjoint_batched(KspaceData)
         Ncoils = self.smaps.shape[0]
         N_motion_states = len(self.SamplingIndices[0])
-        KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples).to(self.compute_dtype)
+        KspaceData = KspaceData.reshape(Ncoils, self.Nex, self.Nsamples)
         n_voxels = self._smaps_b[0].numel()
         Image = torch.zeros(self._shape, dtype=self.compute_dtype, device=self.device)
-
         for motion_state in range(N_motion_states):
-            WarpedImage = None
-            for nex in range(self.Nex):
-                SamplingIndices = self.SamplingIndices[nex][motion_state]
-                if SamplingIndices.numel() == 0:
-                    continue
-                # Sampling operator (all coils at once)
-                KspaceDataNex = torch.zeros((Ncoils, n_voxels), dtype=KspaceData.dtype, device=self.device)
-                KspaceDataNex[:, SamplingIndices] = KspaceData[:, nex, SamplingIndices]
-                # Adjoint FFT and adjoint coil sensitivity, summed over coils
-                image_coils = ifftnc(KspaceDataNex.reshape(Ncoils, *self._shape), dims=self._fft_dims)
-                contribution = (image_coils * self._smaps_b_conj).sum(dim=0)
-                WarpedImage = contribution if WarpedImage is None else WarpedImage + contribution
-            if WarpedImage is None:
-                continue
-            # Adjoint motion operator (interpolation weights are real, so the transpose is the adjoint)
+            WarpedImage = torch.zeros_like(Image)
+            for c0, c1 in self._coil_batches.batches():
+                for nex in range(self.Nex):
+                    indices = self.SamplingIndices[nex][motion_state]
+                    if not indices.numel():
+                        continue
+                    KspaceDataNex = torch.zeros((c1 - c0, n_voxels), dtype=self.compute_dtype, device=self.device)
+                    KspaceDataNex[:, indices] = self._coil_batches.kspace_samples(KspaceData, c0, c1, nex, indices)
+                    image_coils = ifftnc(KspaceDataNex.reshape(c1 - c0, *self._shape), dims=self._fft_dims)
+                    WarpedImage += (image_coils * self._coil_batches.coil_maps(c0, c1, conjugate=True)).sum(dim=0)
+                    del KspaceDataNex, image_coils
             Image += self._unwarp(WarpedImage, motion_state)
-
         return Image.flatten().to(torch.complex128)
 
     def _build_phase_encoding_masks(self):
@@ -245,29 +244,24 @@ class EncodingOperator:
         the FFTs; neither needs to commute with the sampling mask.
         """
         if not self._complete_lines:
-            return self.adjoint(self.forward(image))
+            return self.adjoint(self.forward(image, output_device=self._coil_batches.kspace_output_device(self.Nex, self.Nsamples)))
         if self._batched:
             return self._normal_batched(image)
         N_motion_states = len(self.SamplingIndices[0])
         image_flat = image.reshape(-1).to(self.compute_dtype)
         Image = torch.zeros(self._shape, dtype=self.compute_dtype, device=self.device)
-
         for motion_state in range(N_motion_states):
-            WarpedImageFT = None
-            ImageSum = None
-            for nex in range(self.Nex):
-                phase_mask = self._phase_encoding_masks[nex][motion_state]
-                if phase_mask is None:
-                    continue
-                if WarpedImageFT is None:
-                    WarpedImage = self._warp(image_flat, motion_state)
-                    WarpedImageFT = fftnc(WarpedImage.unsqueeze(0) * self._smaps_b, dims=self._phase_fft_dims)
-                # Broadcast the phase mask across all readout positions and coils.
-                image_coils = ifftnc(WarpedImageFT * phase_mask, dims=self._phase_fft_dims)
-                contribution = (image_coils * self._smaps_b_conj).sum(dim=0)
-                ImageSum = contribution if ImageSum is None else ImageSum + contribution
-            if ImageSum is None:
-                continue
+            WarpedImage = self._warp(image_flat, motion_state)
+            ImageSum = torch.zeros_like(Image)
+            for c0, c1 in self._coil_batches.batches():
+                WarpedImageFT = fftnc(WarpedImage.unsqueeze(0) * self._coil_batches.coil_maps(c0, c1), dims=self._phase_fft_dims)
+                for nex in range(self.Nex):
+                    phase_mask = self._phase_encoding_masks[nex][motion_state]
+                    if phase_mask is None:
+                        continue
+                    image_coils = ifftnc(WarpedImageFT * phase_mask, dims=self._phase_fft_dims)
+                    ImageSum += (image_coils * self._coil_batches.coil_maps(c0, c1, conjugate=True)).sum(dim=0)
+                    del image_coils
+                del WarpedImageFT
             Image += self._unwarp(ImageSum, motion_state)
-
         return Image.flatten().to(torch.complex128)
