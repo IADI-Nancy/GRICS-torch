@@ -4,6 +4,7 @@ import torch
 import math
 import warnings
 import numpy as np
+from time import perf_counter
 from src.utils.fftnc import fftnc, ifftnc
 
 
@@ -39,7 +40,7 @@ class ISMRMRDReader:
     It does not synchronize physiological signals or select reconstruction slices.
     """
 
-    def __init__(self, ismrmrd_file, device="cpu", *, read_navigators=False, navigator_type=None, navigator_set=1):
+    def __init__(self, ismrmrd_file, device="cpu", *, read_navigators=False, navigator_type=None, navigator_set=1, imaging_set=None):
         if type(read_navigators) is not bool:
             raise ValueError("read_navigators must be a boolean.")
         self.ismrmrd_file = ismrmrd_file
@@ -53,22 +54,24 @@ class ISMRMRDReader:
             raise ValueError('navigator_set must be a nonnegative integer.')
         self.navigator_type = navigator_type
         self.navigator_set = navigator_set
+        if imaging_set is not None and (type(imaging_set) is not int or imaging_set < 0 or navigator_type is None):
+            raise ValueError('imaging_set requires a navigator type and a nonnegative integer.')
+        self.imaging_set = navigator_set if imaging_set is None else imaging_set
 
-    def _mosar_navigator_indices(self, dset, limits):
+    def _mosar_navigator_indices(self, heads, limits, set_index):
         """Identify central triplets in one set, explicitly excluding feedback.
 
         Every set/repetition block must begin with its triplet; further central
         imaging lines must be isolated. Ambiguous sequences are rejected.
         Ordinals describe acquisition order, not anatomical directions.
         """
-        heads = dset.read_acquisition_headers()
         names = ('ACQ_IS_NOISE_MEASUREMENT', 'ACQ_IS_NAVIGATION_DATA', 'ACQ_IS_DUMMYSCAN_DATA',
                  'ACQ_IS_PHASECORR_DATA', 'ACQ_IS_HPFEEDBACK_DATA', 'ACQ_IS_RTFEEDBACK_DATA')
         excluded = sum(1 << (getattr(ismrmrd, name) - 1) for name in names)
         eligible = np.flatnonzero((heads['flags'] & excluded) == 0)
-        selected = eligible[heads['idx']['set'][eligible] == self.navigator_set]
+        selected = eligible[heads['idx']['set'][eligible] == set_index]
         if not len(selected):
-            raise ValueError(f'MOSAR extraction found no imaging acquisitions in set counter {self.navigator_set}.')
+            raise ValueError(f'MOSAR extraction found no imaging acquisitions in set counter {set_index}.')
         if len(np.unique(heads['idx']['slice'][selected])) != 1:
             raise ValueError('MOSAR central-triplet extraction currently requires a single encoded slice/slab.')
         cy, cz = limits.kspace_encoding_step_1.center, limits.kspace_encoding_step_2.center
@@ -79,7 +82,7 @@ class ISMRMRDReader:
         groups = []
         for start, stop in zip(boundaries[:-1], boundaries[1:]):
             block = eligible[start:stop]
-            if int(heads['idx']['set'][block[0]]) != self.navigator_set:
+            if int(heads['idx']['set'][block[0]]) != set_index:
                 continue
             if len(block) < 4:
                 raise ValueError('A MOSAR set block must contain a navigator triplet followed by imaging readouts.')
@@ -100,7 +103,7 @@ class ISMRMRDReader:
                 if shape != reference_shape:
                     raise ValueError('MOSAR navigator triplets have inconsistent channel/sample dimensions.')
                 result[int(index)] = (group, direction)
-        print(f'[ismrmrd] Explicit MOSAR extraction: {len(groups)} central triplets in set counter {self.navigator_set}; feedback flags are excluded and triplets are removed from imaging.', flush=True)
+        print(f'[ismrmrd] Explicit MOSAR extraction: {len(groups)} central triplets in set counter {set_index}; feedback flags are excluded and triplets are removed from imaging.', flush=True)
         return result
 
     def _navigator_record(self, acq, i):
@@ -133,14 +136,16 @@ class ISMRMRDReader:
         navigators = []
         last_imaging_timestamp = None
         try:
-            for i in range(dset.number_of_acquisitions()):
-                acq = dset.read_acquisition(i)
-                if _is_noise(acq):
-                    continue
-                if _has_ismrmrd_flag(acq, "ACQ_IS_NAVIGATION_DATA"):
-                    navigators.append(self._navigator_record(acq, i))
-                elif not _is_non_imaging(acq):
-                    last_imaging_timestamp = int(acq.acquisition_time_stamp)
+            heads = dset.read_acquisition_headers()
+            names = ('ACQ_IS_NOISE_MEASUREMENT', 'ACQ_IS_NAVIGATION_DATA', 'ACQ_IS_DUMMYSCAN_DATA',
+                     'ACQ_IS_PHASECORR_DATA', 'ACQ_IS_HPFEEDBACK_DATA', 'ACQ_IS_RTFEEDBACK_DATA')
+            excluded = sum(1 << (getattr(ismrmrd, name) - 1) for name in names)
+            imaging = np.flatnonzero((heads['flags'] & excluded) == 0)
+            if len(imaging):
+                last_imaging_timestamp = int(heads['acquisition_time_stamp'][imaging[-1]])
+            selected = ((heads['flags'] & (1 << (ismrmrd.ACQ_IS_NAVIGATION_DATA - 1))) != 0) & ((heads['flags'] & (1 << (ismrmrd.ACQ_IS_NOISE_MEASUREMENT - 1))) == 0)
+            for i in np.flatnonzero(selected):
+                navigators.append(self._navigator_record(dset.read_acquisition(int(i)), int(i)))
         finally:
             dset.close()
         if last_imaging_timestamp is None:
@@ -194,33 +199,19 @@ class ISMRMRDReader:
             warnings.warn(f"Cannot determine readout oversampling from the ISMRMRD header ({exc}); falling back to 2x readout oversampling.", RuntimeWarning, stacklevel=2)
             return 2
 
-    def _remove_oversampling(self, kspace: torch.Tensor):
-
-        device = kspace.device
-        dtype = kspace.dtype
-
-        coils, Nex, readout, Ny, Nsli = kspace.shape
+    @staticmethod
+    def _remove_oversampling(readouts):
+        """Crop readout image space for a batch with samples on the last axis."""
+        readout = readouts.shape[-1]
+        if readout % 2:
+            raise ValueError('Twofold readout oversampling requires an even sample count.')
         cropped_readout = readout // 2
-
-        kspace_cropped = torch.zeros(
-            (coils, Nex, cropped_readout, Ny, Nsli),
-            dtype=dtype, device=device)
-
-        for iz in range(Nsli):
-
-            kspace_slice = kspace[..., iz]
-
-            img = ifftnc(kspace_slice, dims=(2,))
-
-            crop_start = readout // 2 - cropped_readout // 2
-            crop_end = crop_start + cropped_readout
-            img_cropped = img[:, :, crop_start:crop_end, :]
-
-            kspace_cropped[..., iz] = fftnc(img_cropped, dims=(2,))
-
-        return kspace_cropped
+        crop_start = readout // 2 - cropped_readout // 2
+        image = ifftnc(readouts, dims=(-1,))
+        return fftnc(image[..., crop_start:crop_start + cropped_readout], dims=(-1,))
 
     def _extract_mri_data(self):
+        started = perf_counter()
         dset = ReadOnlyDataset(self.ismrmrd_file)
         try:
             xml_header = dset.read_xml_header()
@@ -229,8 +220,11 @@ class ISMRMRDReader:
             header = ismrmrd.xsd.CreateFromDocument(self.ismrmrd_header)
             enc = header.encoding[0]
             limits = enc.encodingLimits
+            heads = dset.read_acquisition_headers()
             if self.navigator_type == 'mosar':
-                navigator_indices = self._mosar_navigator_indices(dset, limits)
+                navigator_indices = self._mosar_navigator_indices(heads, limits, self.navigator_set)
+                imaging_navigator_indices = (navigator_indices if self.imaging_set == self.navigator_set else
+                                             self._mosar_navigator_indices(heads, limits, self.imaging_set))
             elif self.navigator_type is None:
                 navigator_indices = {}
             else:
@@ -292,16 +286,55 @@ class ISMRMRDReader:
             slice_geometry = {}
             navigators = [] if self.read_navigators else None
 
-            num_acq = dset.number_of_acquisitions()
-            for i in range(num_acq):
+            names = ('ACQ_IS_NOISE_MEASUREMENT', 'ACQ_IS_NAVIGATION_DATA', 'ACQ_IS_DUMMYSCAN_DATA',
+                     'ACQ_IS_PHASECORR_DATA', 'ACQ_IS_HPFEEDBACK_DATA', 'ACQ_IS_RTFEEDBACK_DATA')
+            excluded = sum(1 << (getattr(ismrmrd, name) - 1) for name in names)
+            imaging = (heads['flags'] & excluded) == 0
+            if self.navigator_type is not None:
+                imaging &= heads['idx']['set'] == self.imaging_set
+                imaging[list(imaging_navigator_indices)] = False
+                navigator_mask = np.zeros(len(heads), dtype=bool)
+                navigator_mask[list(navigator_indices)] = True
+            else:
+                navigator_mask = ((heads['flags'] & (1 << (ismrmrd.ACQ_IS_NAVIGATION_DATA - 1))) != 0) & ((heads['flags'] & (1 << (ismrmrd.ACQ_IS_NOISE_MEASUREMENT - 1))) == 0)
+                navigator_mask &= self.read_navigators
+            selected = np.flatnonzero(imaging | navigator_mask)
+            print(f'[ismrmrd] Decoding {len(selected)}/{len(heads)} acquisitions after header filtering; acquired-readout FFT input batches target 32 MiB.', flush=True)
+            pending = []
+
+            def flush_readouts():
+                nonlocal reference_kspace
+                if not pending:
+                    return
+                readouts = torch.stack([entry[0] for entry in pending]).to(device=self.device, dtype=torch.complex128)
+                if self._oversampling_factor == 2:
+                    readouts = self._remove_oversampling(readouts)
+                for entry, acq_data in zip(pending, readouts):
+                    _, nex, ky, z, calibration, index = entry
+                    if line_count[nex, ky, z] > 0:
+                        kspace[:, nex, :, ky, z] += acq_data
+                    else:
+                        kspace[:, nex, :, ky, z] = acq_data
+                    line_count[nex, ky, z] += 1
+                    if calibration:
+                        if reference_kspace is None:
+                            reference_kspace = torch.zeros((kspace.shape[0], 1, *kspace.shape[2:]), dtype=kspace.dtype, device=kspace.device)
+                        if reference_line_seen[ky, z]:
+                            raise ValueError(f'Duplicate parallel-calibration acquisition found for ky={ky}, z={z} in acquisition {index}. Expected at most one calibration line per (ky, z).')
+                        reference_kspace[:, 0, :, ky, z] = acq_data
+                        reference_line_seen[ky, z] = True
+                pending.clear()
+
+            for i in selected:
+                i = int(i)
                 acq = dset.read_acquisition(i)
                 if self.navigator_type is not None:
-                    if int(acq.idx.set) != self.navigator_set:
-                        continue
                     if i in navigator_indices:
                         navigator = self._navigator_record(acq, i)
                         navigator['group_index'], navigator['direction_index'] = navigator_indices[i]
                         navigators.append(navigator)
+                        continue
+                    if int(acq.idx.set) != self.imaging_set or i in imaging_navigator_indices:
                         continue
                 if not _is_noise(acq) and _has_ismrmrd_flag(acq, "ACQ_IS_NAVIGATION_DATA"):
                     if self.read_navigators and self.navigator_type is None:
@@ -326,17 +359,17 @@ class ISMRMRDReader:
                 else:
                     z = sli
 
-                acq_data = torch.from_numpy(acq.data).to(self.device)
+                acq_data = torch.from_numpy(acq.data.copy())
 
                 if kspace is None:
                     ncha, nsamp = acq.data.shape
+                    if self._oversampling_factor == 2:
+                        if nsamp % 2:
+                            raise ValueError('Twofold readout oversampling requires an even sample count.')
+                        nsamp //= 2
+                    batch_size = max(1, (32 * 2**20) // (ncha * acq.data.shape[1] * 16))
                     kspace = torch.zeros(
                         (ncha, Nex, nsamp, Ny, z_size),
-                        dtype=torch.complex128,
-                        device=self.device,
-                    )
-                    reference_kspace = torch.zeros(
-                        (ncha, 1, nsamp, Ny, z_size),
                         dtype=torch.complex128,
                         device=self.device,
                     )
@@ -362,23 +395,10 @@ class ISMRMRDReader:
                         "patient_position": str(patient_position).split(".")[-1] if patient_position is not None else None,
                     }
                 nex_values_seen.add(nex)
-                # A line acquired more than once in the same repetition (averages) is averaged;
-                # 2.0 silently kept the last one.
-                if line_count[nex, ky, z] > 0:
-                    kspace[:, nex, :, ky, z] += acq_data
-                else:
-                    kspace[:, nex, :, ky, z] = acq_data
-                line_count[nex, ky, z] += 1
-
-                if _is_parallel_calibration(acq):
-                    if reference_line_seen[ky, z]:
-                        raise ValueError(
-                            "Duplicate parallel-calibration acquisition found for "
-                            f"ky={ky}, z={z} in acquisition {i}. "
-                            "Expected at most one calibration line per (ky, z)."
-                        )
-                    reference_kspace[:, 0, :, ky, z] = acq_data
-                    reference_line_seen[ky, z] = True
+                pending.append((acq_data, nex, ky, z, _is_parallel_calibration(acq), i))
+                if len(pending) >= batch_size:
+                    flush_readouts()
+            flush_readouts()
 
             if kspace is None or len(timestamps) == 0:
                 raise ValueError("No acquisitions were mapped into the output tensor.")
@@ -387,7 +407,7 @@ class ISMRMRDReader:
             if bool(torch.any(repeated)):
                 print(f"[ismrmrd] {int(repeated.sum().item())} (ky, kz, repetition) lines were acquired more than once; "
                       "their readouts are averaged. Each readout keeps its own physiological sample.", flush=True)
-                kspace = kspace / line_count.clamp(min=1).to(kspace.dtype).reshape(1, Nex, 1, Ny, z_size)
+                kspace.div_(line_count.clamp(min=1).reshape(1, Nex, 1, Ny, z_size))
 
             if navigators is not None:
                 for navigator in navigators:
@@ -403,6 +423,7 @@ class ISMRMRDReader:
             self.reference_kspace = reference_kspace
 
             nex_values = torch.tensor(sorted(nex_values_seen), device=self.device, dtype=torch.int64)
+            print(f'[ismrmrd] Header selection, sample decoding, oversampling removal, and gridding completed in {perf_counter() - started:.2f} s.', flush=True)
 
             return (
                 kspace,
@@ -432,9 +453,6 @@ class ISMRMRDReader:
         (kspace, times, slices, ky, kz, nex, nex_source, nex_values,
          geometry) = self._extract_mri_data()
         reference_kspace = self.reference_kspace
-        if self._oversampling_factor == 2:
-            kspace = self._remove_oversampling(kspace)
-            reference_kspace = None if reference_kspace is None else self._remove_oversampling(reference_kspace)
         return {
             "ismrmrd_header": self.ismrmrd_header,
             "kspace": kspace, "time_seconds": times, "slice_indices": slices,
@@ -446,4 +464,5 @@ class ISMRMRDReader:
             "readout_oversampling_factor": self._oversampling_factor,
             "navigator_type": self.navigator_type,
             "navigator_set": self.navigator_set if self.navigator_type is not None else None,
+            "imaging_set": self.imaging_set if self.navigator_type is not None else None,
         }

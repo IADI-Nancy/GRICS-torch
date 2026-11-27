@@ -12,6 +12,7 @@ import json
 import math
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import ismrmrd
@@ -180,6 +181,8 @@ def calculate_eigenmode_variants(displacements, selected_set, output_dir, time_s
 
 
 def run_comparison(input_file, output_dir, measurement=1, dummy_profiles=4):
+    with (ROOT / 'config/physiological_data/navigators.toml').open('rb') as stream:
+        settings = tomllib.load(stream)['navigators']
     output_dir.mkdir(parents=True, exist_ok=True)
     input_file = input_file.resolve()
     if input_file.suffix.lower() == ".dat":
@@ -198,7 +201,7 @@ def run_comparison(input_file, output_dir, measurement=1, dummy_profiles=4):
         key = (record["data"].shape[0], record["data"].shape[1], record["counters"]["set"], tuple(record["read_dir"]))
         grouped.setdefault(key, []).append(record)
     report = {"input_file": str(input_file), "flagged_navigator_count": len(navigators), "flagged_groups": [],
-              "matlab_parameters": {"lambda": 0.05, "V0": "Inf (no temporal penalty)", "loops": 6, "levels": [0.25, 0.5, 1.0], "dummy_profiles": dummy_profiles, "reference": "last profile"},
+              "matlab_parameters": {"lambda": settings["navigator_regularization"], "V0": "Inf (no temporal penalty)", "loops": settings["navigator_registration_loops"], "levels": settings["navigator_resolution_levels"], "dummy_profiles": dummy_profiles, "reference": "last profile"},
               "comparison_notes": ["Flagged feedback records and MATLAB central-line triplets are separate streams.",
                                    "FFT plots of flagged feedback records are diagnostics; their interpretation as anatomical k-space profiles is unverified.",
                                    "The supplied MOSAR acquisition fails full read_data() on duplicate central parallel-calibration lines; navigator-only decoding avoids imaging gridding.",
@@ -225,7 +228,7 @@ def run_comparison(input_file, output_dir, measurement=1, dummy_profiles=4):
         plot_coils(profiles, output_dir / f"4.{name}.png", f"MATLAB central-triplet comparison: {name}")
         fields, registered, residuals = [], [], []
         for coil in range(profiles.shape[0]):
-            field, warped, history = NavigatorEigenmodeCalculator.register_profiles(profiles[coil])
+            field, warped, history = NavigatorEigenmodeCalculator.register_profiles(profiles[coil], levels=settings["navigator_resolution_levels"], loops=settings["navigator_registration_loops"], regularization=settings["navigator_regularization"])
             fields.append(field)
             registered.append(warped)
             residuals.append(history)

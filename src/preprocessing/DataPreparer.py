@@ -36,7 +36,7 @@ class DataPreparer:
     """
 
     def __init__(self, params, runtime,
-                 filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None):
+                 filename: Optional[Union[str, Sequence[str], Dict[str, str]]] = None, *, navigator_reference=None):
         """
         Configure input loading and reconstruction preparation.
 
@@ -45,13 +45,14 @@ class DataPreparer:
         Args:
             params: Runtime/config parameters.
             runtime: Initialized runtime containing SigPy and Torch devices.
+            navigator_reference: Optional verified navigator result from another contrast of the same acquisition.
             filename: Input path, or a pair (MRI file, physiological file) for raw data.
                 Dictionaries use ismrmrd_file or siemens_raw_file, plus saec_file,
                 polaris_file, or physio_file. Generic array input uses three paths:
                 (MRI file, timestamps .npy, values .npy), or dictionary keys
                 physio_timestamps_file and physio_values_file alongside the MRI key.
         """
-        self.input_loader = InputDataLoader(params, t_device=runtime.t_device, filename=filename)
+        self.input_loader = InputDataLoader(params, t_device=runtime.t_device, filename=filename, navigator_reference=navigator_reference)
         self.params = params
         self.runtime = runtime
         self.filename = filename

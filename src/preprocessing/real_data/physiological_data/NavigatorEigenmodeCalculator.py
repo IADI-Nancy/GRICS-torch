@@ -1,5 +1,7 @@
 """Extract timestamped physiological eigenmodes from decoded navigator groups."""
 
+import hashlib
+
 import numpy as np
 from scipy.linalg import solve_banded
 from scipy.ndimage import map_coordinates
@@ -9,16 +11,21 @@ class NavigatorEigenmodeCalculator:
     """Non-rigid profile registration followed by one joint, uncentered SVD.
 
     Implements the physiological reader interface using decoded MRI records.
-    Only the second contrast (zero-based set counter 1) is supported currently.
+    Navigators come from the second contrast (zero-based set counter 1);
+    imaging readouts can come from either contrast on the shared scanner clock.
+    All processing settings must be supplied explicitly from configuration.
     """
 
     uses_mri_data = True
     supports_clock_correction = False
     already_synchronized = False
 
-    def __init__(self, *, navigator_type, n_eigenmodes=2, directions=(0, 1, 2), startup_profiles=4, regularization=0.05, resolution_levels=(0.25, 0.5, 1.0), registration_loops=6, extrapolation="edge"):
+    def __init__(self, *, navigator_type, imaging_set, n_eigenmodes, directions, startup_profiles, regularization, resolution_levels, registration_loops, extrapolation, reference=None):
         if not isinstance(navigator_type, str) or not navigator_type:
             raise ValueError("navigator_type must be a nonempty string identifying the reader's extraction strategy.")
+        if type(imaging_set) is not int or imaging_set not in (0, 1):
+            raise ValueError("imaging_set must be 0 or 1.")
+        self.imaging_set = imaging_set
         if type(n_eigenmodes) is not int or n_eigenmodes < 1:
             raise ValueError("n_eigenmodes must be a positive integer.")
         if not directions or any(type(value) is not int or value not in (0, 1, 2) for value in directions) or len(set(directions)) != len(directions):
@@ -39,13 +46,14 @@ class NavigatorEigenmodeCalculator:
         self.resolution_levels = tuple(resolution_levels)
         self.registration_loops = registration_loops
         self.extrapolation = extrapolation
+        self.reference = reference
         self.metadata = {}
         self.profiles = {}
         self.displacements = {}
 
     @property
     def mri_reader_options(self):
-        return {"read_navigators": True, "navigator_type": self.navigator_type, "navigator_set": 1}
+        return {"read_navigators": True, "navigator_type": self.navigator_type, "navigator_set": 1, "imaging_set": self.imaging_set}
 
     @property
     def cache_parameters(self):
@@ -88,63 +96,82 @@ class NavigatorEigenmodeCalculator:
         oversampling = raw["readout_oversampling_factor"]
         if oversampling not in (1, 2):
             raise ValueError("Navigator readout oversampling must be explicitly 1 or 2.")
-        fields = []
-        for direction in self.directions:
-            samples = np.stack([group[direction]["data"].detach().cpu().numpy() for group in ordered], axis=-1)
-            if samples.ndim != 3 or not np.isfinite(samples).all():
-                raise ValueError("Navigator samples must be finite [coil, sample, time] arrays.")
-            if oversampling == 2:
-                if samples.shape[1] % 2:
-                    raise ValueError("Twofold navigator oversampling requires an even sample count.")
-                image = np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(samples, axes=1), axis=1), axes=1)
-                size = samples.shape[1] // 2
-                start = samples.shape[1] // 2 - size // 2
-                samples = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(image[:, start:start + size], axes=1), axis=1), axes=1)
-            profiles = np.abs(np.fft.fftshift(np.fft.fft(np.fft.fftshift(samples, axes=1), axis=1), axes=1))
-            if any(int(profiles.shape[axis] * level) < 2 for axis in (1, 2) for level in self.resolution_levels):
-                raise ValueError("Navigator registration pyramid would have fewer than two spatial or temporal samples; adjust navigator_resolution_levels.")
-            profiles[..., :self.startup_profiles] = profiles[..., self.startup_profiles:self.startup_profiles + 1]
-            displacement = []
-            for coil, profile in enumerate(profiles):
-                try:
-                    field, _, _ = self.register_profiles(profile, self.resolution_levels, self.registration_loops, self.regularization)
-                except (ValueError, np.linalg.LinAlgError) as exc:
-                    raise ValueError(f"Navigator registration failed for ordinal {direction}, coil {coil}: {exc}") from exc
-                displacement.append(field)
-            self.profiles[direction] = profiles
-            self.displacements[direction] = np.asarray(displacement)
-            fields.append(self.displacements[direction].reshape(-1, times.size))
-            print(f"[navigators] Registered second-set ordinal {direction}: {profiles.shape[0]} coils, {times.size} profiles.", flush=True)
-        matrix = np.concatenate(fields, axis=0)
-        if not np.isfinite(matrix).all():
-            raise ValueError("Navigator displacement matrix contains non-finite values.")
-        _, singular_values, vh = np.linalg.svd(matrix, full_matrices=False)
-        tolerance = np.finfo(matrix.dtype).eps * max(matrix.shape) * singular_values[0]
-        rank = int(np.count_nonzero(singular_values > tolerance))
-        if self.n_eigenmodes > rank:
-            raise ValueError(f"Requested {self.n_eigenmodes} navigator eigenmodes but the displacement matrix has numerical rank {rank}.")
-        modes = vh[:self.n_eigenmodes].T.copy()
-        # Fix arbitrary SVD signs for repeatable saved signals; scaling is unchanged.
-        for mode in range(modes.shape[1]):
-            if modes[np.argmax(np.abs(modes[:, mode])), mode] < 0:
-                modes[:, mode] *= -1
+        parameters = {key: value for key, value in self.cache_parameters.items() if key != 'imaging_set'}
+        fingerprint = hashlib.sha256()
+        fingerprint.update(str(oversampling).encode())
+        for record in records:
+            fingerprint.update(np.asarray([record['acquisition_index'], record['acquisition_time_stamp'], record['group_index'], record['direction_index']], dtype=np.int64).tobytes())
+            samples = record['data'].detach().cpu().numpy()
+            fingerprint.update(str((samples.shape, samples.dtype)).encode())
+            fingerprint.update(samples.tobytes())
+        fingerprint = fingerprint.hexdigest()
+        if self.reference is not None:
+            if self.reference['parameters'] != parameters or self.reference['fingerprint'] != fingerprint:
+                raise ValueError('Navigator reuse requires identical navigator samples, scanner timestamps, extraction indices, and processing settings.')
+            previous = self.reference['metadata']
+            modes = previous['navigator_temporal_modes']
+            singular_values = previous['navigator_singular_values']
+            rank = previous['navigator_numerical_rank']
+            print('[navigators] Reusing verified second-set registration and SVD; synchronizing to this contrast on the scanner clock.', flush=True)
+        else:
+            fields = []
+            for direction in self.directions:
+                samples = np.stack([group[direction]["data"].detach().cpu().numpy() for group in ordered], axis=-1)
+                if samples.ndim != 3 or not np.isfinite(samples).all():
+                    raise ValueError("Navigator samples must be finite [coil, sample, time] arrays.")
+                if oversampling == 2:
+                    if samples.shape[1] % 2:
+                        raise ValueError("Twofold navigator oversampling requires an even sample count.")
+                    image = np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(samples, axes=1), axis=1), axes=1)
+                    size = samples.shape[1] // 2
+                    start = samples.shape[1] // 2 - size // 2
+                    samples = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(image[:, start:start + size], axes=1), axis=1), axes=1)
+                profiles = np.abs(np.fft.fftshift(np.fft.fft(np.fft.fftshift(samples, axes=1), axis=1), axes=1))
+                if any(int(profiles.shape[axis] * level) < 2 for axis in (1, 2) for level in self.resolution_levels):
+                    raise ValueError("Navigator registration pyramid would have fewer than two spatial or temporal samples; adjust navigator_resolution_levels.")
+                profiles[..., :self.startup_profiles] = profiles[..., self.startup_profiles:self.startup_profiles + 1]
+                displacement = []
+                for coil, profile in enumerate(profiles):
+                    try:
+                        field, _, _ = self.register_profiles(profile, self.resolution_levels, self.registration_loops, self.regularization)
+                    except (ValueError, np.linalg.LinAlgError) as exc:
+                        raise ValueError(f"Navigator registration failed for ordinal {direction}, coil {coil}: {exc}") from exc
+                    displacement.append(field)
+                self.profiles[direction] = profiles
+                self.displacements[direction] = np.asarray(displacement)
+                fields.append(self.displacements[direction].reshape(-1, times.size))
+                print(f"[navigators] Registered second-set ordinal {direction}: {profiles.shape[0]} coils, {times.size} profiles.", flush=True)
+            matrix = np.concatenate(fields, axis=0)
+            if not np.isfinite(matrix).all():
+                raise ValueError("Navigator displacement matrix contains non-finite values.")
+            _, singular_values, vh = np.linalg.svd(matrix, full_matrices=False)
+            tolerance = np.finfo(matrix.dtype).eps * max(matrix.shape) * singular_values[0]
+            rank = int(np.count_nonzero(singular_values > tolerance))
+            if self.n_eigenmodes > rank:
+                raise ValueError(f"Requested {self.n_eigenmodes} navigator eigenmodes but the displacement matrix has numerical rank {rank}.")
+            modes = vh[:self.n_eigenmodes].T.copy()
+            # Fix arbitrary SVD signs for repeatable saved signals; scaling is unchanged.
+            for mode in range(modes.shape[1]):
+                if modes[np.argmax(np.abs(modes[:, mode])), mode] < 0:
+                    modes[:, mode] *= -1
         acquisition_times = raw["time_seconds"].detach().cpu().numpy()
         before = int(np.count_nonzero(acquisition_times < times[0]))
         after = int(np.count_nonzero(acquisition_times > times[-1]))
         if self.extrapolation == "edge" and (before or after):
             print(f"[navigators] Endpoint holding explicitly selected: {before} imaging readouts before the first navigator and {after} after the last ({max(0., acquisition_times[-1] - times[-1]):.4f} s at the end). Interior synchronization uses linear interpolation.", flush=True)
-        self.metadata = {"navigator_type": self.navigator_type, "navigator_set": 1, "navigator_directions": list(self.directions), "navigator_time_seconds": times,
+        self.metadata = {"navigator_type": self.navigator_type, "navigator_set": 1, "imaging_set": self.imaging_set, "navigator_directions": list(self.directions), "navigator_time_seconds": times,
                          "navigator_temporal_modes": modes, "navigator_singular_values": singular_values,
                          "navigator_numerical_rank": rank, "navigator_startup_profiles": self.startup_profiles,
                          "navigator_acquisition_indices": [[group[direction]["acquisition_index"] for direction in sorted(available_directions)] for group in ordered],
                          "navigator_extrapolation": self.extrapolation, "navigator_endpoint_readouts": [before, after]}
+        self.reference = {'parameters': parameters, 'fingerprint': fingerprint, 'metadata': self.metadata.copy()}
         print(f"[navigators] Keeping {self.n_eigenmodes} joint SVD modes from the second set; no temporal smoothing.", flush=True)
         # Times are already relative to the retained MRI end, so end=0 preserves
         # their shared clock instead of moving the last navigator to sequence end.
         return [times.copy() for _ in range(self.n_eigenmodes)], list(modes.T), 0.0, self.extrapolation
 
     @staticmethod
-    def register_profiles(profiles, levels=(0.25, 0.5, 1.0), loops=6, regularization=0.05):
+    def register_profiles(profiles, levels, loops, regularization):
         """Port registration_SSD_nonrigid_1DT for V0=Inf and first-order smoothing.
 
         The reference is the final profile. With V0=Inf the MATLAB temporal penalty

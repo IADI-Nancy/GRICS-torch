@@ -1,6 +1,8 @@
 [navigators]
 # Navigator acquisition type; currently only "mosar" is supported. Its reader extracts block-start central triplets from the second set (set counter 1); other types require a reader implementation.
 navigator_type = "mosar"
+# Imaging contrast to reconstruct: 0 for the first set or 1 for the second set. Navigator signals always come from set 1.
+navigator_imaging_set = 1
 # Number of temporal SVD modes retained as physiological channels; integer >= 1, no greater than the measured displacement matrix's numerical rank.
 navigator_eigenmodes = 2
 # Triplet readout ordinals included in the combined SVD; a nonempty list of distinct integers from 0, 1, 2. These are not verified physical x/y/z directions.

@@ -9,6 +9,7 @@ Uses a small temporary ISMRMRD fixture. No test input or cache is retained.
 import shutil
 import struct
 import sys
+import tomllib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -97,13 +98,20 @@ def run_validation():
             assert 'navigator_type' in str(exc)
         else:
             raise AssertionError('Unsupported navigator types must be rejected explicitly')
-        calculator = NavigatorEigenmodeCalculator(navigator_type="mosar")
+        with (ROOT / 'config/physiological_data/navigators.toml').open('rb') as stream:
+            settings = tomllib.load(stream)['navigators']
+        parameters = dict(navigator_type=settings["navigator_type"], imaging_set=settings["navigator_imaging_set"],
+                          n_eigenmodes=settings["navigator_eigenmodes"], directions=settings["navigator_directions"],
+                          startup_profiles=settings["navigator_startup_profiles"], regularization=settings["navigator_regularization"],
+                          resolution_levels=settings["navigator_resolution_levels"], registration_loops=settings["navigator_registration_loops"],
+                          extrapolation=settings["navigator_extrapolation"])
+        calculator = NavigatorEigenmodeCalculator(**parameters)
         assert calculator.mri_reader_options['navigator_type'] == 'mosar'
         assert calculator.cache_parameters['navigator_type'] == 'mosar'
         # The calculator accepts the grouped-record contract independently of
         # acquisition-specific extraction and does not require three directions.
         grouped = {**raw, 'navigator_type': 'grouped-profiles', 'navigators': [record for record in raw['navigators'] if record['direction_index'] == 2]}
-        generic = NavigatorEigenmodeCalculator(navigator_type='grouped-profiles', directions=(2,))
+        generic = NavigatorEigenmodeCalculator(**{**parameters, 'navigator_type': 'grouped-profiles', 'directions': (2,)})
         assert len(generic.read_channels(grouped)[1]) == 2
         times, values, end, bounds = calculator.read_channels(raw)
         assert len(values) == 2 and values[0].shape == (12,)
@@ -112,19 +120,19 @@ def run_validation():
         aligned = RawDataPreparer._synchronize_to_sequence_end(times, values, raw['time_seconds'].numpy(), source_sequence_end=end, bounds=bounds)
         np.testing.assert_allclose(aligned[-1], np.asarray(values)[:, -1], atol=1e-12)
         assert times[0][-1] < 0  # Last navigator is not falsely moved to MRI end.
-        more = NavigatorEigenmodeCalculator(navigator_type="mosar", n_eigenmodes=3)
+        more = NavigatorEigenmodeCalculator(**{**parameters, 'n_eigenmodes': 3})
         _, more_values, _, _ = more.read_channels(raw)
         np.testing.assert_allclose(np.asarray(more_values)[:2], np.asarray(values), atol=1e-12)
         try:
-            NavigatorEigenmodeCalculator(navigator_type="mosar", n_eigenmodes=100).read_channels(raw)
+            NavigatorEigenmodeCalculator(**{**parameters, 'n_eigenmodes': 100}).read_channels(raw)
         except ValueError as exc:
             assert 'rank' in str(exc)
         else:
             raise AssertionError('Requested eigenmode count must be checked against measured rank')
         cache = RawDataCache(folder / 'cache', remove_on_release=False)
-        preparer = RawDataPreparer(path, None, physiological_reader=NavigatorEigenmodeCalculator(navigator_type="mosar"), device='cpu')
+        preparer = RawDataPreparer(path, None, physiological_reader=NavigatorEigenmodeCalculator(**parameters), device='cpu')
         first = preparer.read_data(cache=cache)
-        cached = RawDataPreparer(path, None, physiological_reader=NavigatorEigenmodeCalculator(navigator_type="mosar"), device='cpu')
+        cached = RawDataPreparer(path, None, physiological_reader=NavigatorEigenmodeCalculator(**parameters), device='cpu')
         with patch.object(cached.reader, 'read_data', side_effect=AssertionError('Cache hit must not decode MRI again')):
             second = cached.read_data(cache=cache)
         np.testing.assert_array_equal(first['motion_data'], second['motion_data'])

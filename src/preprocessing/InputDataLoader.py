@@ -20,8 +20,11 @@ class InputDataLoader:
     decoding and physiological synchronization are delegated to dedicated classes.
     """
 
-    def __init__(self, params, t_device=None, filename=None):
+    def __init__(self, params, t_device=None, filename=None, *, navigator_reference=None):
         self.params = params
+        if navigator_reference is not None and not params.data_type.endswith('-navigators'):
+            raise ValueError('navigator_reference requires a navigator physiological source.')
+        self.navigator_reference = navigator_reference
         self.raw_data_cache = RawDataCache(
             params.cache_root, remove_on_release=params.remove_temporary_data_after_run)
         register_execution_cleanup(self.raw_data_cache.close)
@@ -358,10 +361,11 @@ class InputDataLoader:
 
             return NavigatorEigenmodeCalculator(
                 navigator_type=self.params.navigator_type,
+                imaging_set=self.params.navigator_imaging_set,
                 n_eigenmodes=self.params.navigator_eigenmodes, directions=self.params.navigator_directions,
                 startup_profiles=self.params.navigator_startup_profiles, regularization=self.params.navigator_regularization,
                 resolution_levels=self.params.navigator_resolution_levels, registration_loops=self.params.navigator_registration_loops,
-                extrapolation=self.params.navigator_extrapolation)
+                extrapolation=self.params.navigator_extrapolation, reference=self.navigator_reference)
         if physiological_format == "polaris":
             from src.preprocessing.real_data.physiological_data.PolarisInfraredTrackerReader import PolarisInfraredTrackerReader
 
