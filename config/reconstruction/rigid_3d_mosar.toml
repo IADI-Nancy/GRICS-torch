@@ -17,14 +17,14 @@ coil_sensitivity_config = "odille-spline"
 reconstruction_dimension = "3D"
 # XML MotionModel Type="rigid"; allowed values are "rigid" or "non-rigid".
 reconstruction_motion_type = "rigid"
-# Rigid warp interpolation: "fourier" uses FFT translations and shear rotations; "linear" reproduces the XML interpolation. Fourier requires warp_backend = "sparse".
-rigid_interpolation = "fourier"
+# Rigid warp interpolation: "linear" uses trilinear interpolation in 3D, matching the XML; "fourier" uses FFT translations and shear rotations and requires warp_backend = "sparse".
+rigid_interpolation = "linear"
 # Image-gradient boundary convention, absent from XML: "zero" (repository default) or "one_sided".
 motion_gradient_boundary = "zero"
 # XML NumericalPrecision Type="complex-float" maps to "single" operator arithmetic; "double" is the alternative. Storage and CG vectors still use the engine's double precision.
 compute_precision = "single"
-# Warp backend: "sparse" is required for Fourier interpolation, which bypasses linear warp tables; "gather" is available only with rigid_interpolation = "linear".
-warp_backend = "sparse"
+# Linear warp storage: "gather" uses neighbour indices and weights with bounded workspace; "sparse" stores sparse interpolation matrices and also enables Fourier interpolation.
+warp_backend = "gather"
 
 # --- Motion-state binning ---
 # XML MotionStatesClustering Nclusters="12"; positive integer, retained unchanged rather than reduced for GPU memory.

@@ -11,7 +11,7 @@ class NavigatorEigenmodeCalculator:
     """Non-rigid profile registration followed by one joint, uncentered SVD.
 
     Implements the physiological reader interface using decoded MRI records.
-    Navigators come from the second contrast (zero-based set counter 1);
+    Navigators come from the explicitly configured set;
     imaging readouts can come from either contrast on the shared scanner clock.
     All processing settings must be supplied explicitly from configuration.
     """
@@ -20,12 +20,15 @@ class NavigatorEigenmodeCalculator:
     supports_clock_correction = False
     already_synchronized = False
 
-    def __init__(self, *, navigator_type, imaging_set, n_eigenmodes, directions, startup_profiles, regularization, resolution_levels, registration_loops, extrapolation, reference=None):
+    def __init__(self, *, navigator_type, navigator_set, imaging_set, n_eigenmodes, directions, startup_profiles, regularization, resolution_levels, registration_loops, extrapolation, reference=None):
         if not isinstance(navigator_type, str) or not navigator_type:
             raise ValueError("navigator_type must be a nonempty string identifying the reader's extraction strategy.")
         if type(imaging_set) is not int or imaging_set not in (0, 1):
             raise ValueError("imaging_set must be 0 or 1.")
         self.imaging_set = imaging_set
+        if type(navigator_set) is not int or navigator_set not in (0, 1):
+            raise ValueError("navigator_set must be 0 or 1.")
+        self.navigator_set = navigator_set
         if type(n_eigenmodes) is not int or n_eigenmodes < 1:
             raise ValueError("n_eigenmodes must be a positive integer.")
         if not directions or any(type(value) is not int or value not in (0, 1, 2) for value in directions) or len(set(directions)) != len(directions):
@@ -53,7 +56,7 @@ class NavigatorEigenmodeCalculator:
 
     @property
     def mri_reader_options(self):
-        return {"read_navigators": True, "navigator_type": self.navigator_type, "navigator_set": 1, "imaging_set": self.imaging_set}
+        return {"read_navigators": True, "navigator_type": self.navigator_type, "navigator_set": self.navigator_set, "imaging_set": self.imaging_set}
 
     @property
     def cache_parameters(self):
@@ -72,15 +75,15 @@ class NavigatorEigenmodeCalculator:
 
     def read_channels(self, raw):
         """Return eigenmode channels on the MRI clock for shared synchronization."""
-        if raw.get("navigator_type") != self.navigator_type or raw.get("navigator_set") != 1:
-            raise ValueError("Eigenmode extraction requires explicitly decoded second-set navigator groups of the configured type; flagged feedback is not a substitute.")
+        if raw.get("navigator_type") != self.navigator_type or raw.get("navigator_set") != self.navigator_set:
+            raise ValueError("Eigenmode extraction requires explicitly decoded navigator groups matching the configured set and type; flagged feedback is not a substitute.")
         records = raw.get("navigators")
         if not records:
             raise ValueError("No navigator records were supplied.")
         groups = {}
         for record in records:
-            if record["counters"]["set"] != 1:
-                raise ValueError("Only set counter 1 may contribute to navigator eigenmodes.")
+            if record["counters"]["set"] != self.navigator_set:
+                raise ValueError(f"Only set counter {self.navigator_set} may contribute to navigator eigenmodes.")
             group = groups.setdefault(record["group_index"], {})
             direction = record["direction_index"]
             if direction in group:
@@ -112,7 +115,7 @@ class NavigatorEigenmodeCalculator:
             modes = previous['navigator_temporal_modes']
             singular_values = previous['navigator_singular_values']
             rank = previous['navigator_numerical_rank']
-            print('[navigators] Reusing verified second-set registration and SVD; synchronizing to this contrast on the scanner clock.', flush=True)
+            print('[navigators] Reusing verified navigator registration and SVD; synchronizing to this contrast on the scanner clock.', flush=True)
         else:
             fields = []
             for direction in self.directions:
@@ -140,7 +143,7 @@ class NavigatorEigenmodeCalculator:
                 self.profiles[direction] = profiles
                 self.displacements[direction] = np.asarray(displacement)
                 fields.append(self.displacements[direction].reshape(-1, times.size))
-                print(f"[navigators] Registered second-set ordinal {direction}: {profiles.shape[0]} coils, {times.size} profiles.", flush=True)
+                print(f"[navigators] Registered set {self.navigator_set}, ordinal {direction}: {profiles.shape[0]} coils, {times.size} profiles.", flush=True)
             matrix = np.concatenate(fields, axis=0)
             if not np.isfinite(matrix).all():
                 raise ValueError("Navigator displacement matrix contains non-finite values.")
@@ -159,13 +162,13 @@ class NavigatorEigenmodeCalculator:
         after = int(np.count_nonzero(acquisition_times > times[-1]))
         if self.extrapolation == "edge" and (before or after):
             print(f"[navigators] Endpoint holding explicitly selected: {before} imaging readouts before the first navigator and {after} after the last ({max(0., acquisition_times[-1] - times[-1]):.4f} s at the end). Interior synchronization uses linear interpolation.", flush=True)
-        self.metadata = {"navigator_type": self.navigator_type, "navigator_set": 1, "imaging_set": self.imaging_set, "navigator_directions": list(self.directions), "navigator_time_seconds": times,
+        self.metadata = {"navigator_type": self.navigator_type, "navigator_set": self.navigator_set, "imaging_set": self.imaging_set, "navigator_directions": list(self.directions), "navigator_time_seconds": times,
                          "navigator_temporal_modes": modes, "navigator_singular_values": singular_values,
                          "navigator_numerical_rank": rank, "navigator_startup_profiles": self.startup_profiles,
                          "navigator_acquisition_indices": [[group[direction]["acquisition_index"] for direction in sorted(available_directions)] for group in ordered],
                          "navigator_extrapolation": self.extrapolation, "navigator_endpoint_readouts": [before, after]}
         self.reference = {'parameters': parameters, 'fingerprint': fingerprint, 'metadata': self.metadata.copy()}
-        print(f"[navigators] Keeping {self.n_eigenmodes} joint SVD modes from the second set; no temporal smoothing.", flush=True)
+        print(f"[navigators] Keeping {self.n_eigenmodes} joint SVD modes from set {self.navigator_set}; no temporal smoothing.", flush=True)
         # Times are already relative to the retained MRI end, so end=0 preserves
         # their shared clock instead of moving the last navigator to sequence end.
         return [times.copy() for _ in range(self.n_eigenmodes)], list(modes.T), 0.0, self.extrapolation

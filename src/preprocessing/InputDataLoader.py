@@ -360,7 +360,7 @@ class InputDataLoader:
             from src.preprocessing.real_data.physiological_data.NavigatorEigenmodeCalculator import NavigatorEigenmodeCalculator
 
             return NavigatorEigenmodeCalculator(
-                navigator_type=self.params.navigator_type,
+                navigator_type=self.params.navigator_type, navigator_set=self.params.navigator_set,
                 imaging_set=self.params.navigator_imaging_set,
                 n_eigenmodes=self.params.navigator_eigenmodes, directions=self.params.navigator_directions,
                 startup_profiles=self.params.navigator_startup_profiles, regularization=self.params.navigator_regularization,

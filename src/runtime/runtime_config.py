@@ -60,7 +60,7 @@ _PHYSIOLOGICAL_DATA_KEYS = {
 }
 _PHYSIO_CLOCK_KEYS = {'physio_clock_drift_seconds'}
 _POLARIS_KEYS = {'polaris_channel_mode', 'polaris_lowpass_cutoff_hz'}
-_NAVIGATOR_KEYS = {'navigator_type', 'navigator_imaging_set', 'navigator_eigenmodes', 'navigator_directions', 'navigator_startup_profiles',
+_NAVIGATOR_KEYS = {'navigator_type', 'navigator_set', 'navigator_imaging_set', 'navigator_eigenmodes', 'navigator_directions', 'navigator_startup_profiles',
                    'navigator_regularization', 'navigator_resolution_levels', 'navigator_registration_loops', 'navigator_extrapolation'}
 _CSM_ESPIRIT_KEYS = {'coil_sensitivity_method', 'espirit_calibration_width', 'espirit_kernel_width', 'espirit_max_iter'}
 _CSM_ODILLE_SPLINE_KEYS = {'coil_sensitivity_method', 'spline_magnitude_smoothing', 'spline_phase_smoothing', 'coil_sensitivity_eps'}
@@ -224,7 +224,10 @@ def _validate_physiological_data(cfg):
     }
     if data_type.endswith('-navigators'):
         _require(cfg, _NAVIGATOR_KEYS, 'navigator')
-        _choice(cfg['navigator_type'], 'navigator_type', {'mosar'})
+        _choice(cfg['navigator_type'], 'navigator_type', {'mosar', 'mosar-mprage'})
+        _integer(cfg['navigator_set'], 'navigator_set', 0)
+        if cfg['navigator_set'] not in (0, 1):
+            raise ValueError('navigator_set must be 0 or 1.')
         _integer(cfg['navigator_imaging_set'], 'navigator_imaging_set', 0)
         if cfg['navigator_imaging_set'] not in (0, 1):
             raise ValueError('navigator_imaging_set must be 0 or 1.')
@@ -236,6 +239,8 @@ def _validate_physiological_data(cfg):
         directions = cfg['navigator_directions']
         if not isinstance(directions, list) or not directions or any(type(value) is not int or value not in (0, 1, 2) for value in directions) or len(set(directions)) != len(directions):
             raise ValueError('navigator_directions must be a nonempty list of distinct integers from 0, 1, 2.')
+        if cfg['navigator_type'] == 'mosar-mprage' and (cfg['navigator_set'] != 0 or cfg['navigator_imaging_set'] != 0 or directions != [0]):
+            raise ValueError('mosar-mprage requires navigator_set=0, navigator_imaging_set=0, and navigator_directions=[0].')
         levels = cfg['navigator_resolution_levels']
         if not isinstance(levels, list) or not levels:
             raise ValueError('navigator_resolution_levels must be a nonempty list.')

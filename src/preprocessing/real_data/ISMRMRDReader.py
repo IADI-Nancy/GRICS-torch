@@ -46,8 +46,8 @@ class ISMRMRDReader:
         self.ismrmrd_file = ismrmrd_file
         self.device = device
         self.read_navigators = read_navigators
-        if navigator_type not in (None, 'mosar'):
-            raise ValueError('navigator_type must be None or mosar.')
+        if navigator_type not in (None, 'mosar', 'mosar-mprage'):
+            raise ValueError('navigator_type must be None, mosar, or mosar-mprage.')
         if navigator_type is not None and not read_navigators:
             raise ValueError('Explicit navigator extraction requires read_navigators=True.')
         if type(navigator_set) is not int or navigator_set < 0:
@@ -105,6 +105,38 @@ class ISMRMRDReader:
                 result[int(index)] = (group, direction)
         print(f'[ismrmrd] Explicit MOSAR extraction: {len(groups)} central triplets in set counter {set_index}; feedback flags are excluded and triplets are removed from imaging.', flush=True)
         return result
+
+    def _mosar_mprage_navigator_indices(self, heads, limits, set_index):
+        """Validate the single-set sequence's regular one-readout navigator cadence."""
+        if set_index != 0:
+            raise ValueError('MOSAR MPRAGE requires the first set (counter 0).')
+        names = ('ACQ_IS_NOISE_MEASUREMENT', 'ACQ_IS_NAVIGATION_DATA', 'ACQ_IS_DUMMYSCAN_DATA',
+                 'ACQ_IS_PHASECORR_DATA', 'ACQ_IS_HPFEEDBACK_DATA', 'ACQ_IS_RTFEEDBACK_DATA')
+        excluded = sum(1 << (getattr(ismrmrd, name) - 1) for name in names)
+        selected = np.flatnonzero((heads['flags'] & excluded) == 0)
+        if not len(selected) or np.any(heads['idx']['set'][selected] != 0):
+            raise ValueError('MOSAR MPRAGE requires imaging acquisitions in set counter 0 only.')
+        if any(len(np.unique(heads['idx'][name][selected])) != 1 for name in ('slice', 'repetition')):
+            raise ValueError('MOSAR MPRAGE cadence extraction supports one slab and one repetition.')
+        cy, cz = limits.kspace_encoding_step_1.center, limits.kspace_encoding_step_2.center
+        if cy is None or cz is None:
+            raise ValueError('MOSAR MPRAGE requires declared ky/kz centres.')
+        central = np.flatnonzero((heads['idx']['kspace_encode_step_1'][selected] == cy) & (heads['idx']['kspace_encode_step_2'][selected] == cz))
+        if len(central) < 3 or central[0] != 0:
+            raise ValueError('MOSAR MPRAGE requires at least three central navigators starting at the first eligible readout.')
+        period = int(central[1])
+        if period <= 1 or central[2] != 2 * period or len(selected) % period:
+            raise ValueError('MOSAR MPRAGE initial central lines do not establish a regular single-navigator shot cadence with complete blocks.')
+        positions = np.arange(0, len(selected), period)
+        if not np.isin(positions, central).all():
+            raise ValueError('MOSAR MPRAGE navigator cadence fails at a later shot; refusing partial extraction.')
+        indices = selected[positions]
+        shapes = np.column_stack([heads[name][indices] for name in ('active_channels', 'number_of_samples')])
+        if np.any(shapes != shapes[0]):
+            raise ValueError('MOSAR MPRAGE navigator readouts have inconsistent channel/sample dimensions.')
+        extra = len(central) - len(indices)
+        print(f'[ismrmrd] Explicit MOSAR MPRAGE extraction: {len(indices)} first-set single navigators, one every {period} eligible readouts; {extra} additional central lines remain in imaging. Feedback is excluded.', flush=True)
+        return {int(index): (group, 0) for group, index in enumerate(indices)}
 
     def _navigator_record(self, acq, i):
         return {
@@ -225,6 +257,11 @@ class ISMRMRDReader:
                 navigator_indices = self._mosar_navigator_indices(heads, limits, self.navigator_set)
                 imaging_navigator_indices = (navigator_indices if self.imaging_set == self.navigator_set else
                                              self._mosar_navigator_indices(heads, limits, self.imaging_set))
+            elif self.navigator_type == 'mosar-mprage':
+                navigator_indices = self._mosar_mprage_navigator_indices(heads, limits, self.navigator_set)
+                if self.imaging_set != self.navigator_set:
+                    raise ValueError('MOSAR MPRAGE requires imaging and navigators from set counter 0.')
+                imaging_navigator_indices = navigator_indices
             elif self.navigator_type is None:
                 navigator_indices = {}
             else:

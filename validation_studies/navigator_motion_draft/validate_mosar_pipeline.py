@@ -18,7 +18,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from pipelines.mosar import combine_mp2rage, run_pipeline
+from pipelines.siemens_MP2RAGE_navigators import run_pipeline
+from pipelines.utils.siemens_navigators import combine_mp2rage
 from pipelines.utils.postprocessing import zero_fill_loaded_reconstruction
 from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
 

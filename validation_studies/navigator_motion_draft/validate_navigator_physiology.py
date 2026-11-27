@@ -100,7 +100,7 @@ def run_validation():
             raise AssertionError('Unsupported navigator types must be rejected explicitly')
         with (ROOT / 'config/physiological_data/navigators.toml').open('rb') as stream:
             settings = tomllib.load(stream)['navigators']
-        parameters = dict(navigator_type=settings["navigator_type"], imaging_set=settings["navigator_imaging_set"],
+        parameters = dict(navigator_type=settings["navigator_type"], navigator_set=settings["navigator_set"], imaging_set=settings["navigator_imaging_set"],
                           n_eigenmodes=settings["navigator_eigenmodes"], directions=settings["navigator_directions"],
                           startup_profiles=settings["navigator_startup_profiles"], regularization=settings["navigator_regularization"],
                           resolution_levels=settings["navigator_resolution_levels"], registration_loops=settings["navigator_registration_loops"],

@@ -90,6 +90,6 @@ The 3D pipeline prepares and reconstructs the complete volume in one process, th
 
 Output names, flags, and cache lifetime are documented in the [output guide](usage/outputs.md).
 
-### MOSAR pipeline
+### Siemens navigator pipelines
 
-`pipelines/mosar.py` owns two separate 3D rigid or non-rigid reconstructions and their MP2RAGE combination. `ISMRMRDReader` selects imaging and navigator sets independently; the pipeline shares INV2 coil maps, a verified navigator-mode reference, and motion-normalization statistics across the contrast preparations. `DataPreparer` accepts explicitly supplied coil maps, while each `JointReconstructor` retains its own image and motion estimate. The pipeline owns combination and the three DICOM series; the exporter owns geometry and pixel encoding. See [MOSAR postprocessing and export](../usage/postprocessing.md#mosar-inversion-images-and-combination) for commands, scaling, and limitations.
+`pipelines/siemens_MPRAGE_navigators.py` selects one MPRAGE image with first-set navigators; `pipelines/siemens_MP2RAGE_navigators.py` selects two inversion contrasts with second-set navigators. Both delegate conversion, preparation, reconstruction, output geometry, and DICOM export to `pipelines/utils/siemens_navigators.py`. The shared runner owns conversion lifetime and sequence-specific contrast selection; MRI readers own navigator identification. MP2RAGE additionally shares INV2 coil maps, verified navigator modes, and motion-normalization statistics across its two contrast preparations, then combines their complex images. Each reconstructor owns its image and motion estimates. See [navigator reconstruction and export](../usage/postprocessing.md#siemens-navigator-reconstruction-and-export) for commands and output details.

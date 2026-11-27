@@ -1,13 +1,15 @@
 [navigators]
-# Navigator acquisition type; currently only "mosar" is supported. Its reader extracts block-start central triplets from the second set (set counter 1); other types require a reader implementation.
+# Navigator extraction strategy: "mosar" for MP2RAGE block-start triplets; "mosar-mprage" for single-set MPRAGE with validated periodic single navigators. Other types require a reader implementation.
 navigator_type = "mosar"
-# Imaging contrast to reconstruct: 0 for the first set or 1 for the second set. Navigator signals always come from set 1.
+# Navigator source set counter: 0 for first-set MPRAGE or 1 for second-set MP2RAGE navigators. Pipelines select the required source explicitly.
+navigator_set = 1
+# Imaging contrast to reconstruct: 0 for the first set or 1 for the second set. Navigator source selection is independent through navigator_set.
 navigator_imaging_set = 1
 # Number of temporal SVD modes retained as physiological channels; integer >= 1, no greater than the measured displacement matrix's numerical rank.
 navigator_eigenmodes = 2
-# Triplet readout ordinals included in the combined SVD; a nonempty list of distinct integers from 0, 1, 2. These are not verified physical x/y/z directions.
+# Navigator readout ordinals included in the combined SVD; distinct integers from 0, 1, 2 for triplets, or [0] for single-navigator MPRAGE. These are not verified physical x/y/z directions.
 navigator_directions = [0, 1, 2]
-# Initial profiles replaced by the next profile to suppress startup effects; integer >= 0 and smaller than the number of triplets.
+# Initial profiles replaced by the next profile to suppress startup effects; integer >= 0 and smaller than the number of navigator groups.
 navigator_startup_profiles = 4
 # Non-rigid spatial displacement regularization coefficient; finite number > 0. No temporal penalty is applied.
 navigator_regularization = 0.05
