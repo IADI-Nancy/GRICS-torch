@@ -101,6 +101,6 @@ We used generative AI tools for code generation, refactoring, and documentation.
 
 # Acknowledgements
 
-The authors thank Ziad Al-Haj Hemidi for useful discussions in the early stages of the project and Nora Vogt for providing the sharpness index code. The breast MRI data acquisition was supported by the CIC-IT and CHRU of Nancy and funded by ITMO Cancer of Aviesan within the framework of the 2021-2030 Cancer Control Strategy.
+The authors thank Ziad Al-Haj Hemidi for useful discussions in the early stages of the project and Nora Vogt for providing the sharpness index code.
 
 # References

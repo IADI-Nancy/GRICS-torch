@@ -23,6 +23,9 @@ Finally, the newest PyTorch implementation outperformed the GRICS++ in terms of 
 ## Conclusion
 GRICS-torch is at least as efficient as GRICS++ in terms of non-rigid motion correction for supine breast MRI, and was faster in our hardware configuration.
 
+## Acknowledgment
+The breast MRI data acquisition was supported by the CIC-IT and CHRU of Nancy and funded by ITMO Cancer of Aviesan within the framework of the 2021-2030 Cancer Control Strategy.
+
 ## References
 
 [1] Odille, F., Menini, A., Escanyé, J. M., Vuissoz, P. A., Marie, P. Y., Beaumont, M., and Felblinger, J. (2015). Joint Reconstruction of Multiple Images and Motion in MRI: Application to Free-Breathing Myocardial T2 Quantification. *IEEE Transactions on Medical Imaging*, 35(1), 197–207.
