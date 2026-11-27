@@ -18,7 +18,7 @@ def zero_fill_image_to_shape(
     Torch equivalent of Gadgetron GRICS zero_filling_and_cropping():
 
         fft3c(image)
-        pad to encoded_shape
+        center-pad or trim to encoded_shape
         ifft3c(image)
         crop to target_shape
 
@@ -32,7 +32,7 @@ def zero_fill_image_to_shape(
         (E0, E1_recon, E2_recon).
 
     encoded_shape:
-        Zero-filled encoded matrix size:
+        Header encoded matrix size (reader-expanded grids are trimmed in k-space):
         (E0, E1, E2).
 
     spatial_dims:
@@ -66,15 +66,11 @@ def zero_fill_image_to_shape(
     # Gadgetron: fft3c(image)
     kspace = fftnc(work, dims=dims)
 
-    # Gadgetron: pad(size_zero_filled, image)
+    # Gadgetron padding, extended to trim a reader-expanded Fourier grid back
+    # to the header matrix without changing the image field of view.
     padded_shape = list(kspace.shape)
 
     for dim, size in zip(dims, encoded_shape):
-        if size < kspace.shape[dim]:
-            raise ValueError(
-                f"encoded_shape cannot be smaller than input shape along dim {dim}: "
-                f"{size} < {kspace.shape[dim]}"
-            )
         padded_shape[dim] = size
 
     padded = torch.zeros(
@@ -90,10 +86,11 @@ def zero_fill_image_to_shape(
         src_size = kspace.shape[dim]
         dst_size = padded.shape[dim]
 
-        offset = (dst_size - src_size) // 2
-
-        src_slices[dim] = slice(0, src_size)
-        dst_slices[dim] = slice(offset, offset + src_size)
+        size = min(src_size, dst_size)
+        src_offset = max(0, (src_size - dst_size) // 2)
+        dst_offset = max(0, (dst_size - src_size) // 2)
+        src_slices[dim] = slice(src_offset, src_offset + size)
+        dst_slices[dim] = slice(dst_offset, dst_offset + size)
 
     padded[tuple(dst_slices)] = kspace[tuple(src_slices)]
 

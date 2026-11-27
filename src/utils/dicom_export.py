@@ -26,6 +26,8 @@ def write_reconstruction_dicom(
     series_number: int | None = None,
     reference_dicom_path: str | Path | None = None,
     use_reference_geometry: bool = True,
+    pixel_value_range: tuple[float, float] | None = None,
+    sequence_index: int | None = 0,
 ) -> Path:
     """
     Write a single-frame DICOM file for a reconstructed MR image.
@@ -37,10 +39,14 @@ def write_reconstruction_dicom(
     ``image`` must be a NumPy array or Torch tensor with shape ``[Nx, Ny]``.
     Complex images are exported as magnitude. Set use_reference_geometry=False
     to use acquisition geometry while copying other public metadata from a
-    DICOM donor.
+    DICOM donor. pixel_value_range selects fixed scaling with rescale tags;
+    use (-0.5, 0.5) for a signed MP2RAGE combination. sequence_index selects
+    inversion time/flip angle; None omits those tags for a combined image.
     """
     from src.utils.ismrmrd_io import acquisition_header
 
+    if sequence_index is not None and (type(sequence_index) is not int or sequence_index < 0):
+        raise ValueError('sequence_index must be a nonnegative integer or None for a combined image.')
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -48,7 +54,15 @@ def write_reconstruction_dicom(
     geometry = _require_slice_geometry(raw_data, slice_index)
     pixels_float = _prepare_single_frame_image(image, geometry=geometry)
     reference_dicom = _find_reference_dicom(reference_dicom_path, geometry, slice_index)
-    pixel_array = _scale_to_dicom_uint12(pixels_float, reference_dicom)
+    if pixel_value_range is None:
+        pixel_array = _scale_to_dicom_uint12(pixels_float, reference_dicom)
+    else:
+        low, high = map(float, pixel_value_range)
+        if not np.isfinite([low, high]).all() or high <= low:
+            raise ValueError('pixel_value_range must contain finite increasing bounds.')
+        if np.any(pixels_float < low - 1e-6) or np.any(pixels_float > high + 1e-6):
+            raise ValueError('DICOM image values exceed the explicit pixel_value_range.')
+        pixel_array = np.rint(np.clip((pixels_float - low) / (high - low), 0, 1) * 4095).astype(np.uint16)
 
     ds = _base_dataset(output_path)
     if reference_dicom is not None:
@@ -69,15 +83,33 @@ def write_reconstruction_dicom(
     else:
         _set_reference_geometry_fields(ds, reference_dicom, pixel_array.shape, images_in_acquisition)
     _set_pixel_fields(ds, pixel_array, reference_dicom)
-    _add_minimal_mr_fields(ds, header, only_missing=reference_dicom is not None)
+    if pixel_value_range is not None:
+        for keyword in ('VOILUTSequence', 'ModalityLUTSequence', 'RealWorldValueMappingSequence', 'PixelPaddingValue', 'PixelPaddingRangeLimit'):
+            if keyword in ds:
+                del ds[keyword]
+        ds.RescaleIntercept = low
+        ds.RescaleSlope = (high - low) / 4095
+        ds.RescaleType = 'US'
+        ds.WindowCenter = (low + high) / 2
+        ds.WindowWidth = high - low
+        ds.VOILUTFunction = 'LINEAR_EXACT'
+        ds.ImageType = ['DERIVED', 'PRIMARY', 'R' if low < 0 else 'M', 'ND']
+    _add_minimal_mr_fields(ds, header, only_missing=reference_dicom is not None, sequence_index=sequence_index)
+    # A supplied UID explicitly identifies a series' study/frame, including
+    # when a donor supplies the remaining public metadata.
+    if study_instance_uid is not None:
+        ds.StudyInstanceUID = study_instance_uid
+    if frame_of_reference_uid is not None:
+        ds.FrameOfReferenceUID = frame_of_reference_uid
 
     ds.save_as(output_path, enforce_file_format=True)
     return output_path
 
 
 
-def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
-                        reference_dicom_path=None):
+def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001, reference_dicom_path=None,
+                        series_description='GRICS reconstruction RESEARCH ONLY', study_instance_uid=None,
+                        frame_of_reference_uid=None, pixel_value_range=None, sequence_index=0):
     """Export a postprocessed [Nx, Ny, Nz] volume as a single-frame MR series.
 
     Siemens 3D acquisition positions describe the slab center, not kz partitions.
@@ -124,16 +156,18 @@ def write_volume_dicoms(image, output_dir, raw_data, *, series_number=1001,
     # Keep the loaded source unmodified and reuse the existing 2D export path.
     volume_source = SimpleNamespace(ismrmrd_header=ismrmrd.xsd.ToXML(header),
                                     _input_slice_geometry=geometries)
-    uids = {key: generate_uid() for key in
-            ('study_instance_uid', 'series_instance_uid', 'frame_of_reference_uid')}
+    uids = {'study_instance_uid': study_instance_uid or generate_uid(), 'series_instance_uid': generate_uid(),
+            'frame_of_reference_uid': frame_of_reference_uid or generate_uid()}
     paths = []
     for z in range(nz):
         path = Path(output_dir) / f'slice_{z + 1:03d}.dcm'
         write_reconstruction_dicom(
             image[..., z], path, raw_data=volume_source, slice_index=z,
-            series_description='GRICS reconstruction RESEARCH ONLY',
+            series_description=series_description,
             images_in_acquisition=nz, series_number=series_number,
             reference_dicom_path=reference_dicom_path, use_reference_geometry=False,
+            pixel_value_range=pixel_value_range,
+            sequence_index=sequence_index,
             **uids)
         paths.append(path)
     return paths, uids
@@ -618,12 +652,17 @@ def _encoding_limit_size(limit_obj: Any) -> int:
         return 1
     return int(maximum) + 1
 
-def _add_minimal_mr_fields(ds: Any, header: Any, *, only_missing: bool = False) -> None:
+def _add_minimal_mr_fields(ds: Any, header: Any, *, only_missing: bool = False, sequence_index=0) -> None:
     seq = _first_present(header, "sequenceParameters")
     _set_if_present(ds, "RepetitionTime", _first_number(_get(seq, "TR")), only_missing=only_missing)
     _set_if_present(ds, "EchoTime", _first_number(_get(seq, "TE")), only_missing=only_missing)
-    _set_if_present(ds, "InversionTime", _first_number(_get(seq, "TI")), only_missing=only_missing)
-    _set_if_present(ds, "FlipAngle", _first_number(_get(seq, "flipAngle_deg")), only_missing=only_missing)
+    for keyword, field in (('InversionTime', 'TI'), ('FlipAngle', 'flipAngle_deg')):
+        values = _get(seq, field)
+        if sequence_index is None or not values or sequence_index >= len(values):
+            if keyword in ds:
+                del ds[keyword]
+        else:
+            _set_if_present(ds, keyword, float(values[sequence_index]), only_missing=False)
     _set_or_replace(ds, "ScanningSequence", "RM", only_missing)
     _set_or_replace(ds, "SequenceVariant", "NONE", only_missing)
     _set_or_replace(ds, "ScanOptions", "", only_missing)

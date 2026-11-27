@@ -1,0 +1,90 @@
+# Adapted from ParamGRICS++_MPRAGE_Rigid.xml in the MOSAR acquisition folder.
+# Scope: executable GRICS-torch settings, not a bitwise GRICS++ reproduction.
+# XML Dimensions=448x336x120 and VoxelSpacing=1x1x1 belong to prepared binary inputs;
+# the Siemens/ISMRMRD reader supplies this acquisition's actual grid and spacing instead.
+# XML SensorsToUse="1 2" corresponds to the two modes retained by physiological_data/navigators.toml.
+# Raw input, navigator settings, geometry, output paths, and runtime device stay in their owning configs/pipeline.
+# XML-provided SensitivityMaps.dat and RegularizationMatrix.dat are not present here;
+# coil maps and the calibration prior are estimated using the separately configured repository methods.
+# Multinode execution, binary filenames, and precomputation flags have no direct TOML equivalents.
+
+[reconstruction]
+
+# --- Data and motion model ---
+# Coil-map estimation used in place of the XML's supplied map file: "odille-spline" (MOSAR choice) or "espirit"; settings load from coil_sensitivity_and_calibration/.
+coil_sensitivity_config = "odille-spline"
+# XML MrAcquisition Type="3D"; allowed values are "2D" or "3D" and must match the input.
+reconstruction_dimension = "3D"
+# XML MotionModel Type="rigid"; allowed values are "rigid" or "non-rigid".
+reconstruction_motion_type = "rigid"
+# Rigid warp interpolation: "fourier" uses FFT translations and shear rotations; "linear" reproduces the XML interpolation. Fourier requires warp_backend = "sparse".
+rigid_interpolation = "fourier"
+# Image-gradient boundary convention, absent from XML: "zero" (repository default) or "one_sided".
+motion_gradient_boundary = "zero"
+# XML NumericalPrecision Type="complex-float" maps to "single" operator arithmetic; "double" is the alternative. Storage and CG vectors still use the engine's double precision.
+compute_precision = "single"
+# Warp backend: "sparse" is required for Fourier interpolation, which bypasses linear warp tables; "gather" is available only with rigid_interpolation = "linear".
+warp_backend = "sparse"
+
+# --- Motion-state binning ---
+# XML MotionStatesClustering Nclusters="12"; positive integer, retained unchanged rather than reduced for GPU memory.
+N_motion_states = 12
+# XML ClusteringMode="kspace_energy"; alternatives are "kspace_energy" or "kmeans".
+motion_binning_mode = "kspace_energy"
+# XML SensorBins="32 32 32 32"; common quantization count per selected channel, integer >= 2.
+motion_quantization_bins = 32
+
+# --- Multi-resolution reconstruction ---
+# XML Nlevels="4": dyadic x/y scales; strictly increasing values in (0, 1], ending at 1.0. GRICS-torch applies each scale uniformly to x/y/z.
+# GRICS++ instead uses z scales [0.25, 0.5, 1.0, 1.0] for four levels; its anisotropic pyramid cannot be represented by this setting.
+ResolutionLevels = [0.125, 0.25, 0.5, 1]
+# XML FixedPointIterations maxit="4", highResMaxit="1"; positive integer per resolution level.
+GN_iterations_per_level = [4, 4, 4, 1]
+# GRICS++ skips the motion solve after the last image solve at every level; true/false. This setting disables the engine's optional final motion update.
+update_motion_on_final_iteration = false
+# GRICS++ stops fixed-point iteration when the residual fails to decrease; true enables and false disables GN early stopping.
+gn_early_stopping = true
+
+# --- Conjugate-gradient stopping ---
+# Extra stagnation heuristic has no XML equivalent; false uses tolerance/iteration limits, true additionally enables this engine-specific heuristic.
+cg_stop_on_stagnation = false
+# Recompute the true CG residual every this many iterations; positive integer, repository default because XML does not specify it.
+cg_true_residual_interval = 10
+# Consecutive tiny updates before stagnation handling; integer >= 0, inactive while cg_stop_on_stagnation=false.
+cg_stagnation_consecutive_steps = 12
+# Stagnation countdown length; integer >= 0, inactive while cg_stop_on_stagnation=false.
+cg_stagnation_countdown_steps = 6
+
+# --- Regularization scaling ---
+# "voxel_aware" follows GRICS++ resolution/data-norm scaling; "direct" is the alternative. This uses actual acquisition spacing, not the XML template's 1 mm values.
+regularization_scaling = "voxel_aware"
+# Probe-based operator scaling is not used by the XML; false disables it, true enables it for direct scaling and requires cg_reg_scale_num_probes.
+cg_use_reg_scale_proxy = false
+# XML ImagePrior useCalibAsPriorImage="true"; true solves x=Cp with the prepared calibration image, false solves directly for x.
+use_calibration_weighted_image = true
+
+# --- Image update ---
+# XML ReconstructorSolver lambda="5.e-1"; finite number >= 0, with effective scaling controlled above.
+lambda_r = 0.5
+# XML ReconstructorSolver maxit="64"; positive integer CG iteration limit.
+max_iter_recon = 64
+# XML ReconstructorSolver tol="1.e-3"; positive finite convergence tolerance.
+tol_recon = 0.001
+
+# --- Motion update ---
+# XML ModelOptimizerSolver lambda="0.e-2"; finite number >= 0, with effective scaling controlled above.
+lambda_m = 0.0
+# Rigid increment penalty: "identity" matches the XML's scalar Tikhonov form; "diagonal" scales by parameter curvature. With lambda_m=0 both are undamped.
+rigid_motion_damping = "identity"
+# XML ModelOptimizerSolver maxit="64"; positive integer CG iteration limit.
+max_iter_motion = 64
+# XML ModelOptimizerSolver tol="1.e-2"; positive finite convergence tolerance.
+tol_motion = 0.01
+
+# --- Engine conventions ---
+# Apply the rotation factor in rigid image Jacobians; true/false, current engine default, not specified in XML (irrelevant to non-rigid motion).
+jacobian_rotation_factor = true
+# Solve real motion normal equations; true/false, current engine default rather than complex CG followed by a real projection.
+motion_step_real = true
+# Preserve image amplitude between unitary-FFT resolution levels; true/false, current engine default.
+warm_start_rescale = true

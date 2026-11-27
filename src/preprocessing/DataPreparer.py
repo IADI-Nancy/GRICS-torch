@@ -97,8 +97,8 @@ class DataPreparer:
         if hasattr(loader, "phantom_generated"):
             self.phantom_generated = loader.phantom_generated
 
-    def prepare_reconstructor_inputs(self, slice_idx=None):
-        """Select a 2D real-data slice, or use the full volume, and prepare reconstructor inputs."""
+    def prepare_reconstructor_inputs(self, slice_idx=None, *, coil_sensitivity_maps=None):
+        """Prepare inputs, optionally reusing complex coil maps from another contrast."""
 
         ensure_input_loaded_and_reconstruction_not_prepared(self.input_loader, self._reconstruction_data_prepared)
         slice_idx = select_input_slice_if_needed(self.input_loader, self.params, slice_idx)
@@ -115,7 +115,14 @@ class DataPreparer:
         save_sampling_order_debug_plot_if_enabled(self.input_loader, self.params)
         record_preprocessing_start_if_configured(self.params, self.filename, self.slice_idx)
         self._normalize_kspace_if_enabled()
-        self._compute_coil_sensitivity_maps()
+        if coil_sensitivity_maps is None:
+            self._compute_coil_sensitivity_maps()
+        else:
+            maps = torch.as_tensor(coil_sensitivity_maps, device=self.runtime.t_device)
+            if maps.shape != self.kspace[:, 0].shape or not torch.is_complex(maps) or not torch.isfinite(maps).all():
+                raise ValueError('Shared coil sensitivity maps must be finite complex [coil, x, y, z] data matching k-space.')
+            self.smaps = maps
+            print('[csm] Reusing explicitly supplied coil sensitivity maps.', flush=True)
         self._compute_calibration_image()
         self._compute_ifft_image_from_input_kspace()
         # Import recorded motion or simulate motion and corrupt the input data.

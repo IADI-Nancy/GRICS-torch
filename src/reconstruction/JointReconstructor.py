@@ -380,7 +380,10 @@ class JointReconstructor:
 
     def gauss_newton_iteration(
         self, data, *, image_regularizer=None, regularization_weight=None,
-        update_motion=True, image_cg_iterations=None, motion_cg_iterations=None):
+        update_motion=True, image_cg_iterations=None, motion_cg_iterations=None, gauss_newton_iteration_index=None):
+        context = f"resolution level {self._current_level_idx + 1}"
+        if gauss_newton_iteration_index is not None:
+            context += f", GN iteration {gauss_newton_iteration_index + 1}"
         # ------------------------------- IMAGE RECONSTRUCTION STEP -------------------------
 
         # 1) Build motion and encoding operators
@@ -400,6 +403,9 @@ class JointReconstructor:
 
         # 2) Solve for image
         # When a prior z exists, solve with lambda ||x - z||_2^2.
+        if self.params.verbose:
+            iterations = self.params.max_iter_recon if image_cg_iterations is None else image_cg_iterations
+            print(f"[image CG] Starting {context}; max iterations={iterations}, tolerance={self.params.tol_recon:g}.", flush=True)
         with Timer() as image_timer:
             image = self._solve_image(
                 data, image_prior=prior, regularization_weight=regularization_weight,
@@ -420,6 +426,9 @@ class JointReconstructor:
 
         # ------------------------------- MOTION MODEL RECONSTRUCTION STEP -------------------------
         if update_motion:
+            if self.params.verbose:
+                iterations = self.params.max_iter_motion if motion_cg_iterations is None else motion_cg_iterations
+                print(f"[motion CG] Starting {context}; max iterations={iterations}, tolerance={self.params.tol_motion:g}.", flush=True)
             # 4) Build linearized motion-perturbation simulator around current
             # estimate: ∇_u(E)·δu = δkspace
             with Timer() as motion_timer, torch.no_grad():
@@ -473,7 +482,7 @@ class JointReconstructor:
 
     def _run_resolution_level(
         self, data, *, level_index, gauss_newton_iterations_at_level, level_count,
-        update_final_motion, gn_early_stopping, logger):
+        update_final_motion, gn_early_stopping, logger, motion_correction):
         """Alternate image/motion updates and return the last accepted estimate pair.
 
         Updates data in place. If early stopping detects a residual increase,
@@ -487,15 +496,15 @@ class JointReconstructor:
 
         with logger.iterations(level_index) as gauss_newton_iteration_indices:
             for gauss_newton_iteration_index in gauss_newton_iteration_indices:
-                # Only the last iteration of the entire run may skip motion.
+                # With correction enabled, only the final iteration may skip motion.
                 is_final_iteration = (level_index == level_count - 1 and gauss_newton_iteration_index == gauss_newton_iterations_at_level - 1)
-                update_motion = not is_final_iteration or update_final_motion
+                update_motion = motion_correction and (not is_final_iteration or update_final_motion)
 
                 result = self.gauss_newton_iteration(
                     data, image_regularizer=self.external_image_regularizer,
                     regularization_weight=image_regularization_weight_for_level(
                         self.params, self._current_level_idx),
-                    update_motion=update_motion)
+                    update_motion=update_motion, gauss_newton_iteration_index=gauss_newton_iteration_index)
                 # This residual uses the newly solved image and the motion
                 # estimate from before the current motion update.
                 relative_residual = torch.linalg.norm(result.residual).item() / (measured_norm + 1e-12)
@@ -525,22 +534,31 @@ class JointReconstructor:
     # ----------------------------------------------------------------------
     # Perform full multi-resolution Gauss-Newton joint reconstruction
     # ----------------------------------------------------------------------
-    def run(self) -> tuple[torch.Tensor, torch.Tensor]:
+    def run(self, *, motion_correction=True) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``(image, motion)`` from the configured multi-resolution run.
 
         Call ``write_reconstruction`` after any postprocessing to save final tensors.
         Solver logs, metadata, residual plots, and final image/motion plots are
-        produced during this run.
+        produced during this run. With motion_correction=False, all image solves
+        use zero motion and motion updates are disabled at every resolution.
 
         The shared image is ``[Nx, Ny, (Nz)]``. Motion is ``[Nalpha, Nm]`` for
         rigid or ``[Nalpha, Nx, Ny, (Nz), Ns]`` for non-rigid reconstruction.
         """
+        if type(motion_correction) is not bool:
+            raise ValueError("motion_correction must be a boolean.")
+        if not motion_correction and self.initial_motion is not None and torch.count_nonzero(torch.as_tensor(self.initial_motion)).item():
+            raise ValueError("Reconstruction without motion correction requires zero initial motion.")
         resolution_levels = self.params.ResolutionLevels
         iterations_per_level = _parse_gn_iterations_per_level(self.params, resolution_levels)
         gn_early_stopping = bool(self.params.gn_early_stopping)
         update_final_motion = bool(self.params.update_motion_on_final_iteration)
         logger = JointReconstructionLogger(self.params, iterations_per_level, self.motion_plot_context)
         logger.start_run()
+        if not motion_correction:
+            message = "[reconstruction] Motion correction disabled: iterative image solves with motion fixed to zero at every resolution."
+            print(message, flush=True)
+            logger.append(message)
         previous = None
         final_best_image = None
         final_best_motion = None
@@ -561,7 +579,7 @@ class JointReconstructor:
             best_image, best_motion = self._run_resolution_level(
                 data, level_index=level_index, gauss_newton_iterations_at_level=iterations_per_level[level_index],
                 level_count=len(resolution_levels), update_final_motion=update_final_motion,
-                gn_early_stopping=gn_early_stopping, logger=logger)
+                gn_early_stopping=gn_early_stopping, logger=logger, motion_correction=motion_correction)
 
             logger.level_finished(data)
 

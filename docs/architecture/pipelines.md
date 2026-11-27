@@ -89,3 +89,7 @@ sequenceDiagram
 The 3D pipeline prepares and reconstructs the complete volume in one process, then optionally normalizes the image by the GRICS reference and zero-fills/crops it to the header's 3D reconstruction matrix before exporting the final DICOM series and saving the final and native tensors. See [postprocessing](usage/postprocessing.md) for the image steps.
 
 Output names, flags, and cache lifetime are documented in the [output guide](usage/outputs.md).
+
+### MOSAR pipeline
+
+`pipelines/mosar.py` owns two separate 3D rigid or non-rigid reconstructions and their MP2RAGE combination. `ISMRMRDReader` selects imaging and navigator sets independently; the pipeline shares INV2 coil maps, a verified navigator-mode reference, and motion-normalization statistics across the contrast preparations. `DataPreparer` accepts explicitly supplied coil maps, while each `JointReconstructor` retains its own image and motion estimate. The pipeline owns combination and the three DICOM series; the exporter owns geometry and pixel encoding. See [MOSAR postprocessing and export](../usage/postprocessing.md#mosar-inversion-images-and-combination) for commands, scaling, and limitations.

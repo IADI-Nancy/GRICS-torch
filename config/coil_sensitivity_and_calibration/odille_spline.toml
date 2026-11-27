@@ -7,6 +7,6 @@ coil_sensitivity_method = "odille-spline"
 # Smoothing weight for coil-magnitude maps; use any finite value >= 0, where 0 disables smoothing.
 spline_magnitude_smoothing = 1000.0
 # Smoothing weight for coil-phase maps; use any finite value >= 0, where 0 disables smoothing.
-spline_phase_smoothing = 1000.0
+spline_phase_smoothing = 10.0
 # Lower bound for reference-image normalization; use any finite value > 0.
 coil_sensitivity_eps = 1.0e-8

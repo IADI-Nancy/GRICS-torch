@@ -6,6 +6,7 @@ import torch
 
 from src.preprocessing.DataPreparer import DataPreparer
 from src.preprocessing.InputDataLoader import InputDataLoader
+from src.preprocessing.real_data.ISMRMRDReader import ISMRMRDReader
 from src.utils.ismrmrd_io import acquisition_header
 from src.utils.zero_fill import zero_fill_grics_image_to_shape
 
@@ -41,6 +42,17 @@ def normalize_reconstruction_by_grics_reference(image: torch.Tensor, reference_i
     return image / reference_magnitude, reference_magnitude
 
 
+def _validate_working_grid_size(loaded_size, encoded_size, encoding, axis):
+    """Accept the reader's explicit expansion, while rejecting unrelated oversize grids."""
+    limit = getattr(encoding.encodingLimits, f'kspace_encoding_step_{axis}')
+    factor = ISMRMRDReader._accel_factor_or_one(encoding.parallelImaging, f'kspace_encoding_step_{axis}')
+    expected = max(encoded_size, ISMRMRDReader._expanded_matrix_size(ISMRMRDReader._encoding_limit_size(limit), factor))
+    if loaded_size > encoded_size:
+        if loaded_size != expected:
+            raise ValueError(f'Loaded encoding-axis {axis} size {loaded_size} exceeds header matrix {encoded_size} and does not match the reader-expanded grid {expected}.')
+        print(f'[postprocessing] Reader-expanded encoding axis {axis}: {loaded_size} -> {encoded_size}; restore the header grid by centered Fourier cropping before the image FOV crop.', flush=True)
+
+
 def grics_zero_fill_shapes(input_data: InputDataLoader) -> tuple[tuple[int, int], tuple[int, int]]:
     """Read encoded and reconstruction matrix sizes from the ISMRMRD header."""
     header = acquisition_header(input_data)
@@ -74,10 +86,7 @@ def grics_zero_fill_shapes(input_data: InputDataLoader) -> tuple[tuple[int, int]
         raise ValueError(
             f"GRICS zero-fill sizes must be positive: target_shape={target_shape}, encoded_shape={encoded_shape}."
         )
-    if int(input_data.Ny) > encoded_y:
-        raise ValueError(
-            f"Loaded phase-encode size {input_data.Ny} exceeds ISMRMRD encoded matrix y {encoded_y}."
-        )
+    _validate_working_grid_size(int(input_data.Ny), encoded_y, enc, 1)
     if any(target > encoded for target, encoded in zip(target_shape, encoded_shape)):
         raise ValueError(
             "GRICS zero-fill sizes are inconsistent: "
@@ -102,13 +111,14 @@ def grics_zero_fill_volume_shapes(input_data: InputDataLoader) -> tuple[tuple[in
             raise ValueError("A missing reconstruction matrix z requires positive, finite reconstruction and encoded FOV z.")
         target_z = round(encoded_z * recon_fov_z / encoded_fov_z)
         print(f"[input] ISMRMRD reconstruction matrix z is zero; using {target_z} from the encoded matrix and field-of-view ratio.", flush=True)
-    if not 1 < target_z <= encoded_z or int(input_data.Nz) > encoded_z:
+    if not 1 < target_z <= encoded_z:
         raise ValueError(f"GRICS zero-fill z sizes are inconsistent: loaded={input_data.Nz}, target={target_z}, encoded={encoded_z}.")
+    _validate_working_grid_size(int(input_data.Nz), encoded_z, enc, 2)
     return (*target_shape, target_z), (*encoded_shape, encoded_z)
 
 
 def zero_fill_loaded_reconstruction(image: torch.Tensor, target_shape: Sequence[int],
                                    encoded_shape: Sequence[int]) -> torch.Tensor:
-    """Zero-fill and crop the final two or three spatial image axes."""
+    """Restore the header Fourier grid, then crop the final spatial image axes."""
     return zero_fill_grics_image_to_shape(image, target_shape=target_shape, encoded_shape=encoded_shape,
                                           spatial_dims=tuple(range(-len(target_shape), 0)))
